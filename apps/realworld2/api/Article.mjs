@@ -3,6 +3,7 @@ import Base from './Base.mjs';
 /**
  * @class RealWorld2.api.Article
  * @extends RealWorld2.api.Base
+ * @singleton
  */
 class Article extends Base {
     static config = {
@@ -14,7 +15,12 @@ class Article extends Base {
         /**
          * @member {String} resource='/articles'
          */
-        resource: '/articles'
+        resource: '/articles',
+        /**
+         * @member {Boolean} singleton=true
+         * @protected
+         */
+        singleton: true
     }
 
     /**
@@ -48,10 +54,4 @@ class Article extends Base {
     }
 }
 
-Neo.applyClassConfig(Article);
-
-let instance = Neo.create(Article);
-
-Neo.applyToGlobalNs(instance);
-
-export default instance;
+export default Neo.setupClass(Article);

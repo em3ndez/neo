@@ -1,0 +1,460 @@
+import ContentComponent from '../../content/Component.mjs';
+import {marked}         from '../../../../../dist/marked.mjs';
+
+const
+    regexFrontMatter   = /^---\n([\s\S]*?)\n---\n/,
+    regexH1            = /(<h1[^>]*>.*?<\/h1>)/,
+    regexTicketLink    = /(\d{4,})/,
+    regexTimeline      = /## Timeline\s*\n([\s\S]*)/,
+    regexTimelineEvent = /^- ([\dTZ:.-]+) @(\w+) (.*)$/,
+    regexCommit        = /\b([0-9a-f]{7,40})\b/g;
+
+/**
+ * @summary The "Markdown Transformer" for GitHub Tickets.
+ *
+ * This component extends the standard ContentComponent to provide specialized rendering for GitHub Issues.
+ * Its primary responsibility is to parse the raw Markdown content (which includes custom Frontmatter and
+ * a pre-generated Timeline section) and transform it into a rich, interactive HTML structure.
+ *
+ * **Key Responsibilities:**
+ * 1. **Parsing Pipeline**: Extracts Frontmatter, Body, and the custom "Timeline" section from the raw Markdown.
+ * 2. **Rich Rendering**: Generates HTML for Status Badges, Labels, Commit Links, and User Mentions.
+ * 3. **Data Extraction**: As a side effect of rendering, it extracts structured data (`me.timelineData`)
+ *    representing every timeline event (comment, label change, close, etc.). This data is then
+ *    pushed to the `sections` store to drive the `TimelineCanvas` visualization.
+ *
+ * @class Portal.view.news.tickets.Component
+ * @extends Neo.app.content.Component
+ */
+class Component extends ContentComponent {
+    static config = {
+        /**
+         * @member {String} className='Portal.view.news.tickets.Component'
+         * @protected
+         */
+        className: 'Portal.view.news.tickets.Component',
+        /**
+         * @member {String[]} cls=['portal-news-tickets-component']
+         */
+        cls: ['portal-news-tickets-component'],
+        /**
+         * @member {String} commitsUrl='https://github.com/neomjs/neo/commit/'
+         */
+        commitsUrl: 'https://github.com/neomjs/neo/commit/',
+        /**
+         * @member {String} issuesUrl='#/news/tickets/'
+         */
+        issuesUrl: '#/news/tickets/',
+        /**
+         * @member {String} repoUserUrl='https://github.com/'
+         */
+        repoUserUrl: 'https://github.com/'
+    }
+
+    /**
+     * Temporary storage for the structured timeline data extracted during the parsing phase.
+     * This array is populated by `renderTimeline` and `modifyMarkdown` and then assigned
+     * to the `sections` store to drive the Canvas visualization.
+     * @member {Object[]} timelineData=null
+     * @private
+     */
+    timelineData = null
+
+    /**
+     * Renders the ticket frontmatter table while omitting `id`, `title`, `state`, and `labels`
+     * rows that are already rendered in the H1 title and `.neo-ticket-labels` header bar.
+     * @param {Object} data
+     * @returns {String}
+     */
+    frontMatterToHtml(data) {
+        let me   = this,
+            rows = '',
+            skip = {id: true, labels: true, state: true, title: true};
+
+        Object.entries(data).forEach(([key, value]) => {
+            if (skip[key]) return;
+
+            let renderedValue;
+
+            if (key === 'subIssues' && Array.isArray(value)) {
+                renderedValue = value.map(issue => {
+                    return `<div class="neo-sub-issue">${issue
+                        .replace(regexTicketLink, '<a href="#/news/tickets/$1">$1</a>')
+                        .replace('[x]', '<i class="fa-solid fa-circle-check"></i>')
+                        .replace('[ ]', '<i class="fa-regular fa-circle"></i>')}</div>`
+                }).join('')
+            } else if (key === 'author') {
+                renderedValue = `<a href="${me.repoUserUrl}${value}" target="_blank">${value}</a>`
+            } else if (key === 'createdAt' || key === 'closedAt' || key === 'updatedAt') {
+                renderedValue = me.formatTimestamp(value)
+            } else {
+                renderedValue = me.formatFrontMatterValue(value)
+            }
+
+            rows += `<tr><td>${key}</td><td>${renderedValue}</td></tr>`
+        });
+
+        if (!rows) {
+            return ''
+        }
+
+        let html = `<table class="neo-frontmatter-table"><tbody>${rows}</tbody></table>`;
+
+        if (me.useFrontmatterDetails) {
+            return `<details id="neo-ticket-summary-details-${me.id}"><summary>Frontmatter</summary>${html}</details>`
+        }
+
+        return html
+    }
+
+    /**
+     * @param {String} label
+     * @returns {String}
+     */
+    getLabelBadgeHtml(label) {
+        let store  = this.getStateProvider().getStore('labels'),
+            record = store.get(label);
+
+        if (record) {
+            return `<span class="neo-badge" style="background-color:${record.color};color:${record.textColor}">${label}</span>`
+        }
+
+        return `<span class="neo-badge">${label}</span>`
+    }
+
+    /**
+     * @param {String} state
+     * @returns {String}
+     */
+    getStateBadgeHtml(state) {
+        if (!state) return '';
+
+        let cls  = 'neo-badge neo-state-badge',
+            icon = 'fa-circle-dot';
+
+        if (state.toUpperCase() === 'CLOSED') {
+            cls  += ' neo-state-closed';
+            icon  = 'fa-circle-check'
+        } else {
+            cls += ' neo-state-open'
+        }
+
+        return `<span class="${cls}"><i class="fa-regular ${icon}"></i>${Neo.capitalize(state.toLowerCase())}</span>`
+    }
+
+    /**
+     * The Main Parsing Pipeline.
+     *
+     * This method intercepts the raw markdown content before it is rendered and performs a multi-pass transformation:
+     * 1. **Extract Timeline**: Pulls out the raw `## Timeline` section to process it separately.
+     * 2. **Process Frontmatter**: Extracts metadata (labels, state, author) and removes the YAML block.
+     * 3. **Render Body**: Uses the superclass (marked.js) to convert the main issue body to HTML.
+     * 4. **Inject Title IDs**: Adds IDs to H1 tags for navigation.
+     * 5. **Generate Badges**: Creates HTML for Status/Label badges based on extracted metadata.
+     * 6. **Wrap Body**: Wraps the main issue body in a `timeline-item` structure so it appears as the first item.
+     * 7. **Re-Assemble**: Concatenates Frontmatter + Title + Timeline (with Body injected) into the final HTML.
+     *
+     * **Side Effect**: Populates `me.timelineData` and updates the `sections` store.
+     *
+     * @param {String} content
+     * @returns {String}
+     */
+    modifyMarkdown(content) {
+        let me              = this,
+            {parentId}      = me.record,
+            author          = null,
+            createdAt       = null,
+            data            = null,
+            frontMatterHtml = '',
+            labels          = [],
+            state           = null,
+            match           = content.match(regexFrontMatter),
+            timelineHtml    = '',
+            badgesHtml      = '';
+
+        me.timelineData = [];
+
+        if (match) {
+            data = me.parseFrontMatter(match[1]);
+
+            if (data.author)    {author    = data.author}
+            if (data.createdAt) {createdAt = me.formatTimestamp(data.createdAt)}
+            if (data.labels)    {
+                // Ensure labels is always an array, even if a single string was parsed
+                labels = Array.isArray(data.labels) ? data.labels : (typeof data.labels === 'string' ? [data.labels] : []);
+            }
+            if (data.state)     {state     = data.state}
+        }
+
+        // 1. Extract and process timeline from RAW markdown
+        let timelineMatch = content.match(regexTimeline);
+        if (timelineMatch) {
+            timelineHtml = me.renderTimeline(timelineMatch[1]);
+            content      = content.replace(regexTimeline, ''); // Remove raw timeline
+        }
+
+        // 2. Render Frontmatter Manually & Strip it
+        // We want it at the very top, outside the body bubble.
+        if (data) {
+            frontMatterHtml = me.frontMatterToHtml(data);
+            content         = content.replace(regexFrontMatter, '');
+        }
+
+        // 3. Convert Body + Title to HTML using super
+        let fullHtml = super.modifyMarkdown(content);
+
+        // 4. Extract H1 Title from the generated HTML
+        let titleHtml = '';
+        fullHtml      = fullHtml.replace(regexH1, (match) => {
+            // Inject ID into H1 tag
+            titleHtml = match.replace('<h1', `<h1 id="ticket-title-${me.id}"`);
+            return ''; // Remove title from body
+        });
+
+        // 5. Construct Badges
+        if (labels.length > 0 || state || (parentId && parentId !== 'Backlog')) {
+            badgesHtml = '<div class="neo-ticket-labels">';
+
+            if (state) {
+                badgesHtml += me.getStateBadgeHtml(state)
+            }
+
+            if (parentId && parentId !== 'Backlog') {
+                badgesHtml += `
+                    <a class="neo-badge neo-release-badge" href="#/news/releases/${parentId.substring(1)}">
+                        <i class="fa-solid fa-code-branch"></i> ${parentId}
+                    </a>`
+            }
+
+            labels.forEach(label => {
+                badgesHtml += me.getLabelBadgeHtml(label)
+            });
+
+            badgesHtml += '</div>';
+            titleHtml  += badgesHtml;
+        }
+
+        // 6. Wrap the remaining HTML (Body) in the Timeline Item structure
+        let bodyId = `timeline-${me.record.id}-0`;
+
+        me.timelineData.unshift({
+            id   : bodyId,
+            ...me.getAvatarRecordProps(author),
+            name : 'Description',
+            tag  : 'body'
+        });
+
+        let bodyItemHtml = `
+            <div id="${bodyId}" class="neo-timeline-item comment body-item" data-record-id="${bodyId}">
+                <div id="${bodyId}-target" class="neo-timeline-avatar">
+                    ${me.getAvatarHtml(author)}
+                </div>
+                <div class="neo-timeline-content">
+                    <div class="neo-timeline-header">
+                        <a class="neo-timeline-user" href="${me.repoUserUrl}${author}" target="_blank">${author}</a>
+                        <span class="neo-timeline-date">commented on ${createdAt}</span>
+                    </div>
+                    <div class="neo-timeline-body">
+
+${fullHtml}
+
+</div>
+                </div>
+            </div>`;
+
+        // 7. Inject Body Item at the start of the Timeline
+        let timelineId = `ticket-timeline-${me.id}`;
+
+        if (timelineHtml) {
+            timelineHtml = timelineHtml.replace(
+                '<div class="neo-ticket-timeline">',
+                `<div id="${timelineId}" class="neo-ticket-timeline">` + bodyItemHtml
+            )
+        } else {
+            timelineHtml = `<div id="${timelineId}" class="neo-ticket-timeline">${bodyItemHtml}</div>`
+        }
+
+        me.getStateProvider().getStore('sections').data = me.timelineData;
+        me.timelineData = null;
+
+        // Return: Frontmatter + Title + Timeline
+        return frontMatterHtml + titleHtml + timelineHtml
+    }
+
+    /**
+     * Parses the custom "Timeline" markdown section.
+     *
+     * Expects a line-based format generated by the build process:
+     * - Events: `- YYYY-MM-DDTHH:mm:ss @user action text...`
+     * - Comments: `### @user - YYYY-MM-DDTHH:mm:ss` followed by comment body.
+     *
+     * This method converts these lines into structured `timeline-item` HTML blocks
+     * and simultaneously populates `me.timelineData` with semantic data (color, icon, type)
+     * for each event.
+     *
+     * @param {String} content
+     * @returns {String}
+     */
+    renderTimeline(content) {
+        let me          = this,
+            {commitsUrl, repoUserUrl} = me,
+            html        = '<div class="neo-ticket-timeline">',
+            lines       = content.split('\n'),
+            commentBuf  = [],
+            currentUser = null,
+            currentDate = null,
+            i           = 0,
+            len         = lines.length,
+            id, line, match, icon, actionCls;
+
+        const flushComment = () => {
+            if (commentBuf.length > 0) {
+                id = `timeline-${me.record.id}-${me.timelineData.length + 1}`;
+
+                me.timelineData.push({
+                    id,
+                    ...me.getAvatarRecordProps(currentUser),
+                    name : `Comment (${currentUser})`,
+                    tag  : 'comment'
+                });
+
+                let body = me.wrapMarkdownTables(marked.parse(commentBuf.join('\n')));
+                html += `
+                    <div id="${id}" class="neo-timeline-item comment" data-record-id="${id}">
+                        <div id="${id}-target" class="neo-timeline-avatar">
+                            ${me.getAvatarHtml(currentUser)}
+                        </div>
+                        <div class="neo-timeline-content">
+                            <div class="neo-timeline-header">
+                                <a class="neo-timeline-user" href="${repoUserUrl}${currentUser}" target="_blank">${currentUser}</a>
+                                <span class="neo-timeline-date">${me.formatTimestamp(currentDate)}</span>
+                            </div>
+                            <div class="neo-timeline-body">${body}</div>
+                        </div>
+                    </div>`;
+                commentBuf  = [];
+                currentUser = null;
+                currentDate = null
+            }
+        };
+
+        for (; i < len; i++) {
+            line = lines[i];
+
+            // Event Line: - 2026-01-11T... @user action...
+            if ((match = line.match(regexTimelineEvent))) {
+                flushComment();
+                let [_, date, user, action] = match;
+
+                icon      = 'fa-circle-dot'; // Default
+                actionCls = '';
+
+                const eventType = [
+                    {key: 'added the `',      icon: 'fa-tag'},
+                    {key: 'removed the `',    icon: 'fa-tag'},
+                    {key: 'assigned',         icon: 'fa-user-pen'},
+                    {key: 'closed',           icon: 'fa-circle-check', color: '#8250df'}, // GitHub Purple
+                    {key: 'reopened',         icon: 'fa-circle-dot',   color: '#2da44e'}, // GitHub Green
+                    {key: 'referenced',       icon: 'fa-link'},
+                    {key: 'cross-referenced', icon: 'fa-link'},
+                    {key: 'milestoned',       icon: 'fa-sign-post'},
+                    {key: 'sub-issue',        icon: 'fa-diagram-project'}
+                ].find(e => action.includes(e.key));
+
+                let color = null;
+
+                if (eventType) {
+                    icon = eventType.icon;
+                    if (eventType.color) color = eventType.color
+                }
+
+                // Clean up markdown in action text (e.g. `code` to <code>)
+                let cleanAction = marked.parseInline(action);
+
+                if (icon === 'fa-tag') {
+                    cleanAction = cleanAction.replace(/<code>(.*?)<\/code>/g, (match, label) => me.getLabelBadgeHtml(label));
+
+                    // Try to resolve color from label
+                    let labelMatch = action.match(/`([^`]+)`/);
+                    if (labelMatch) {
+                        let labelName = labelMatch[1];
+                        let labelRec  = me.getStateProvider().getStore('labels').get(labelName);
+                        if (labelRec) {
+                            color = labelRec.color;
+                        }
+                    }
+                }
+
+                // Linkify Commit Hashes
+                cleanAction = cleanAction.replace(regexCommit, `<a href="${commitsUrl}$1" target="_blank">$1</a>`);
+
+                id = `timeline-${me.record.id}-${me.timelineData.length + 1}`;
+
+                // Extract a short action name for the list
+                let shortAction = action.split(' ')[0]; // 'added', 'closed', etc.
+                let entryName;
+
+                if (shortAction === 'added' || shortAction === 'removed') {
+                    if (action.includes('sub-issue')) {
+                        let subIssueMatch = action.match(/#(\d+)/);
+                        if (subIssueMatch) {
+                            entryName = `${Neo.capitalize(shortAction)} sub-issue #${subIssueMatch[1]}`
+                        } else {
+                            entryName = `${Neo.capitalize(shortAction)} sub-issue`
+                        }
+                    } else {
+                        let labelMatch = action.match(/`([^`]+)`/);
+                        shortAction = labelMatch ? labelMatch[1] : 'Label';
+                        entryName = `${Neo.capitalize(shortAction)} (${user})`
+                    }
+                } else {
+                    entryName = `${Neo.capitalize(shortAction)} (${user})`
+                }
+
+                me.timelineData.push({
+                    color, // Pass resolved hex color
+                    icon,
+                    id,
+                    name : entryName,
+                    tag  : 'event'
+                });
+
+                // Apply color style if present, otherwise default
+                let style = color ? `style="color: ${color}"` : '';
+
+                html += `
+                    <div id="${id}" class="neo-timeline-item event" data-record-id="${id}">
+                        <div id="${id}-target" class="neo-timeline-badge" ${style}><i class="fa-solid ${icon}"></i></div>
+                        <div class="neo-timeline-body">
+                            <a class="neo-timeline-user" href="${repoUserUrl}${user}" target="_blank">${user}</a> ${cleanAction} <span class="neo-timeline-date">on ${me.formatTimestamp(date)}</span>
+                        </div>
+                    </div>`;
+            }
+            // Comment Header: ### @user - 2026-01-11T...
+            else if (line.startsWith('### @')) {
+                // Captures "user" and "2026-01-11T..." (ISO timestamp)
+                let headerMatch = line.match(/^### @(\w+) - ([\dTZ:.-]+)$/);
+                if (headerMatch) {
+                    flushComment();
+                    currentUser = headerMatch[1];
+                    currentDate = headerMatch[2]
+                } else {
+                    // Fallback for weird headers? treat as text
+                    if (currentUser) commentBuf.push(line)
+                }
+            }
+            else {
+                if (currentUser) {
+                    commentBuf.push(line)
+                }
+            }
+        }
+
+        flushComment(); // Flush last comment
+
+        html += '</div>';
+        return html
+    }
+}
+
+export default Neo.setupClass(Component);

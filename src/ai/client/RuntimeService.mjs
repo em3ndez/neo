@@ -1,0 +1,780 @@
+import DomEventManager from '../../manager/DomEvent.mjs';
+import HashHistory     from '../../util/HashHistory.mjs';
+import Service         from './Service.mjs';
+import WindowManager   from '../../manager/Window.mjs';
+
+/**
+ * @summary Registers the JSON-RPC method prefixes one RuntimeService instance answers.
+ * @param {Object} serviceMap Mutable Client prefix map.
+ * @param {RuntimeService} service Owning service instance.
+ * @returns {Object} The same map after registration.
+ */
+export function registerRuntimeServiceMethods(serviceMap, service) {
+    return Object.assign(serviceMap, {
+        check_namespace      : service,
+        close_window         : service,
+        focus_window         : service,
+        get_dom_event        : service,
+        get_drag             : service,
+        get_method_source    : service,
+        get_namespace_tree   : service,
+        get_neo_config       : service,
+        get_route            : service,
+        get_window           : service,
+        inspect_class        : service,
+        open_component_window: service,
+        patch_code           : service,
+        position_window      : service,
+        reload_page          : service,
+        set_neo_config       : service,
+        set_route            : service
+    })
+}
+
+/**
+ * Handles runtime environment related Neural Link requests.
+ * @class Neo.ai.client.RuntimeService
+ * @extends Neo.ai.client.Service
+ */
+class RuntimeService extends Service {
+    static config = {
+        /**
+         * @member {String} className='Neo.ai.client.RuntimeService'
+         * @protected
+         */
+        className: 'Neo.ai.client.RuntimeService',
+        /**
+         * @member {Number} closeWindowPollAttempts=80
+         * @protected
+         */
+        closeWindowPollAttempts: 80,
+        /**
+         * @member {Number} closeWindowPollDelay=25
+         * @protected
+         */
+        closeWindowPollDelay: 25
+    }
+
+    /**
+     * Checks if a namespace exists in the current environment.
+     * @param {Object} params
+     * @param {String} params.namespace
+     * @returns {Object} {exists: Boolean}
+     */
+    checkNamespace({namespace}) {
+        return {
+            exists: !!Neo.ns(namespace)
+        }
+    }
+
+    /**
+     * @param {Object} params
+     * @param {String} params.componentId
+     * @returns {Object}
+     */
+    getDomEventListeners({componentId}) {
+        const
+            listeners = [],
+            eventMap  = DomEventManager.items?.[componentId];
+
+        if (eventMap) {
+            Object.entries(eventMap).forEach(([eventName, events]) => {
+                events.forEach(event => {
+                    listeners.push({
+                        delegate: event.delegate,
+                        event   : eventName,
+                        handler : typeof event.fn === 'function' ? event.fn.name || 'anonymous' : event.fn,
+                        priority: event.priority,
+                        scope   : event.scope?.id || 'unknown'
+                    })
+                })
+            })
+        }
+
+        return {listeners}
+    }
+
+    /**
+     * @param {Object} params
+     * @returns {Object}
+     */
+    getDomEventSummary(params) {
+        const summary = {
+            byComponent: {},
+            byEvent    : {},
+            totalEvents: 0
+        };
+
+        Object.entries(DomEventManager.items).forEach(([componentId, eventMap]) => {
+            let componentCount = 0;
+
+            Object.entries(eventMap).forEach(([eventName, events]) => {
+                const count = events.length;
+
+                summary.totalEvents       += count;
+                componentCount            += count;
+                summary.byEvent[eventName] = (summary.byEvent[eventName] || 0) + count
+            });
+
+            if (componentCount > 0) {
+                summary.byComponent[componentId] = componentCount
+            }
+        });
+
+        return summary
+    }
+
+    /**
+     * @param {Object} params
+     * @returns {Object}
+     */
+    getDragState(params) {
+        const dragCoordinator = Neo.manager?.DragCoordinator;
+
+        if (dragCoordinator) {
+            return dragCoordinator.toJSON()
+        }
+
+        return {};
+    }
+
+    /**
+     * Returns the recent drag-lifecycle traces recorded by Neo.draggable.container.SortZone
+     * (start geometry, per-move decisions, switches, scroll activations, end resolution).
+     * Resolved via the class namespace so apps without loaded SortZones pay nothing.
+     * @param {Object}  params
+     * @param {Boolean} [params.clear=false] Empty the ring buffer after reading
+     * @returns {Object}
+     */
+    getDragTrace({clear = false} = {}) {
+        const
+            SortZone = Neo.draggable?.container?.SortZone,
+            traces   = SortZone?.traces || [];
+
+        const result = {count: traces.length, traces: [...traces]};
+
+        if (clear && SortZone) {
+            SortZone.traces.length = 0
+        }
+
+        return result
+    }
+
+    /**
+     * Retrieves the source code of a method on a class prototype.
+     * @param {Object} params
+     * @param {String} params.className  The fully qualified class name.
+     * @param {String} params.methodName The name of the method.
+     * @returns {Object} {success: Boolean, source?: String, error?: String}
+     */
+    getMethodSource({className, methodName}) {
+        const cls = Neo.ns(className);
+
+        if (!cls) {
+            return {success: false, error: `Class '${className}' not found`}
+        }
+
+        const type = Neo.typeOf(cls);
+        let proto;
+
+        if (type === 'NeoClass') {
+            proto = cls.prototype
+        } else if (type === 'NeoInstance') {
+            proto = cls.constructor.prototype
+        } else {
+            return {success: false, error: `Target '${className}' is not a Neo class or instance`}
+        }
+
+        if (typeof proto[methodName] !== 'function') {
+            return {success: false, error: `Method '${methodName}' not found on '${className}'`}
+        }
+
+        return {
+            success: true,
+            source : proto[methodName].toString()
+        }
+    }
+
+    /**
+     * Retrieves the loaded namespace tree.
+     * @param {Object} params
+     * @param {String} [params.root='Neo'] The root namespace to start from (e.g., 'Neo', 'MyApp').
+     * @returns {Object}
+     */
+    getNamespaceTree({root='Neo'}) {
+        const
+            me        = this,
+            startNode = Neo.ns(root),
+            tree      = {};
+
+        if (!startNode) {
+            return {tree: {}, error: `Namespace '${root}' not found`}
+        }
+
+        me.#traverseNamespace(startNode, root, tree);
+
+        return {root, tree}
+    }
+
+    /**
+     * @param {Object} params
+     * @param {String} [params.windowId]
+     * @returns {Object}
+     */
+    getNeoConfig({windowId}) {
+        if (windowId) {
+            return Neo.windowConfigs?.[windowId] || null
+        }
+        return Neo.config
+    }
+
+    /**
+     * @param {Object} params
+     * @param {String} [params.windowId]
+     * @returns {Object}
+     */
+    getRouteHistory({windowId}) {
+        const stack = HashHistory.getStack(windowId);
+
+        return {
+            count   : stack.length,
+            history : stack,
+            windowId: windowId || null
+        }
+    }
+
+    /**
+     * @param {Object} params
+     * @returns {Object}
+     */
+    getWindowInfo(params) {
+        const windowManager = Neo.manager?.Window;
+
+        if (windowManager) {
+            return windowManager.toJSON()
+        }
+
+        return {windows: []};
+    }
+
+    /**
+     * Opens a dashboard widget in a browser popup through the live dashboard primitive.
+     * @param {Object} params
+     * @param {String} params.componentId
+     * @param {String} [params.dashboardId]
+     * @param {Object} [params.rect]
+     * @returns {Promise<Object>}
+     */
+    async openComponentWindow({componentId, dashboardId, rect} = {}) {
+        const component = Neo.getComponent(componentId);
+
+        if (!component) {
+            return {success: false, error: `Unknown componentId '${componentId}'.`}
+        }
+
+        const dashboard = this.#resolveDashboardHost(component, dashboardId);
+
+        if (!dashboard) {
+            return {
+                success: false,
+                error  : dashboardId ?
+                    `Component '${dashboardId}' cannot open dashboard popups.` :
+                    `Component '${componentId}' is not inside a dashboard host that can open popups.`
+            }
+        }
+
+        const popupData = await dashboard.openWidgetInPopup(component, await this.#normalizePopupRect(component, rect));
+
+        if (!popupData) {
+            return {
+                success: false,
+                error  : `Dashboard '${dashboard.id}' did not open a popup for component '${componentId}'.`
+            }
+        }
+
+        return {
+            success    : true,
+            componentId,
+            dashboardId: dashboard.id,
+            ...popupData
+        }
+    }
+
+    /**
+     * Closes a topology-known popup through the main thread that owns its native handle, then waits for the
+     * App Worker topology to observe the terminal disconnect.
+     * @param {Object} params
+     * @param {String} params.windowId
+     * @returns {Promise<Object>}
+     */
+    async closeWindow({windowId} = {}) {
+        const windowEntry = this.#getKnownWindow(windowId);
+
+        if (!windowEntry) {
+            return {success: false, error: `Unknown windowId '${windowId}'.`}
+        }
+
+        // This runtime dispatches AS the route's owner rather than asserting it owns the window, so it
+        // asserts no owner and passes ownerWindowId straight through to Main.
+        const {route} = WindowManager.resolveNativeRoute({capability: 'close', route: windowEntry.nativeRoute});
+
+        if (!route) {
+            return {
+                success    : false,
+                unsupported: true,
+                error      : `Window '${windowId}' cannot be closed by this runtime.`
+            }
+        }
+
+        const accepted = await Neo.Main.windowNativeClose({
+            nativeHandleKey: route.nativeHandleKey,
+            targetWindowId : route.targetWindowId,
+            windowId       : route.ownerWindowId
+        });
+
+        if (accepted !== true) {
+            return {
+                success: false,
+                stale  : true,
+                error  : `Window '${windowId}' no longer has a live native close handle.`
+            }
+        }
+
+        for (let attempt = 0; attempt < this.closeWindowPollAttempts; attempt++) {
+            if (!this.#getKnownWindow(windowId)) {
+                return {success: true, windowId}
+            }
+
+            await this.timeout(this.closeWindowPollDelay)
+        }
+
+        return {
+            success : false,
+            timedOut: true,
+            error   : `Window '${windowId}' accepted close but remained in topology.`
+        }
+    }
+
+    /**
+     * Moves a known browser popup through the main thread that owns its native handle.
+     * @param {Object} params
+     * @param {String} params.windowId
+     * @param {Number} params.x
+     * @param {Number} params.y
+     * @returns {Promise<Object>}
+     */
+    async positionWindow({windowId, x, y} = {}) {
+        const windowEntry = this.#getKnownWindow(windowId);
+
+        if (!windowEntry) {
+            return {success: false, error: `Unknown windowId '${windowId}'.`}
+        }
+
+        const {route} = WindowManager.resolveNativeRoute({capability: 'position', route: windowEntry.nativeRoute});
+
+        if (!route) {
+            return {
+                success    : false,
+                unsupported: true,
+                error      : `Window '${windowId}' cannot be positioned by this runtime.`
+            }
+        }
+
+        const positioned = await Neo.Main.windowNativeMoveTo({
+            nativeHandleKey: route.nativeHandleKey,
+            targetWindowId : route.targetWindowId,
+            windowId       : route.ownerWindowId,
+            x,
+            y
+        });
+
+        if (positioned !== true) {
+            return {
+                success: false,
+                blocked: true,
+                error  : `Window '${windowId}' did not reach the requested position.`
+            }
+        }
+
+        return {success: true, windowId, x, y}
+    }
+
+    /**
+     * Focuses a known browser popup through the main thread that owns its native handle.
+     * @param {Object} params
+     * @param {String} params.windowId
+     * @returns {Promise<Object>}
+     */
+    async focusWindow({windowId} = {}) {
+        const windowEntry = this.#getKnownWindow(windowId);
+
+        if (!windowEntry) {
+            return {success: false, error: `Unknown windowId '${windowId}'.`}
+        }
+
+        const {route} = WindowManager.resolveNativeRoute({capability: 'focus', route: windowEntry.nativeRoute});
+
+        if (!route) {
+            return {
+                success    : false,
+                unsupported: true,
+                error      : `Window '${windowId}' cannot be focused by this runtime.`
+            }
+        }
+
+        const focused = await Neo.Main.windowNativeFocus({
+            nativeHandleKey: route.nativeHandleKey,
+            targetWindowId : route.targetWindowId,
+            windowId       : route.ownerWindowId
+        });
+
+        if (focused !== true) {
+            return {
+                success: false,
+                blocked: true,
+                error  : `Window '${windowId}' did not accept focus.`
+            }
+        }
+
+        return {success: true, windowId}
+    }
+
+    /**
+     * Inspects a class to retrieve its full schema (configs, methods, hierarchy).
+     * @param {Object} params
+     * @param {String} params.className
+     * @param {String} [params.detail='standard'] 'standard' | 'compact'
+     * @returns {Object}
+     */
+    inspectClass({className, detail='standard'}) {
+        const cls = Neo.ns(className);
+
+        if (!cls) {
+            throw new Error(`Class not found: ${className}`)
+        }
+
+        const
+            isClass = cls.isClass,
+            ctor    = isClass ? cls : cls.constructor,
+            proto   = ctor.prototype;
+
+        // 1. Hierarchy & Mixins
+        const getMixinNames = (obj) => {
+            const names = [];
+            if (Neo.isObject(obj)) {
+                Object.values(obj).forEach(value => {
+                    if (value && value.isClass) {
+                        names.push(value.prototype.className)
+                    } else {
+                        names.push(...getMixinNames(value))
+                    }
+                })
+            }
+            return names
+        };
+
+        // 2. Configs & Methods
+        const
+            configs      = {},
+            methods      = new Set(),
+            configKeys   = new Set(Object.keys(ctor.config)),
+            descriptors  = ctor.configDescriptors || {},
+            ignoredProps = ['constructor', 'construct', 'init', 'onConstructed', 'onAfterConstructed'],
+            hookRegex    = /^(before|after)(Get|Set)([A-Z])/,
+            // Helper to get raw hook name from config key
+            getHookName    = (prefix, key) => prefix + key[0].toUpperCase() + key.slice(1);
+
+        // Serialize the default values first
+        const defaultValues = this.serializeConfig(ctor.config);
+
+        // Get superclass config for comparison in compact mode
+        const
+            superCtor   = ctor.__proto__,
+            superConfig = superCtor?.config || {};
+
+        // Process Configs
+        Object.keys(defaultValues).forEach(key => {
+            // In compact mode, only include configs that are "own" (not in super or changed)
+            if (detail === 'compact') {
+                const isOwn = !Object.hasOwn(superConfig, key) || superConfig[key] !== ctor.config[key];
+                if (!isOwn) return
+            }
+
+            configs[key] = {
+                value: defaultValues[key]
+            };
+
+            // Add Descriptor info if available
+            if (descriptors[key]) {
+                configs[key].meta = this.serializeConfig(descriptors[key])
+            }
+
+            // Check for Hooks
+            const hooks = [];
+            ['beforeGet', 'beforeSet', 'afterSet'].forEach(prefix => {
+                const hookName = getHookName(prefix, key);
+                // In compact mode, only check for hooks on the current prototype
+                if (detail === 'compact') {
+                    if (Object.hasOwn(proto, hookName)) {
+                        hooks.push(prefix)
+                    }
+                } else {
+                    if (typeof proto[hookName] === 'function') {
+                        hooks.push(prefix)
+                    }
+                }
+            });
+
+            if (hooks.length > 0) {
+                configs[key].hooks = hooks
+            }
+        });
+
+        // Process Methods
+        let currentProto = proto;
+
+        // Traverse up to Neo.core.Base
+        while (currentProto && currentProto.constructor.className !== 'Object') {
+            Object.getOwnPropertyNames(currentProto).forEach(name => {
+                if (
+                    !configKeys.has(name) &&
+                    !ignoredProps.includes(name) &&
+                    !name.startsWith('_') &&
+                    !name.startsWith('#')
+                ) {
+                    // Check if it's a hook
+                    const hookMatch = name.match(hookRegex);
+                    if (hookMatch) {
+                        // It is a hook. We only care if it wasn't already caught by the config loop.
+                        // But since we want a clean method list, we generally exclude hooks here.
+                        // The config loop above captures hooks *associated with known configs*.
+                        // Orphaned hooks (for non-existent configs?) are rare/invalid.
+                    } else {
+                        const descriptor = Object.getOwnPropertyDescriptor(currentProto, name);
+                        if (typeof descriptor.value === 'function') {
+                            methods.add(name)
+                        }
+                    }
+                }
+            });
+
+            // In compact mode, we only look at the top-level prototype
+            if (detail === 'compact') {
+                break
+            }
+
+            currentProto = currentProto.__proto__
+        }
+
+        return {
+            className : proto.className,
+            ntype     : proto.ntype,
+            ntypeChain: ctor.ntypeChain,
+            superClass: proto.__proto__?.constructor?.config?.className || null,
+            mixins    : proto.mixins ? getMixinNames(proto.mixins) : [],
+            configs,
+            methods   : Array.from(methods).sort()
+        }
+    }
+
+    /**
+     * Replaces a method implementation on a class prototype at runtime.
+     * RESTRICTED: Requires Neo.config.enableHotPatching = true.
+     *
+     * @param {Object} params
+     * @param {String} params.className  The fully qualified class name (e.g., 'Neo.button.Base')
+     * @param {String} params.methodName The name of the method to patch
+     * @param {String} params.source     The new function source code (e.g., 'function(args) { ... }' or 'async (args) => { ... }')
+     * @returns {Object} {success: Boolean, error?: String}
+     */
+    patchCode({className, methodName, source}) {
+        if (Neo.config.enableHotPatching !== true) {
+            return {
+                success: false,
+                error  : 'Hot patching is disabled. Set Neo.config.enableHotPatching = true to enable.'
+            }
+        }
+
+        const cls = Neo.ns(className);
+
+        if (!cls) {
+            return {
+                success: false,
+                error  : `Class '${className}' not found`
+            }
+        }
+
+        if (!cls.prototype) {
+            return {
+                success: false,
+                error  : `Class '${className}' has no prototype (is it a singleton?)`
+            }
+        }
+
+        try {
+            // Use new Function to parse the source code safely into a function object.
+            // This avoids direct use of eval() and ensures the code runs in the global scope.
+            // eslint-disable-next-line no-new-func
+            const fn = new Function('return ' + source)();
+
+            if (typeof fn !== 'function') {
+                return {
+                    success: false,
+                    error  : 'Source did not evaluate to a function'
+                }
+            }
+
+            // 1. Log the patch for audit
+            console.warn(`[Neo.ai.client.RuntimeService] Hot-patching ${className}.prototype.${methodName}`);
+
+            // 2. Apply the patch
+            cls.prototype[methodName] = fn;
+
+            // 3. Mark method as patched (useful for debugging)
+            fn.$isPatched = true;
+            fn.$originalSource = source;
+
+            return {success: true}
+
+        } catch (e) {
+            console.error('[Neo.ai.client.RuntimeService] Hot patch failed:', e);
+            return {
+                success: false,
+                error  : e.message
+            }
+        }
+    }
+
+    /**
+     * @param {Object} params
+     * @returns {Object}
+     */
+    reloadPage(params) {
+        Neo.Main.reloadWindow();
+        return {status: 'reloading'};
+    }
+
+    /**
+     * @param {Object} params
+     * @param {Object} params.config
+     * @returns {Object}
+     */
+    setNeoConfig({config}) {
+        Neo.setGlobalConfig(config);
+        return {status: 'ok'}
+    }
+
+    /**
+     * @param {Object} params
+     * @param {String} params.hash
+     * @param {String} [params.windowId]
+     * @returns {Object}
+     */
+    setRoute({hash, windowId}) {
+        Neo.Main.setRoute({
+            value: hash,
+            windowId
+        });
+
+        return {status: 'ok', hash}
+    }
+
+    /**
+     * @param {String} windowId
+     * @returns {Object|null}
+     */
+    #getKnownWindow(windowId) {
+        return windowId ? Neo.manager?.Window?.get(windowId) || null : null
+    }
+
+    /**
+     * @param {Neo.component.Base} component
+     * @param {String} [dashboardId]
+     * @returns {Neo.dashboard.Container|null}
+     */
+    #resolveDashboardHost(component, dashboardId) {
+        if (dashboardId) {
+            const dashboard = Neo.getComponent(dashboardId);
+
+            return typeof dashboard?.openWidgetInPopup === 'function' ? dashboard : null
+        }
+
+        let candidate = component;
+
+        while (candidate) {
+            if (typeof candidate.openWidgetInPopup === 'function') {
+                return candidate
+            }
+
+            candidate = candidate.parent
+        }
+
+        return null
+    }
+
+    /**
+     * @param {Neo.component.Base} component
+     * @param {Object} [rect]
+     * @returns {Promise<Object>}
+     */
+    async #normalizePopupRect(component, rect) {
+        let source = rect;
+
+        if (!source && typeof component.getDomRect === 'function') {
+            source = await component.getDomRect(component.id)
+        }
+
+        source ||= {};
+
+        const
+            width  = Number(source.width  ?? 480),
+            height = Number(source.height ?? 320),
+            x      = Number(source.x ?? source.left ?? 0),
+            y      = Number(source.y ?? source.top  ?? 0);
+
+        return {
+            height: Number.isFinite(height) ? Math.max(1, height) : 320,
+            width : Number.isFinite(width)  ? Math.max(1, width)  : 480,
+            x     : Number.isFinite(x)      ? x                  : 0,
+            y     : Number.isFinite(y)      ? y                  : 0
+        }
+    }
+
+    /**
+     * @param {Object} node
+     * @param {String} path
+     * @param {Object} output
+     */
+    #traverseNamespace(node, path, output) {
+        Object.keys(node).forEach(key => {
+            const
+                value       = node[key],
+                type        = Neo.typeOf(value),
+                currentPath = path ? `${path}.${key}` : key;
+
+            if (type === 'NeoClass') {
+                output[key] = {
+                    type     : 'class',
+                    className: value.prototype.className
+                }
+            } else if (type === 'NeoInstance') {
+                output[key] = {
+                    type     : 'singleton',
+                    className: value.className
+                }
+            } else if (type === 'Object') {
+                // Only traverse plain objects (namespaces)
+                // Neo.typeOf returns 'Object' for plain objects
+                output[key] = {};
+                this.#traverseNamespace(value, currentPath, output[key]);
+
+                // Clean up empty packages
+                if (Object.keys(output[key]).length === 0) {
+                    delete output[key]
+                }
+            }
+        })
+    }
+}
+
+export default Neo.setupClass(RuntimeService);

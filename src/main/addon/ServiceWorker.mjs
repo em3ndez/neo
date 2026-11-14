@@ -1,11 +1,10 @@
-import Base          from '../../core/Base.mjs';
+import Base          from './Base.mjs';
 import WorkerManager from '../../worker/Manager.mjs';
 
 /**
  * Creates a ServiceWorker instance, in case Neo.config.useServiceWorker is set to true
  * @class Neo.main.addon.ServiceWorker
- * @extends Neo.core.Base
- * @singleton
+ * @extends Neo.main.addon.Base
  */
 class ServiceWorker extends Base {
     static config = {
@@ -13,50 +12,57 @@ class ServiceWorker extends Base {
          * @member {String} className='Neo.main.addon.ServiceWorker'
          * @protected
          */
-        className: 'Neo.main.addon.ServiceWorker',
-        /**
-         * @member {Boolean} singleton=true
-         * @protected
-         */
-        singleton: true
+        className: 'Neo.main.addon.ServiceWorker'
     }
 
     /**
      * @param {Object} config
      */
     construct(config) {
+        super.construct(config);
+        this.registerServiceWorker()
+    }
+
+    /**
+     * @returns {Promise<void>}
+     */
+    async registerServiceWorker() {
         if ('serviceWorker' in navigator) {
-            let me            = this,
-                config        = Neo.config,
-                devMode       = config.environment === 'development',
-                fileName      = devMode ? 'ServiceWorker.mjs' : 'serviceworker.js',
-                folder        = window.location.pathname.includes('/examples/') ? 'examples/' : 'apps/',
-                opts          = devMode ? {type: 'module'} : {},
-                path          = (devMode ? config.basePath : config.workerBasePath) + (devMode ? folder : '') + fileName,
-                serviceWorker = navigator.serviceWorker;
+            let me              = this,
+                {config}        = Neo,
+                {environment}   = config,
+                devMode         = environment === 'development',
+                distEsm         = environment === 'dist/esm',
+                useMjsFiles     = devMode || distEsm,
+                fileName        = useMjsFiles ? 'ServiceWorker.mjs' : 'serviceworker.js',
+                opts            = {type: 'module'},
+                path            = (useMjsFiles ? config.basePath : config.workerBasePath) + fileName,
+                {serviceWorker} = navigator,
+                registration;
+
+            if (distEsm) {
+                path = path.substring(6)
+            }
+
+            registration = await serviceWorker.register(path, opts);
 
             window.addEventListener('beforeunload', me.onBeforeUnload.bind(me));
 
-            serviceWorker.register(path, opts)
-                .then(registration => {
-                    serviceWorker.ready.then(() => {
-                        serviceWorker.onmessage = WorkerManager.onWorkerMessage.bind(WorkerManager);
+            await serviceWorker.ready;
 
-                        if (!WorkerManager.getWorker('service')) {
-                            /*
-                             * navigator.serviceWorker.controller can be null in case we load a page for the first time
-                             * or in case of a force refresh.
-                             * See: https://www.w3.org/TR/service-workers/#navigator-service-worker-controller
-                             */
-                            WorkerManager.serviceWorker = registration.active;
-                        }
+            if (!WorkerManager.getWorker('service')) {
+                /*
+                 * navigator.serviceWorker.controller can be null in case we load a page for the first time
+                 * or in case of a force refresh.
+                 * See: https://www.w3.org/TR/service-workers/#navigator-service-worker-controller
+                 */
+                WorkerManager.serviceWorker = registration.active
+            }
 
-                        WorkerManager.sendMessage('service', {
-                            action: 'registerNeoConfig',
-                            data  : config
-                        })
-                    });
-                })
+            WorkerManager.sendMessage('service', {
+                action: 'registerNeoConfig',
+                data  : config
+            })
         }
     }
 
@@ -66,10 +72,8 @@ class ServiceWorker extends Base {
     onBeforeUnload() {
         WorkerManager.sendMessage('service', {
             action: 'unregisterPort'
-        });
+        })
     }
 }
 
-let instance = Neo.applyClassConfig(ServiceWorker);
-
-export default instance;
+export default Neo.setupClass(ServiceWorker);

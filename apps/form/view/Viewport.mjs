@@ -1,8 +1,8 @@
-import BaseViewport       from '../../../src/container/Viewport.mjs';
-import FormContainer      from './FormContainer.mjs';
-import SideNavList        from './SideNavList.mjs';
-import ViewportController from './ViewportController.mjs';
-import ViewportModel      from './ViewportModel.mjs';
+import BaseViewport          from '../../../src/container/Viewport.mjs';
+import FormContainer         from './FormContainer.mjs';
+import SideNavList           from './SideNavList.mjs';
+import ViewportController    from './ViewportController.mjs';
+import ViewportStateProvider from './ViewportStateProvider.mjs';
 
 /**
  * @class Form.view.Viewport
@@ -17,6 +17,7 @@ class Viewport extends BaseViewport {
         className: 'Form.view.Viewport',
         /**
          * @member {Neo.controller.Component} controller=ViewportController
+         * @reactive
          */
         controller: ViewportController,
         /**
@@ -29,14 +30,14 @@ class Viewport extends BaseViewport {
 
             items: [{
                 flex: 'none',
-                vdom: {tag: 'h1', innerHTML: 'Nested Forms'}
+                vdom: {tag: 'h1', html: 'Nested Forms'}
             }, {
                 module   : SideNavList,
                 reference: 'side-nav',
 
                 bind: {
-                    headerlessActiveIndex: data => data.activeIndex,
-                    store                : 'stores.sideNav'
+                    headerlessSelectedIndex: data => data.activeIndex,
+                    store                  : 'stores.sideNav'
                 }
             }]
         }, {
@@ -46,15 +47,15 @@ class Viewport extends BaseViewport {
         }],
         /**
          * @member {Object} layout={ntype:'hbox',align:'stretch'}
+         * @reactive
          */
         layout: {ntype: 'hbox', align: 'stretch'},
         /**
-         * @member {Neo.model.Component} model=ViewportModel
+         * @member {Neo.state.Provider} stateProvider=ViewportStateProvider
+         * @reactive
          */
-        model: ViewportModel
+        stateProvider: ViewportStateProvider
     }
 }
 
-Neo.applyClassConfig(Viewport);
-
-export default Viewport;
+export default Neo.setupClass(Viewport);

@@ -14,6 +14,7 @@ class DemoDialog extends Dialog {
         className: 'SharedDialog.view.DemoDialog',
         /**
          * @member {String} title='Drag me across Windows!'
+         * @reactive
          */
         title: 'Drag me across Windows!',
         /**
@@ -26,8 +27,10 @@ class DemoDialog extends Dialog {
         },
         /**
          * @member {Object} itemDefaults={labelWidth:70}
+         * @reactive
          */
         itemDefaults: {
+            flex      : 'none',
             labelWidth: 70
         },
         /**
@@ -35,23 +38,12 @@ class DemoDialog extends Dialog {
          */
         items: [{
             module   : TextField,
-            flex     : 'none',
             labelText: 'Field 1'
         }, {
             module   : TextField,
-            flex     : 'none',
             labelText: 'Field 2'
-        }],
-        /**
-         * @member {Object} wrapperStyle={height:'40%',width:'40%'}
-         */
-        wrapperStyle: {
-            height: '40%',
-            width : '40%'
-        }
+        }]
     }
 }
 
-Neo.applyClassConfig(DemoDialog);
-
-export default DemoDialog;
+export default Neo.setupClass(DemoDialog);

@@ -1,5 +1,5 @@
-import Panel    from '../container/Panel.mjs';
 import NeoArray from '../util/Array.mjs';
+import Panel    from '../container/Panel.mjs';
 import Toolbar  from './header/Toolbar.mjs';
 import VDomUtil from '../util/VDom.mjs';
 
@@ -9,7 +9,7 @@ let DragZone;
  * @class Neo.dialog.Base
  * @extends Neo.container.Panel
  */
-class Base extends Panel {
+class Dialog extends Panel {
     /**
      * Valid values for closeAction
      * @member {String[]} closeActions=['close','hide']
@@ -35,16 +35,21 @@ class Base extends Panel {
         animateOnDragEnd: false,
         /**
          * @member {String|null} animateTargetId_=null
+         * @reactive
          */
         animateTargetId_: null,
+        /**
+         * @member {Boolean} autoInitVnode=true
+         */
+        autoInitVnode: true,
         /**
          * @member {Boolean} autoMount=true
          */
         autoMount: true,
         /**
-         * @member {Boolean} autoRender=true
+         * @member {Boolean} autoShow=true
          */
-        autoRender: true,
+        autoShow: true,
         /**
          * @member {String[]} baseCls=['neo-dialog','neo-panel','neo-container']
          * @protected
@@ -64,6 +69,7 @@ class Base extends Panel {
         closeAction: 'close',
         /**
          * @member {Boolean} draggable_=true
+         * @reactive
          */
         draggable_: true,
         /**
@@ -80,6 +86,10 @@ class Base extends Panel {
          */
         dragZoneConfig: null,
         /**
+         * @member {Boolean} floating=true
+         */
+        floating: true,
+        /**
          * @member {Object} headerConfig=null
          */
         headerConfig: null,
@@ -93,11 +103,19 @@ class Base extends Panel {
          */
         isDragging: false,
         /**
+         * @member {Object} keys={Escape:'onKeyDownEscape'}
+         * @reactive
+         */
+        keys: {
+            Escape: 'onKeyDownEscape'
+        },
+        /**
          * @member {String} maximizeCls='far fa-window-maximize'
          */
         maximizeCls: 'far fa-window-maximize',
         /**
          * @member {Boolean} maximized_=false
+         * @reactive
          */
         maximized_: false,
         /**
@@ -105,7 +123,13 @@ class Base extends Panel {
          */
         minimizeCls: 'far fa-window-minimize',
         /**
+         * @member {Boolean} modal_=false
+         * @reactive
+         */
+        modal_: false,
+        /**
          * @member {Boolean} resizable_=true
+         * @reactive
          */
         resizable_: true,
         /**
@@ -114,15 +138,23 @@ class Base extends Panel {
         resizablePluginConfig: null,
         /**
          * @member {String|null} title_=null
+         * @reactive
          */
         title_: null,
         /**
-         * @member {Object} _vdom
+         * Set to `true` to have tabbing wrap within this Dialog.
+         * Should be used with `modal`.
+         * @member {Boolean} trapFocus_=false
+         * @reactive
          */
-        _vdom:
-        {cls: ['neo-dialog-wrapper'], cn: [
-            {cn: []}
-        ]}
+        trapFocus_: false
+    }
+
+    /**
+     * @member {Neo.component.Base|null} animateTarget=null
+     */
+    get animateTarget() {
+        return Neo.getComponent(this.animateTargetId)
     }
 
     /**
@@ -130,25 +162,22 @@ class Base extends Panel {
      */
     construct(config) {
         super.construct(config);
-
-        let me = this;
-
-        me.vdom.id = me.getWrapperId();
-
-        me.createHeader();
-
-        me.animateTargetId && me.animateShow();
+        this.createHeader()
     }
 
     /**
-     * Triggered after the animateTargetId config got changed
+     * Triggered after the animateTargetId config got changed.
+     * A dialog with an animation target mounts through animateShow(), so it is created unmounted.
+     * Without one, autoInitVnode and autoMount keep their own value.
      * @param {String|null} value
      * @param {String|null} oldValue
      * @protected
      */
     afterSetAnimateTargetId(value, oldValue) {
-        this.autoMount  = !value;
-        this.autoRender = !value;
+        if (value) {
+            this.autoMount     = false;
+            this.autoInitVnode = false
+        }
     }
 
     /**
@@ -159,17 +188,17 @@ class Base extends Panel {
      */
     afterSetAppName(value, oldValue) {
         let me        = this,
-            resizable = me.getPlugin({flag: 'resizable'});
+            resizable = me.getPlugin('resizable');
 
         if (me.dragZone) {
-            me.dragZone.appName = value;
+            me.dragZone.appName = value
         }
 
         if (resizable) {
-            resizable.appName = value;
+            resizable.appName = value
         }
 
-        super.afterSetAppName(value, oldValue);
+        super.afterSetAppName(value, oldValue)
     }
 
     /**
@@ -179,35 +208,34 @@ class Base extends Panel {
      * @protected
      */
     afterSetDraggable(value, oldValue) {
-        let me           = this,
-            domListeners = me.domListeners,
+        let me = this,
             cls;
 
         if (oldValue !== undefined && me.headerToolbar) {
             cls = me.headerToolbar.cls;
             NeoArray[value ? 'add' : 'remove'](cls, 'neo-draggable');
-            me.headerToolbar.cls = cls;
+            me.headerToolbar.cls = cls
         }
 
         value && import('../draggable/DragZone.mjs').then(module => {
             DragZone = module.default;
 
             if (!me.dragListenersAdded) {
-                domListeners.push(
+                const dragListeners = [
                     {'drag:end'  : me.onDragEnd,   scope: me, delegate: '.neo-header-toolbar'},
                     {'drag:start': me.onDragStart, scope: me, delegate: '.neo-header-toolbar'}
-                );
+                ];
 
                 if (me.dragZoneConfig?.alwaysFireDragMove) {
-                    domListeners.push(
+                    dragListeners.push(
                         {'drag:move': me.onDragMove, scope: me, delegate: '.neo-header-toolbar'}
-                    );
+                    )
                 }
 
-                me.domListeners       = domListeners;
-                me.dragListenersAdded = true;
+                me.domListeners       = [...me.domListeners, ...dragListeners];
+                me.dragListenersAdded = true
             }
-        });
+        })
     }
 
     /**
@@ -216,12 +244,36 @@ class Base extends Panel {
      * @param {Boolean} oldValue
      * @protected
      */
-    afterSetMaximized(value, oldValue) {
-        let me   = this,
-            cls  = me.vdom.cls; // todo: using wrapperCls
+    async afterSetMaximized(value, oldValue) {
+        let me        = this,
+            firstCall = oldValue === undefined,
+            {cls}     = me.vdom;
 
-        NeoArray[value ? 'add' : 'remove'](cls, 'neo-maximized');
+        !firstCall && NeoArray.add(cls, 'animated-hiding-showing');
+        NeoArray.toggle(cls, 'neo-maximized', value);
         me.update();
+
+        if (!firstCall) {
+            await(me.timeout(250));
+
+            NeoArray.remove(cls, 'animated-hiding-showing');
+            me.update()
+        }
+    }
+
+    /**
+     * Triggered after the modal config got changed
+     * @param {Boolean} value
+     * @param {Boolean} oldValue
+     * @protected
+     */
+    afterSetModal(value, oldValue) {
+        let me = this;
+
+        NeoArray.toggle(me.vdom.cls, 'neo-modal', value);
+        me.update();
+
+        me.vnodeInitialized && me.syncModalMask()
     }
 
     /**
@@ -233,14 +285,8 @@ class Base extends Panel {
     afterSetMounted(value, oldValue) {
         super.afterSetMounted(value, oldValue);
 
-        let me = this;
-
-        if (value && me.animateTargetId) {
-            Neo.applyDeltas(me.appName, {
-                action: 'removeNode',
-                id    : me.getAnimateTargetId()
-            })
-        }
+        // Ensure focus trapping is up-to-date, enabled or disabled.
+        oldValue !== undefined && this.syncTrapFocus()
     }
 
     /**
@@ -250,22 +296,22 @@ class Base extends Panel {
      * @protected
      */
     afterSetResizable(value, oldValue) {
-        value && import('../plugin/Resizable.mjs').then(module => {
-            let me      = this,
-                plugins = me.plugins || [];
+        if (value && !this.getPlugin('resizable')) {
+            import('../plugin/Resizable.mjs').then(module => {
+                let me        = this,
+                    {appName} = me,
+                    plugins   = me.plugins || [];
 
-            if (!me.getPlugin({flag: 'resizable'})) {
                 plugins.push({
                     module       : module.default,
-                    appName      : me.appName,
+                    appName,
                     delegationCls: 'neo-dialog',
-                    flag         : 'resizable',
                     ...me.resizablePluginConfig
                 });
 
-                me.plugins = plugins;
-            }
-        });
+                me.plugins = plugins
+            })
+        }
     }
 
     /**
@@ -275,91 +321,163 @@ class Base extends Panel {
      * @protected
      */
     afterSetTitle(value, oldValue) {
-        if (this.headerToolbar) {
-            this.headerToolbar.title = value;
+        let {headerToolbar} = this;
+
+        if (headerToolbar) {
+            headerToolbar.title = value
         }
+    }
+
+    /**
+     * Triggered after the trapFocus config got changed
+     * @param {Boolean} value
+     * @param {Boolean} oldValue
+     * @protected
+     */
+    afterSetTrapFocus(value, oldValue) {
+        this.syncTrapFocus()
+    }
+
+    /**
+     * Triggered after the windowId config got changed
+     * @param {Number|null} value
+     * @param {Number|null} oldValue
+     * @protected
+     */
+    afterSetWindowId(value, oldValue) {
+        let me        = this,
+            resizable = me.getPlugin('resizable');
+
+        if (me.dragZone) {
+            me.dragZone.windowId = value
+        }
+
+        if (resizable) {
+            resizable.windowId = value
+        }
+
+        super.afterSetWindowId(value, oldValue)
     }
 
     /**
      *
      */
     async animateHide() {
-        let me      = this,
-            appName = me.appName,
-            id      = me.getAnimateTargetId(),
-            rects   = await me.getDomRect([me.id, me.animateTargetId]);
+        let me                  = this,
+            {animateTarget, id} = me,
+            rects, windowId;
 
-        await Neo.currentWorker.promiseMessage('main', {
-            action  : 'mountDom',
-            appName,
-            html    : `<div id="${id}" class="neo-animate-dialog neo-hide" style="height:${rects[0].height}px;left:${rects[0].left}px;top:${rects[0].top}px;width:${rects[0].width}px;"></div>`,
-            parentId: 'document.body'
+        // Assuming that we want to show the dialog inside the same browser window as the animation target
+        me.windowId = windowId = animateTarget.windowId;
+        me.appName  = animateTarget.appName;
+
+        rects = await me.getDomRect([id, me.animateTargetId])
+
+        await Neo.applyDeltas(windowId, {
+            id,
+            style: {
+                height   : `${rects[0].height}px`,
+                left     : `${rects[0].left  }px`,
+                top      : `${rects[0].top   }px`,
+                transform: 'none',
+                width    : `${rects[0].width }px`
+            }
         });
-
-        me.closeOrHide(false);
 
         await me.timeout(30);
 
-        await Neo.currentWorker.promiseMessage('main', {
-            action: 'updateDom',
-            appName,
-            deltas: [{
-                id,
-                style: {
-                    height: `${rects[1].height}px`,
-                    left  : `${rects[1].left  }px`,
-                    top   : `${rects[1].top   }px`,
-                    width : `${rects[1].width }px`
-                }
-            }]
+        await Neo.applyDeltas(windowId, {
+            id,
+            cls: {
+                add: ['animated-hiding-showing']
+            },
+            style: {
+                height: `${rects[1].height}px`,
+                left  : `${rects[1].left  }px`,
+                top   : `${rects[1].top   }px`,
+                width : `${rects[1].width }px`
+            }
         });
 
         await me.timeout(250);
 
-        await Neo.currentWorker.promiseMessage('main', {
-            action: 'updateDom',
-            appName,
-            deltas: [{action: 'removeNode', id}]
-        });
+        me.closeOrHide(false);
+
+        if (me.closeAction === 'hide') {
+            await Neo.applyDeltas(windowId, {id, action: 'removeNode'})
+        }
     }
 
     /**
      *
      */
     async animateShow() {
-        let me           = this,
-            appName      = me.appName,
-            id           = me.getAnimateTargetId(),
-            wrapperStyle = me.wrapperStyle,
-            rect         = await me.getDomRect(me.animateTargetId);
+        let me                         = this,
+            {animateTarget, id, style} = me,
+            appName, rect;
 
-        await Neo.currentWorker.promiseMessage('main', {
-            action  : 'mountDom',
-            appName,
-            html    : `<div id="${id}" class="neo-animate-dialog" style="height:${rect.height}px;left:${rect.left}px;top:${rect.top}px;width:${rect.width}px;"></div>`,
-            parentId: 'document.body'
+        // Assuming that we want to show the dialog inside the same browser window as the animation target
+        me.windowId = animateTarget.windowId;
+        me.appName  = appName = animateTarget.appName;
+
+        rect = await me.getDomRect(me.animateTargetId);
+
+        if (style.left || style.top) {
+            let tempStyle = {...style};
+
+            // Ensure that the initial mounting happens outside the visible area
+            delete style.left;
+            delete style.top;
+
+            me.style = style;
+
+            // Silent update & ensure that a given starting position won't get lost
+            me._style = style = tempStyle
+        }
+
+        // rendered outside the visible area
+        await me.initVnode(true);
+
+        let [dialogRect, bodyRect] = await me.waitForDomRect({id: [me.id, 'document.body']});
+
+        // Move to cover the animation target
+        await Neo.applyDeltas(me.windowId, {
+            id,
+            style: {
+                height: `${rect.height}px`,
+                left  : `${rect.left  }px`,
+                top   : `${rect.top   }px`,
+                width : `${rect.width }px`
+            }
         });
 
-        await me.timeout(30);
+        // Wait for the element to achieve its initial rectangle
+        await me.timeout(50);
 
-        await Neo.currentWorker.promiseMessage('main', {
-            action: 'updateDom',
-            appName,
-            deltas: [{
-                id,
-                style: {
-                    height   : wrapperStyle?.height    || '50%',
-                    left     : wrapperStyle?.left      || '50%',
-                    top      : wrapperStyle?.top       || '50%',
-                    transform: wrapperStyle?.transform || 'translate(-50%, -50%)',
-                    width    : wrapperStyle?.width     || '50%'
-                }
-            }]
+        // Expand to final state
+        await Neo.applyDeltas(me.windowId, {
+            id,
+            cls: {
+                add: ['animated-hiding-showing']
+            },
+            style: {
+                height: style?.height || `${dialogRect.height}px`,
+                left  : style?.left   || `${Math.round(bodyRect.width  / 2 - dialogRect.width  / 2)}px`,
+                top   : style?.top    || `${Math.round(bodyRect.height / 2 - dialogRect.height / 2)}px`,
+                width : style?.width  || `${dialogRect.width}px`
+            }
         });
 
         await me.timeout(200);
 
-        me.show(false)
+        // Remove the animation class
+        await Neo.applyDeltas(me.windowId, {id, cls: {remove: ['animated-hiding-showing']}});
+
+        // show() holds this as a mount flight, which lands on the latest hidden: a hide() during the animation wins
+        if (!me._hidden) {
+            me.fire('show');
+            me.syncModalMask()
+        }
     }
 
     /**
@@ -369,55 +487,72 @@ class Base extends Panel {
      * @protected
      */
     beforeSetCloseAction(value, oldValue) {
-        return this.beforeSetEnumValue(value, oldValue, 'closeAction');
+        return this.beforeSetEnumValue(value, oldValue, 'closeAction')
     }
 
     /**
-     * @param {Boolean} [animate=!!this.animateTargetId]
+     * @param {Boolean} animate=!!this.animateTargetId
      */
     close(animate=!!this.animateTargetId) {
         let me = this;
 
+        me.revertFocus();
+
         if (animate) {
-            me.animateHide();
+            me.animateHide()
         } else {
             me.fire('close');
-            me.destroy(true);
+            me.destroy(true)
         }
     }
 
     /**
-     * @param {Boolean} [animate=!!this.animateTargetId]
+     * @param {Boolean} animate=!!this.animateTargetId
      */
-    closeOrHide(animate=!!this.animateTargetId) {
-        this[this.closeAction](animate);
+    async closeOrHide(animate=!!this.animateTargetId) {
+        let me = this;
+
+        me[me.closeAction](animate);
+        await me.timeout(30);
+        me.syncModalMask(me.id)
+    }
+
+    /**
+     * Action when clicking the X button inside the header toolbar.
+     * @param {Object} data
+     * @protected
+     */
+    closeOrHideAction(data) {
+        this.closeOrHide()
     }
 
     /**
      *
      */
     createHeader() {
-        let me      = this,
-            cls     = ['neo-header-toolbar', 'neo-toolbar'],
-            headers = me.headers || [];
+        let me                  = this,
+            {appName, windowId} = me,
+            cls                 = ['neo-header-toolbar', 'neo-toolbar'],
+            headers             = me.headers || [];
 
         me.draggable && cls.push('neo-draggable');
 
         me.headerToolbar = Neo.create({
             module   : Toolbar,
-            appName  : me.appName,
+            appName,
             cls,
             dock     : 'top',
             flex     : 'none',
             id       : me.getHeaderToolbarId(),
             listeners: {headerAction: me.executeHeaderAction, scope: me},
             title    : me.title,
+            windowId,
             ...me.headerConfig
         });
 
         headers.unshift(me.headerToolbar);
 
-        me.headers = headers;
+        me.headers = headers
     }
 
     /**
@@ -427,7 +562,7 @@ class Base extends Panel {
         let me = this,
 
         map = {
-            close   : me.closeOrHide,
+            close   : me.closeOrHideAction,
             maximize: me.maximize
         };
 
@@ -444,7 +579,7 @@ class Base extends Panel {
      * @returns {String}
      */
     getAnimateTargetId() {
-        return this.id + '-animate';
+        return this.id + '-animate'
     }
 
     /**
@@ -452,55 +587,50 @@ class Base extends Panel {
      * @returns {String}
      */
     getHeaderToolbarId() {
-        return this.id + '-header-toolbar';
+        return this.id + '-header-toolbar'
     }
 
     /**
      * @returns {Object} vdom
      */
     getProxyVdom() {
-        let vdom = VDomUtil.clone(this.vdom);
-
-        // this call expects a fixed dialog structure
-        // todo: a panel content container could get a flag which we can query for instead
-        vdom.cn[0].cn[1].cn = [];
-
-        return vdom;
+        return VDomUtil.clone(this.vdom)
     }
 
     /**
-     * @returns {Object} The new vdom root
+     * Hides the dialog and writes `hidden`. A landed dialog can animate out. Otherwise component.Base#hide
+     * removes it, and leaves a dialog still in its mount flight to the flight.
+     * @param {Boolean} animate=!!this.animateTargetId
      */
-    getVdomRoot() {
-        return this.vdom.cn[0];
-    }
-
-    /**
-     * @returns {Object} The new vnode root
-     */
-    getVnodeRoot() {
-        return this.vnode.childNodes[0];
-    }
-
-    /**
-     * Returns the id of the header toolbar
-     * @returns {String}
-     */
-    getWrapperId() {
-        return this.id + '-wrapper';
-    }
-
-    /**
-     * @param {Boolean} [animate=!!this.animateTargetId]
-     */
-    hide(animate=!!this.animateTargetId) {
+    async hide(animate=!!this.animateTargetId) {
         let me = this;
 
-        if (animate) {
-            me.animateHide();
+        if (animate && me.mounted && !me.mountFlight) {
+            me.animateHide()
         } else {
-            me.unmount();
-            me.fire('hide');
+            super.hide();
+            me.fire('hide')
+        }
+
+        await me.timeout(30);
+
+        me.syncModalMask()
+    }
+
+    /**
+     *
+     */
+    init() {
+        super.init();
+
+        let me = this;
+
+        if (me.animateTargetId) {
+            me.autoShow && me.show()
+        } else {
+            me.timeout(100).then(() => {
+                me.syncModalMask()
+            })
         }
     }
 
@@ -512,7 +642,7 @@ class Base extends Panel {
 
         data.component.iconCls = me.maximized ? me.maximizeCls : me.minimizeCls;
 
-        me.maximized = !me.maximized;
+        me.maximized = !me.maximized
     }
 
     /**
@@ -525,7 +655,7 @@ class Base extends Panel {
 
         me.headerToolbar = me.down({
             id: me.getHeaderToolbarId()
-        });
+        })
     }
 
     /**
@@ -533,13 +663,13 @@ class Base extends Panel {
      */
     onDragEnd(data) {
         let me = this,
-            initialTransitionProperty, wrapperStyle;
+            initialTransitionProperty, style;
 
         if (!me.maximized) {
             me.getDomRect(me.dragZone.dragProxy.id).then(rect => {
-                wrapperStyle = me.wrapperStyle;
+                style = me.style;
 
-                Object.assign(wrapperStyle, {
+                Object.assign(style, {
                     height   : `${rect.height}px`,
                     left     : `${rect.left}px`,
                     opacity  : 1,
@@ -549,27 +679,29 @@ class Base extends Panel {
                 });
 
                 if (!me.animateOnDragEnd) {
-                    initialTransitionProperty = wrapperStyle.transitionProperty || null;
+                    initialTransitionProperty = style.transitionProperty || null;
 
-                    wrapperStyle.transitionProperty = 'none';
+                    style.transitionProperty = 'none';
 
-                    setTimeout(() => {
-                        wrapperStyle = me.wrapperStyle;
+                    me.timeout(50).then(() => {
+                        style = me.style;
 
-                        wrapperStyle.transitionProperty = initialTransitionProperty;
+                        style.transitionProperty = initialTransitionProperty;
 
-                        me.wrapperStyle = wrapperStyle;
-                    }, 50);
+                        me.style = style
+                    })
                 }
 
-                me.wrapperStyle = wrapperStyle;
+                me.style = style;
 
                 me.dragZone.dragEnd(data);
 
                 // we need a reset, otherwise we do not get a change event for the next onDragStart() call
                 me.dragZone.boundaryContainerId = null;
                 me.isDragging                   = false;
-            });
+
+                me.focus(me.id, true)
+            })
         }
     }
 
@@ -578,70 +710,132 @@ class Base extends Panel {
      * @param data
      */
     onDragMove(data) {
-        this.dragZone.dragMove(data);
+        this.dragZone.dragMove(data)
     }
 
     /**
      * @param data
      */
     onDragStart(data) {
-        let me           = this,
-            wrapperStyle = me.wrapperStyle || {},
-            resizablePlugin;
+        let me                      = this,
+            {appName, id, windowId} = me,
+            style                   = me.style || {};
 
         if (!me.maximized) {
             me.isDragging = true;
 
-            resizablePlugin = me.getPlugin({flag: 'resizable'});
-
-            if (resizablePlugin) {
-                resizablePlugin.removeAllNodes();
-            }
+            me.getPlugin('resizable')?.removeAllNodes();
 
             if (!me.dragZone) {
                 me.dragZone = Neo.create({
                     module             : DragZone,
-                    appName            : me.appName,
+                    appName,
                     bodyCursorStyle    : 'move !important',
                     boundaryContainerId: me.boundaryContainerId,
                     dragElement        : me.vdom,
                     dragProxyConfig    : {vdom: me.getProxyVdom()},
                     owner              : me,
                     useProxyWrapper    : false,
+                    windowId,
                     ...me.dragZoneConfig
                 });
 
-                me.fire('dragZoneCreated', {
-                    dragZone: me.dragZone,
-                    id      : me.id
-                });
+                me.fire('dragZoneCreated', {dragZone: me.dragZone, id})
             } else {
-                me.dragZone.boundaryContainerId = me.boundaryContainerId;
+                me.dragZone.boundaryContainerId = me.boundaryContainerId
             }
 
             me.dragZone.dragStart(data);
 
-            wrapperStyle.opacity = 0.7;
+            style.opacity = 0.7;
 
-            me.wrapperStyle = wrapperStyle;
+            me.style = style
         }
     }
 
     /**
-     * @param {Boolean} [animate=!!this.animateTargetId]
+     *
+     */
+    onKeyDownEscape() {
+        this.hidden = true
+    }
+
+    /**
+     * @param {Boolean} [mount] Mount the DOM after the vnode got created
+     */
+    async render(mount) {
+        let me             = this,
+            {wrapperStyle} = me;
+
+        // If there is no animation target, we need to ensure that the initial offscreen positioning
+        // from .neo-floating gets reverted
+        if (!me.animateTargetId) {
+            if (!wrapperStyle.left) {
+                wrapperStyle.left = 'initial'
+            }
+
+            if (!wrapperStyle.top) {
+                wrapperStyle.top = 'initial'
+            }
+
+            me.wrapperStyle = wrapperStyle
+        }
+
+        await super.render(mount)
+    }
+
+    /**
+     * Shows the dialog and writes `hidden`. An animated show is a mount flight of its own, one at a time.
+     * A dialog that is mounted or in flight goes through component.Base#show, which does not mount it again.
+     * @param {Boolean} animate=!!this.animateTargetId
      */
     show(animate=!!this.animateTargetId) {
         let me = this;
 
-        if (animate) {
-            me.animateShow();
+        if (animate && !me.mounted && !me.mountFlight) {
+            me._hidden = false;
+            me.startMountFlight(me.animateShow())
         } else {
-            me.render(true);
-            me.fire('show');
+            super.show();
+            me.fire('show')
         }
+
+        me.syncModalMask()
+    }
+
+    /**
+     * @param {String} id=this.id
+     */
+    syncModalMask(id=this.id) {
+        let {modal, windowId} = this;
+
+        // This should sync the visibility and position of the modal mask element.
+        Neo.main.DomAccess.syncModalMask({id, modal, windowId})
+    }
+
+    /**
+     *
+     */
+    syncTrapFocus() {
+        let me             = this,
+            {id, windowId} = me;
+
+        if (me.mounted) {
+            Neo.main.DomAccess.trapFocus({id, trap: me.trapFocus, windowId})
+        }
+    }
+
+    /**
+     * @summary Syncs the modal mask once the node has left the DOM, since `Neo.main.DomAccess#syncModalMask`
+     * keys the mask to the dialogs present there. Covers a hide() that lands with an animated show's mount flight,
+     * whose own sync ran while the node was still in the DOM.
+     * @returns {Promise<void>}
+     */
+    async unmount() {
+        await super.unmount();
+
+        !this.isDestroyed && this.syncModalMask()
     }
 }
 
-Neo.applyClassConfig(Base);
-
-export default Base;
+export default Neo.setupClass(Dialog);

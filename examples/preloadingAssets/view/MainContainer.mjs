@@ -16,10 +16,12 @@ class MainContainer extends Viewport {
         className: 'Neo.examples.preloadingAssets.view.MainContainer',
         /**
          * @member {Neo.controller.Component} controller=MainContainerController
+         * @reactive
          */
         controller: MainContainerController,
         /**
          * @member {Object} layout={ntype:'fit'}
+         * @reactive
          */
         layout: {ntype: 'fit'},
         /**
@@ -37,24 +39,24 @@ class MainContainer extends Viewport {
             },
 
             items: [{
-                tabButtonConfig: {
+                header: {
                     iconCls: 'fa fa-user-astronaut',
                     text   : 'Bob'
                 },
 
                 vdom: {
                     tag: 'img',
-                    src: 'https://raw.githubusercontent.com/neomjs/pages/master/resources/examples/ai_images/000150.jpg'
+                    src: 'https://raw.githubusercontent.com/neomjs/pages/main/resources_pub/examples/ai_images/000150.jpg'
                 }
             }, {
-                tabButtonConfig: {
+                header: {
                     iconCls: 'fa fa-user-ninja',
                     text   : 'Alice'
                 },
 
                 vdom: {
                     tag: 'img',
-                    src: 'https://raw.githubusercontent.com/neomjs/pages/master/resources/examples/ai_images/000074.jpg'
+                    src: 'https://raw.githubusercontent.com/neomjs/pages/main/resources_pub/examples/ai_images/000074.jpg'
                 }
             }],
             /**
@@ -68,6 +70,4 @@ class MainContainer extends Viewport {
     }
 }
 
-Neo.applyClassConfig(MainContainer);
-
-export default MainContainer;
+export default Neo.setupClass(MainContainer);

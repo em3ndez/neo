@@ -1,15 +1,49 @@
+const originalMethodSymbol = Symbol('originalMethod');
+const sequencedFnsSymbol   = Symbol('sequencedFns');
+
 /**
  * Append args instead of prepending them
+ * @param {Function} fn
  * @param {Object} scope
  * @returns {Function}
  */
-export function bindAppend(scope) {
-    const fn   = this,
-          args = [].slice.call(arguments).slice(1);
+export function bindAppend(fn, scope) {
+    const args = [].slice.call(arguments).slice(2);
 
     return function() {
         return fn.apply(scope, [].slice.call(arguments).concat(args))
     }
+}
+
+/**
+ * @param {Function} callback
+ * @param {Neo.core.Base} scope
+ * @param {Number} delay=300
+ * @returns {Function}
+ */
+export function buffer(callback, scope, delay=300) {
+    let timeoutId;
+
+    const wrapper = function(...args) {
+        // callback invocation comes "delay" ms after the last call to wrapper
+        // so cancel any pending invocation.
+        clearTimeout(timeoutId);
+
+        wrapper.isPending = true;
+
+        timeoutId = setTimeout(() => {
+            timeoutId = 0;
+            wrapper.isPending = false;
+            callback.apply(scope, args)
+        }, delay)
+    };
+
+    wrapper.cancel = () => {
+        wrapper.isPending = false;
+        clearTimeout(timeoutId)
+    };
+
+    return wrapper
 }
 
 /**
@@ -36,24 +70,43 @@ export function createInterceptor(target, targetMethodName, interceptFunction, s
  * @returns {Function}
  */
 export function createSequence(target, methodName, fn, scope) {
-    let method = target[methodName] || Neo.emptyFn;
+    let currentMethod = target[methodName],
+        wrapper;
 
-    return (target[methodName] = function() {
-        method.apply(this, arguments);
-        return fn.apply(scope || this, arguments);
-    })
+    if (currentMethod && currentMethod[sequencedFnsSymbol]) {
+        // Already a sequenced method, add to its list
+        wrapper = currentMethod;
+        wrapper[sequencedFnsSymbol].push({fn, scope})
+    } else {
+        // First time sequencing this method
+        let originalMethod = currentMethod || Neo.emptyFn;
+
+        wrapper = function() {
+            originalMethod.apply(this, arguments); // Call the original method
+
+            // Call all sequenced functions
+            wrapper[sequencedFnsSymbol].forEach(seqFn => {
+                seqFn.fn.apply(seqFn.scope || this, arguments);
+            });
+        };
+        wrapper[sequencedFnsSymbol] = [{fn, scope}];
+        wrapper[originalMethodSymbol] = originalMethod; // Store original method
+    }
+
+    return (target[methodName] = wrapper);
 }
 
 /**
- * @param {Function} callback
- * @param {Neo.core.Base} scope
- * @param {Number} delay=300
- * @returns {Function}
+ * @summary Debounces calls and exposes cancellation for instance teardown or reuse.
+ * @param {Function}      callback  The function to invoke
+ * @param {Neo.core.Base} scope     The receiver for the callback
+ * @param {Number}        delay=300 The debounce delay in milliseconds
+ * @returns {Function} A leading/trailing wrapper whose cancel() clears pending work and resets the delay
  */
 export function debounce(callback, scope, delay=300) {
     let debounceTimer;
 
-    return function(...args) {
+    const wrapper = function(...args) {
         // leading edge => trigger the first call right away
         if (!Neo.isNumber(debounceTimer)) {
             // we need to check if the scope (instance) did not get destroyed yet
@@ -70,7 +123,14 @@ export function debounce(callback, scope, delay=300) {
                 debounceTimer = setTimeout(() => {debounceTimer = null},  delay)
             },  delay)
         }
-    }
+    };
+
+    wrapper.cancel = () => {
+        clearTimeout(debounceTimer);
+        debounceTimer = null
+    };
+
+    return wrapper
 }
 
 /**
@@ -93,31 +153,95 @@ export function intercept(target, targetMethodName, interceptFunction, scope, pr
 }
 
 /**
- * @param {Function} callback
- * @param {Neo.core.Base} scope
- * @param {Number} delay=300
- * @returns {Function}
+ * Locate a callable function by name in the passed scope.
+ *
+ * If the name starts with 'up.', the parent Component chain is searched.
+ *
+ * This is used by manager.DomEvents & core.Observable.fire and by 'handler' function calls to resolve
+ * string function names in the Component's own hierarchy.
+ * @param {Function|String} fn A function, or the name of a function to find in the passed scope object/
+ * @param {Object} scope=this The scope to find the function in if it is specified as a string.
+ * @returns {Object}
+ */
+export function resolveCallback(fn, scope=this) {
+    if (Neo.isString(fn)) {
+        if (!scope[fn] && fn.startsWith('up.')) {
+            fn = fn.slice(3);
+            while (!scope[fn] && (scope = scope.parent));
+        } else {
+            scope = scope.getController?.()?.getHandlerScope(fn, null) || scope
+        }
+
+        fn = scope[fn]
+    }
+
+    return {fn, scope}
+}
+
+/**
+ * @summary Throttles calls and exposes cancellation for instance teardown or reuse.
+ * @param {Function}      callback  The function to invoke
+ * @param {Neo.core.Base} scope     The receiver for the callback
+ * @param {Number}        delay=300 The throttle interval in milliseconds
+ * @returns {Function} A rate-limited wrapper whose cancel() clears pending work and resets the interval
  */
 export function throttle(callback, scope, delay=300) {
-    let lastRanDate, timeoutId;
+    let lastArgs,
+        lastRan = 0,
+        timeoutId;
 
-    return function(...args) {
-        if (!lastRanDate) {
-            // we need to check if the scope (instance) did not get destroyed yet
-            scope?.id && callback.apply(scope, args);
+    const wrapper = function(...args) {
+        const now = Date.now();
+        lastArgs  = args;
 
-            lastRanDate = Date.now()
-        } else {
-            clearTimeout(timeoutId)
+        if (now - lastRan >= delay) {
+            if (timeoutId) {
+                clearTimeout(timeoutId);
+                timeoutId = null
+            }
 
-            timeoutId = setTimeout(function() {
-                if ((Date.now() - lastRanDate) >= delay) {
-                    // we need to check if the scope (instance) did not get destroyed yet
-                    scope?.id && callback.apply(scope, args);
-
-                    lastRanDate = Date.now()
-                }
-            }, delay - (Date.now() - lastRanDate))
+            scope?.id && callback.apply(scope, lastArgs);
+            lastRan = now
+        } else if (!timeoutId) {
+            timeoutId = setTimeout(() => {
+                timeoutId = null;
+                lastRan = Date.now();
+                scope?.id && callback.apply(scope, lastArgs)
+            }, delay - (now - lastRan))
         }
+    };
+
+    wrapper.cancel = () => {
+        clearTimeout(timeoutId);
+        timeoutId = lastArgs = null;
+        lastRan = 0
+    };
+
+    return wrapper
+}
+
+/**
+ * @param {Neo.core.Base} target
+ * @param {String} methodName
+ * @param {Function} fn
+ * @param {Object} scope
+ */
+export function unSequence(target, methodName, fn, scope) {
+    let currentMethod = target[methodName];
+
+    if (!currentMethod || !currentMethod[sequencedFnsSymbol]) {
+        return // Not a sequenced method
+    }
+
+    const sequencedFunctions = currentMethod[sequencedFnsSymbol];
+
+    // Filter out the function to unsequence
+    currentMethod[sequencedFnsSymbol] = sequencedFunctions.filter(seqFn =>
+        !(seqFn.fn === fn && seqFn.scope === scope)
+    );
+
+    if (currentMethod[sequencedFnsSymbol].length === 0) {
+        // If no functions left, restore the original method
+        target[methodName] = currentMethod[originalMethodSymbol]
     }
 }

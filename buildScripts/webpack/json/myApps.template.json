@@ -1,18 +1,17 @@
 {
     "apps": [
+        "Colors",
         "Covid",
         "Docs",
+        "Email",
+        "Finance",
         "Form",
-        "Krausest",
+        "Legit",
+        "Portal",
         "RealWorld",
         "RealWorld2",
+        "Route",
         "SharedCovid",
-        "SharedCovidChart",
-        "SharedCovidGallery",
-        "SharedCovidHelix",
-        "SharedCovidMap",
-        "SharedDialog",
-        "SharedDialog2",
-        "Website"
+        "SharedDialog"
     ]
 }

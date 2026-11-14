@@ -19,7 +19,7 @@ class MainContainerController extends ComponentController {
      */
     construct(config) {
         super.construct(config);
-        Neo.main.addon.HighlightJS.switchTheme('dark');
+        Neo.main.addon.HighlightJS.switchTheme({theme: 'dark', windowId: this.windowId})
     }
 
     /**
@@ -37,10 +37,10 @@ class MainContainerController extends ComponentController {
             values;
 
         if (Neo.isBoolean(data.value)) {
-            me.getReference('closable').value = data.value;
+            me.getReference('closable').value = data.value
         }
 
-        values = await form.getValues();
+        values = await form.getSubmitValues();
 
         values.appName = me.component.appName;
         button.disabled = !isValid;
@@ -61,18 +61,18 @@ class MainContainerController extends ComponentController {
     async createToast() {
         let me     = this,
             form   = me.getReference('form'),
-            values = await form.getValues(),
+            values = await form.getSubmitValues(),
             clear  = ['position', 'slideDirection', 'ui', 'minHeight', 'maxWidth', 'closable', 'timeout'];
 
         // use the defaults from toast if not set
         clear.forEach(item => {
             if (values[item] === null) {
-                delete values[item];
+                delete values[item]
             }
         })
 
         values.appName = me.component.appName;
-        Neo.toast(values);
+        Neo.toast(values)
     }
 
     /**
@@ -84,12 +84,10 @@ class MainContainerController extends ComponentController {
             oVdom  = output.vdom;
 
         Neo.main.addon.HighlightJS.syntaxHighlight({
-            appName: me.component.appName,
-            vnodeId: oVdom.cn[0].id
-        });
+            vnodeId : oVdom.cn[0].id,
+            windowId: me.windowId
+        })
     }
 }
 
-Neo.applyClassConfig(MainContainerController);
-
-export default MainContainerController;
+export default Neo.setupClass(MainContainerController);

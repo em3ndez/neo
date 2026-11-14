@@ -1,11 +1,11 @@
 import BooleanContainer from '../../src/filter/BooleanContainer.mjs';
 import CellModel        from '../../src/selection/table/CellModel.mjs';
 import CheckBox         from '../../src/form/field/CheckBox.mjs';
+import ComboBox         from '../../src/form/field/ComboBox.mjs';
 import DateContainer    from '../../src/filter/DateContainer.mjs';
 import DateUtil         from '../../src/util/Date.mjs';
 import MainStore        from './MainStore.mjs';
 import NumberContainer  from '../../src/filter/NumberContainer.mjs';
-import SelectField      from '../../src/form/field/Select.mjs';
 import TableContainer   from '../../src/table/Container.mjs';
 import Viewport         from '../../src/container/Viewport.mjs';
 
@@ -36,7 +36,7 @@ class MainContainer extends Viewport {
                 checked       : true,
                 hideLabel     : true,
                 hideValueLabel: false,
-                valueLabelText: 'Show Filters',
+                valueLabel    : 'Show Filters',
 
                 listeners: {
                     change: function(opts) {
@@ -46,8 +46,8 @@ class MainContainer extends Viewport {
             }]
         }, {
             module           : TableContainer,
+            bodyConfig       : {selectionModel: CellModel},
             id               : 'myTableFilterContainer',
-            selectionModel   : CellModel,
             showHeaderFilters: true,
             store            : MainStore,
             width            : '100%',
@@ -64,11 +64,11 @@ class MainContainer extends Viewport {
                 text     : 'Country',
 
                 editorConfig: {
-                    module: SelectField,
+                    module: ComboBox,
 
                     store: {
                         autoLoad   : true,
-                        keyProperty: 'name',
+                        keyProperty: 'code',
                         url        : '../../resources/examples/data/countries.json',
 
                         model: {
@@ -123,6 +123,4 @@ class MainContainer extends Viewport {
     }
 }
 
-Neo.applyClassConfig(MainContainer);
-
-export default MainContainer;
+export default Neo.setupClass(MainContainer);

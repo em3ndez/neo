@@ -1,42 +1,30 @@
-import fs      from 'fs-extra';
-import path    from 'path';
-import webpack from 'webpack';
+import fs                        from 'fs-extra';
+import path                      from 'path';
+import {spawnSync}               from 'child_process';
+import {copyDistAppAssets}       from '../../util/distAppAssets.mjs';
+import {minifyHtml}              from '../../util/minifyHtml.mjs';
+import * as Terser               from 'terser';
+import workerContextRebasePlugin from '../workerContextRebasePlugin.mjs';
 
-const cwd                   = process.cwd(),
-      configPath            = path.resolve(cwd, 'buildScripts/myApps.json'),
-      requireJson           = path => JSON.parse(fs.readFileSync((path))),
-      packageJson           = requireJson(path.resolve(cwd, 'package.json')),
-      neoPath               = packageJson.name === 'neo.mjs' ? './' : './node_modules/neo.mjs/',
-      buildTarget           = requireJson(path.resolve(neoPath, 'buildScripts/webpack/production/buildTarget.json')),
-      filenameConfig        = requireJson(path.resolve(neoPath, 'buildScripts/webpack/json/build.json')),
-      plugins               = [],
-      regexIndexNodeModules = /node_modules/g,
-      regexLineBreak        = /(\r\n|\n|\r)/gm,
-      regexTopLevel         = /\.\.\//g,
-      regexTrimEnd          = /\s+$/gm,
-      regexTrimStart        = /^\s+/gm;
+const
+    cwd            = process.cwd(),
+    cpOpts         = {env: process.env, cwd: cwd, stdio: 'inherit', shell: true},
+    requireJson    = path => JSON.parse(fs.readFileSync((path))),
+    packageJson    = requireJson(path.resolve(cwd, 'package.json')),
+    neoPath        = packageJson.name.includes('neo.mjs') ? './' : './node_modules/neo.mjs/',
+    buildTarget    = requireJson(path.resolve(neoPath, 'buildScripts/webpack/production/buildTarget.json')),
+    filenameConfig = requireJson(path.resolve(neoPath, 'buildScripts/webpack/json/build.json')),
+    plugins        = [];
 
-let contextAdjusted = false,
-    config, examplesPath;
-
-if (fs.existsSync(configPath)) {
-    config = requireJson(configPath);
-} else {
-    const myAppsPath = path.resolve(neoPath, 'buildScripts/webpack/json/myApps.json');
-
-    if (fs.existsSync(myAppsPath)) {
-        config = requireJson(myAppsPath);
-    } else {
-        config = requireJson(path.resolve(neoPath, 'buildScripts/webpack/json/myApps.template.json'));
-    }
-}
+let examplesPath;
 
 if (!buildTarget.folder) {
     buildTarget.folder = 'dist/production';
 }
 
-export default env => {
-    let examples  = [],
+export default async function(env) {
+    let apps      = [],
+        examples  = [],
         insideNeo = env.insideNeo == 'true',
         content, inputPath, outputPath;
 
@@ -44,11 +32,37 @@ export default env => {
     inputPath  = path.resolve(cwd, 'src/MicroLoader.mjs');
     outputPath = path.resolve(cwd, buildTarget.folder, 'src/MicroLoader.mjs');
 
-    content = fs.readFileSync(inputPath).toString().replace(/\s/gm, '');
-    fs.mkdirpSync(path.resolve(cwd, buildTarget.folder, 'src/'));
-    fs.writeFileSync(outputPath, content);
+    content = await Terser.minify(fs.readFileSync(inputPath, 'utf-8'), {module: true});
 
-    const createStartingPoint = (key, folder) => {
+    if (content.error) {
+        throw content.error
+    }
+
+    fs.mkdirpSync(path.resolve(cwd, buildTarget.folder, 'src/'));
+    fs.writeFileSync(outputPath, content.code);
+
+    const copyResources = resourcesPath => {
+        let inputPath  = path.resolve(cwd, resourcesPath),
+            outputPath = path.resolve(cwd, buildTarget.folder, resourcesPath),
+            childProcess, content, filePath;
+
+        if (fs.existsSync(inputPath)) {
+            childProcess = spawnSync('node', [`${neoPath}/buildScripts/util/copyFolder.mjs -s ${inputPath} -t ${outputPath}`], cpOpts);
+            childProcess.status && process.exit(childProcess.status);
+
+            // Minify all json files inside the copied resources folder
+            fs.readdirSync(outputPath, {recursive: true}).forEach(fileOrFolder => {
+                if (fileOrFolder.endsWith('.json')) {
+                    filePath = path.join(outputPath, fileOrFolder);
+                    content  = requireJson(filePath);
+
+                    fs.writeFileSync(filePath, JSON.stringify(content));
+                }
+            });
+        }
+    };
+
+    const createStartingPoint = async (key, folder) => {
         let basePath       = '',
             workerBasePath = '',
             treeLevel      = key.replace('.', '/').split('/').length + (key === 'Docs' ? 2 : 3),
@@ -62,7 +76,12 @@ export default env => {
             }
         }
 
-        lAppName = folder === 'examples' ? key : key.toLowerCase();
+        // `key` carries the real on-disk casing — `parseFolder` reads it from the filesystem — and
+        // the reads below use `lAppName` too, not just the writes. Folding an app folder to lower
+        // case therefore makes the build read a path that does not exist on a case-sensitive
+        // filesystem, and splits the output from `copyResources`, which uses the true casing. Only
+        // the synthetic `Docs` key needs the fold, since its source folder is `docs/`.
+        lAppName = folder === '' ? key.toLowerCase() : key;
         fs.mkdirpSync(path.resolve(cwd, buildTarget.folder, folder, lAppName));
 
         // neo-config.json
@@ -72,7 +91,9 @@ export default env => {
         content = requireJson(inputPath);
         delete content.environment;
 
-        content.appPath = content.appPath.replace(regexTopLevel, '');
+        // Strip parent-dir (`..`) path segments — complete by construction (no substring-replace
+        // can re-form a segment) and identical to the old `../`-strip for every real appPath.
+        content.appPath = content.appPath.split('/').filter(segment => segment !== '..').join('/');
 
         Object.assign(content, {
             basePath,
@@ -82,23 +103,33 @@ export default env => {
 
         fs.writeFileSync(outputPath, JSON.stringify(content));
 
+        // remotes-api.json
+        if (content.remotesApiUrl) {
+            inputPath  = path.resolve(cwd, folder, lAppName, content.remotesApiUrl);
+            outputPath = path.resolve(cwd, buildTarget.folder, folder, lAppName, content.remotesApiUrl);
+            content    = requireJson(inputPath);
+
+            fs.writeFileSync(outputPath, JSON.stringify(content));
+        }
+
         // index.html
         inputPath  = path.resolve(cwd, folder, lAppName, 'index.html');
         outputPath = path.resolve(cwd, buildTarget.folder, folder, lAppName, 'index.html');
-
-        content = fs.readFileSync(inputPath).toString()
-            .replace(regexIndexNodeModules, '../../node_modules')
-            .replace(regexTrimStart, '')
-            .replace(regexTrimEnd, '')
-            .replace(', ', ',')
-            .replace(regexLineBreak, '');
+        content    = await minifyHtml(fs.readFileSync(inputPath, 'utf-8'));
 
         fs.writeFileSync(outputPath, content);
+
+        // Static siblings the generated page links relatively (e.g. a web app manifest). Nothing
+        // above copies them: this function enumerates only the files it generates.
+        copyDistAppAssets(
+            path.resolve(cwd, folder, lAppName),
+            path.resolve(cwd, buildTarget.folder, folder, lAppName)
+        )
     };
 
     const isFile = fileName => fs.lstatSync(fileName).isFile();
 
-    const parseFolder = (folderPath, index, relativePath) => {
+    const parseFolder = (apps, folderPath, index, relativePath) => {
         let itemPath;
 
         fs.readdirSync(folderPath).forEach(itemName => {
@@ -106,26 +137,34 @@ export default env => {
 
             if (isFile(itemPath)) {
                 if (itemName === 'app.mjs') {
-                    examples.push(relativePath);
+                    apps.push(relativePath);
                 }
             } else {
-                parseFolder(itemPath, index + 1, relativePath + `/${itemName}`);
+                parseFolder(apps, itemPath, index + 1, relativePath + `/${itemName}`);
             }
         });
     };
 
-    config.apps?.forEach(key => {
-        createStartingPoint(key, key === 'Docs' ? '' : 'apps');
-    });
+    parseFolder(apps, path.join(cwd, 'apps'), 0, '');
+
+    for (const key of apps) {
+        copyResources(path.join('apps', key, '/resources'));
+        await createStartingPoint(key.substr(1), 'apps');
+    }
+
+    if (fs.existsSync(path.join(cwd, 'docs/app'))) {
+        await createStartingPoint('Docs', '');
+    }
 
     examplesPath = path.join(cwd, 'examples');
 
     if (fs.existsSync(examplesPath)) {
-        parseFolder(examplesPath, 0, '');
+        parseFolder(examples, examplesPath, 0, '');
 
-        examples.forEach(key => {
-            createStartingPoint(key.substr(1), 'examples');
-        });
+        for (const key of examples) {
+            copyResources(path.join('examples', key, '/resources'));
+            await createStartingPoint(key.substr(1), 'examples');
+        }
     }
 
     return {
@@ -133,22 +172,32 @@ export default env => {
         entry : {app: path.resolve(neoPath, './src/worker/App.mjs')},
         target: 'webworker',
 
-        plugins: [
-            new webpack.ContextReplacementPlugin(/.*/, context => {
-                let con = context.context;
+        experiments: {
+            outputModule: true
+        },
 
-                if (!insideNeo && !contextAdjusted && (con.includes('/src/worker') || con.includes('\\src\\worker'))) {
-                    context.request = path.join('../../', context.request);
-                    contextAdjusted = true;
-                }
-            }),
+        plugins: [
+            workerContextRebasePlugin(insideNeo, cwd),
             ...plugins
         ],
 
         output: {
             chunkFilename: 'chunks/app/[id].js',
             filename     : filenameConfig.workers.app.output,
-            path         : path.resolve(cwd, buildTarget.folder)
+            library      : {type: 'module'},
+            path         : path.resolve(cwd, buildTarget.folder),
+            publicPath   : 'auto'
+        },
+
+        module: {
+            rules: [
+                {
+                    test: /\.mjs$/,
+                    use : [{
+                        loader: path.resolve(neoPath, 'buildScripts/webpack/loader/template-loader.mjs')
+                    }]
+                }
+            ]
         }
     }
 };

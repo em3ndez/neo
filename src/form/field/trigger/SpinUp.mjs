@@ -19,6 +19,7 @@ class SpinUp extends Base {
         ntype: 'trigger-spinup',
         /**
          * @member {String|null} iconCls='fa fa-chevron-right'
+         * @reactive
          */
         iconCls: 'fa fa-chevron-right',
         /**
@@ -33,10 +34,8 @@ class SpinUp extends Base {
      * @param {Object} data
      */
     onTriggerClick(data) {
-        this.field.onSpinButtonUpClick();
+        this.field.onSpinButtonUpClick()
     }
 }
 
-Neo.applyClassConfig(SpinUp);
-
-export default SpinUp;
+export default Neo.setupClass(SpinUp);

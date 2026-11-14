@@ -31,6 +31,7 @@ class Base extends CoreBase {
         defaultHeaders: null,
         /**
          * @member {Boolean} isReady=false
+         * @reactive
          */
         isReady: false,
         /**
@@ -54,17 +55,18 @@ class Base extends CoreBase {
      * => Neo.apps['RealWorld'] does most likely not exist yet.
      */
     afterConstructed() {
-        let me = this;
+        let me  = this,
+            app = Neo.appsByName?.['RealWorld']?.[0];
 
-        if (!Neo.apps || !Neo.apps['RealWorld']) {
-            setTimeout(() => {
-                me.afterConstructed();
-            }, 100);
+        if (!app) {
+            me.timeout(100).then(() => {
+                me.afterConstructed()
+            })
         } else {
-            if (Neo.apps['RealWorld'].rendered) {
-                me.onAppRendered();
+            if (app.vnodeInitialized) {
+                me.onAppRendered()
             } else {
-                Neo.apps['RealWorld'].on('render',me.onAppRendered, me);
+                app.on('vnodeInitialized',me.onAppRendered, me)
             }
         }
     }
@@ -75,30 +77,15 @@ class Base extends CoreBase {
     onAppRendered() {
         const me = this;
 
-        if (Base.token) {
-            me.onReady(Base.token);
-        } else if (!Base.initialTokenRequestSent) {
-            Base.initialTokenRequestSent = true;
-
-            Neo.main.addon.LocalStorage.readLocalStorageItem({
-                key: LOCAL_STORAGE_KEY
-            }).then(data => {
-                const token = data.value;
-
-                if (token) {
-                    Base.token = token;
-                }
-
-                me.onReady(token);
+        // Every API singleton waits for the same stored-token read: the first rendered one starts it
+        Base.tokenPromise ??= Neo.main.addon.LocalStorage.readLocalStorageItem({key: LOCAL_STORAGE_KEY})
+            .then(data => {
+                Base.token   = data.value || null;
                 Base.isReady = true;
-                Base.fire('ready', token);
+                return Base.token
             });
-        } else {
-            Base.on({
-                ready: me.onReady,
-                scope: me
-            });
-        }
+
+        Base.tokenPromise.then(token => me.onReady(token))
     }
 
     /**
@@ -115,7 +102,7 @@ class Base extends CoreBase {
             return API_URL + opts.url;
         }
 
-        return API_URL + (opts.resource || this.resource) + (opts.slug ? '/' + opts.slug : '');
+        return API_URL + (opts.resource || this.resource) + (opts.slug ? '/' + opts.slug : '')
     }
 
     /**
@@ -141,8 +128,8 @@ class Base extends CoreBase {
                 'X-Requested-With': 'XMLHttpRequest'
             }
         }).catch(error => {
-            console.log('RealWorld.api.Base:get()', error);
-        });
+            console.log('RealWorld.api.Base:get()', error)
+        })
     }
 
     /**
@@ -168,8 +155,8 @@ class Base extends CoreBase {
                 'X-Requested-With': 'XMLHttpRequest'
             }
         }).catch(error => {
-            console.log('RealWorld.api.Base:get()', error);
-        });
+            console.log('RealWorld.api.Base:get()', error)
+        })
     }
 
     /**
@@ -185,7 +172,7 @@ class Base extends CoreBase {
         }
 
         me.isReady = true;
-        me.fire('ready', token);
+        me.fire('ready', token)
     }
 
     /**
@@ -197,15 +184,13 @@ class Base extends CoreBase {
      * @returns {Promise<any>}
      */
     post(opts={}) {
-        // console.log('post', opts);
-
         const params = opts.params;
         delete opts.params;
 
         return Neo.Xhr.promiseJson({
             data   : opts.data,
             method : 'POST',
-            params : params,
+            params,
             url    : this.createUrl(opts),
 
             headers: {
@@ -215,7 +200,7 @@ class Base extends CoreBase {
             }
         }).catch(error => {
             console.log('RealWorld.api.Base:post()', error);
-        });
+        })
     }
 
     /**
@@ -235,7 +220,7 @@ class Base extends CoreBase {
         return Neo.Xhr.promiseJson({
             data   : opts.data,
             method : 'PUT',
-            params : params,
+            params,
             url    : this.createUrl(opts),
 
             headers: {
@@ -244,14 +229,12 @@ class Base extends CoreBase {
                 'X-Requested-With': 'XMLHttpRequest'
             }
         }).catch(error => {
-            console.log('RealWorld.api.Base:put()', error);
-        });
+            console.log('RealWorld.api.Base:put()', error)
+        })
     }
 }
 
-Base.initialTokenRequestSent = false;
-Base.token                   = null;
+Base.token        = null;
+Base.tokenPromise = null;
 
-Neo.applyClassConfig(Base);
-
-export default Base;
+export default Neo.setupClass(Base);

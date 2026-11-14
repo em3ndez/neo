@@ -1,12 +1,12 @@
-import ArticlePreviews    from '../../store/ArticlePreviews.mjs'
-import Helix              from './Helix.mjs'
-import HelixMainContainer from '../../../../examples/component/helix/MainContainer.mjs';
+import ArticlePreviews from '../../store/ArticlePreviews.mjs'
+import Helix           from './Helix.mjs'
+import Viewport        from '../../../../examples/component/helix/Viewport.mjs';
 
 /**
  * @class RealWorld2.view.article.HelixContainer
- * @extends Neo.examples.component.helix.MainContainer
+ * @extends Neo.examples.component.helix.Viewport
  */
-class HelixContainer extends HelixMainContainer {
+class HelixContainer extends Viewport {
     static config = {
         /**
          * @member {String} className='RealWorld2.view.article.HelixContainer'
@@ -86,6 +86,4 @@ class HelixContainer extends HelixMainContainer {
     }
 }
 
-Neo.applyClassConfig(HelixContainer);
-
-export default HelixContainer;
+export default Neo.setupClass(HelixContainer);

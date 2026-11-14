@@ -35,6 +35,4 @@ class Fetch extends FetchConnection {
     }
 }
 
-let instance = Neo.applyClassConfig(Fetch);
-
-export default instance;
+export default Neo.setupClass(Fetch);

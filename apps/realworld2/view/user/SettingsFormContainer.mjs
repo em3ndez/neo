@@ -51,6 +51,4 @@ class SettingsFormContainer extends Container {
     }
 }
 
-Neo.applyClassConfig(SettingsFormContainer);
-
-export default SettingsFormContainer;
+export default Neo.setupClass(SettingsFormContainer);

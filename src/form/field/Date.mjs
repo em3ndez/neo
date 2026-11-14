@@ -2,7 +2,6 @@ import DateSelector from '../../component/DateSelector.mjs'
 import DateTrigger  from './trigger/Date.mjs'
 import DateUtil     from '../../util/Date.mjs';
 import Picker       from './Picker.mjs';
-import VDomUtil     from '../../util/VDom.mjs';
 
 /**
  * @class Neo.form.field.Date
@@ -38,20 +37,27 @@ class DateField extends Picker {
          */
         errorTextInvalidDate: 'Not a valid date',
         /**
+         * @member {Boolean} isoDate=false
+         */
+        isoDate: false,
+        /**
          * True to hide the DatePicker when selecting a day
          * @member {Boolean} hidePickerOnSelect=false
          */
         hidePickerOnSelect: false,
         /**
          * @member {String} inputType='date'
+         * @reactive
          */
         inputType: 'date',
         /**
          * @member {String|null} maxValue_=null
+         * @reactive
          */
         maxValue_: null,
         /**
          * @member {String|null} minValue_=null
+         * @reactive
          */
         minValue_: null,
         /**
@@ -69,6 +75,7 @@ class DateField extends Picker {
         /**
          * @member {Object|Object[]} triggers=[{module: DateTrigger}]
          * @protected
+         * @reactive
          */
         triggers: [{
             module: DateTrigger
@@ -81,7 +88,7 @@ class DateField extends Picker {
      */
     invalidInput = false
     /**
-     * Setting the value to true will return a Date object when calling getValue()
+     * Setting the value to true will return a Date object when calling getSubmitValue()
      * @member {Boolean} submitDateObject=false
      */
     submitDateObject = false
@@ -94,7 +101,8 @@ class DateField extends Picker {
 
         let me = this;
 
-        me.dateSelector = Neo.create(DateSelector, {
+        me.dateSelector = Neo.create({
+            module       : DateSelector,
             dayNameFormat: 'short',
             maxValue     : me.maxValue,
             minValue     : me.minValue,
@@ -109,7 +117,7 @@ class DateField extends Picker {
         me.dateSelector.on({
             change: me.onDatePickerChange,
             scope : me
-        });
+        })
     }
 
     /**
@@ -137,7 +145,7 @@ class DateField extends Picker {
     afterSetMinValue(value, oldValue) {
         let me = this;
 
-        me.changeInputElKey('max', value);
+        me.changeInputElKey('min', value);
 
         if (me.dateSelector) {
             me.dateSelector.minValue = value
@@ -159,19 +167,60 @@ class DateField extends Picker {
     }
 
     /**
+     * Triggered before the value config got changed
+     * @param {String} value
+     * @param {String} oldValue
+     * @protected
+     */
+    beforeSetValue(value, oldValue) {
+        if (Neo.typeOf(value) === 'Date') {
+            value = DateUtil.convertToyyyymmdd(value);
+            this.originalConfig.value = value
+        }
+
+        value = super.beforeSetValue(value, oldValue);
+
+        return (this.isoDate && value) ? value.substring(0, 10) : value
+    }
+
+    /**
+     * @summary Configures the floating date picker container with non-modal WAI-ARIA dialog semantics and delegates initial focus to the active calendar day cell.
+     * @returns {Neo.container.Base}
+     */
+    createPicker() {
+        let me     = this,
+            picker = super.createPicker(),
+            {vdom} = picker;
+
+        picker.focusOnMount = false;
+        vdom['aria-label']  = vdom['aria-label'] || 'Choose Date';
+        vdom.role           = 'dialog';
+
+        picker.on('mounted', me.onPickerMounted, me);
+
+        return picker
+    }
+
+    /**
      * @returns {Neo.component.DateSelector}
      */
     createPickerComponent() {
-        return this.dateSelector;
+        return this.dateSelector
     }
 
     /**
      * @returns {Date|String|null}
      */
-    getValue() {
+    getSubmitValue() {
         let value = this.value;
 
-        return this.submitDateObject && value ? new Date(`${value}T00:00:00.000Z`) : value
+        if(this.submitDateObject && value) {
+            return new Date(`${value}T12:00:00.000Z`);
+        } else if(this.isoDate && value) {
+            return new Date(value).toISOString();
+        }
+
+        return value;
     }
 
     /**
@@ -179,10 +228,24 @@ class DateField extends Picker {
      */
     hasContent() {
         if (this.labelPosition === 'inline') {
-            return true;
+            return true
         }
 
         return super.hasContent()
+    }
+
+    /**
+     * @summary Annotates the date input element with WAI-ARIA dialog popup and expansion state attributes.
+     */
+    onConstructed() {
+        let me      = this,
+            inputEl = me.getInputEl();
+
+        inputEl['aria-controls'] = me.getPickerId();
+        inputEl['aria-expanded'] = false;
+        inputEl['aria-haspopup'] = 'dialog';
+
+        super.onConstructed(...arguments)
     }
 
     /**
@@ -193,25 +256,20 @@ class DateField extends Picker {
         let me = this;
 
         me.hidePicker();
-        me.focus(me.getInputElId());
+        me.focus(me.getInputElId())
     }
 
     /**
+     * @summary Propagates the committed date and delegates optional dismissal to the floating picker's owner.
      * @param {Object} opts
      */
     onDatePickerChange(opts) {
-        let me   = this,
-            vdom = me.vdom;
+        let me = this;
 
-        if (me.hidePickerOnSelect) {
-            VDomUtil.removeVdomChild(vdom, me.getPickerId());
+        me.clean = false;
 
-            me.promiseUpdate().then(data => {
-                me.value = opts.value;
-            });
-        } else {
-            me.value = opts.value;
-        }
+        me.hidePickerOnSelect && me.hidePicker();
+        me.value = opts.value
     }
 
     /**
@@ -221,7 +279,7 @@ class DateField extends Picker {
     onInputValueChange(data) {
         this.invalidInput = !data.valid;
 
-        if (data.valid === true) {
+        if (data.valid) {
             super.onInputValueChange(data)
         } else {
             this.validate(false)
@@ -237,9 +295,48 @@ class DateField extends Picker {
 
         if (me.pickerIsMounted) {
             me.dateSelector.focusCurrentItem();
-            super.onKeyDownEnter(data);
+            super.onKeyDownEnter(data)
         } else {
-            super.onKeyDownEnter(data, me.dateSelector.focusCurrentItem, me.dateSelector);
+            super.onKeyDownEnter(data, me.dateSelector.focusCurrentItem, me.dateSelector)
+        }
+    }
+
+    /**
+     * @summary Synchronizes the input element's `aria-expanded` state when the date picker opens or closes.
+     * @param {Object} data
+     * @protected
+     */
+    onPickerHiddenChange(data) {
+        super.onPickerHiddenChange(data);
+
+        this.getInputEl()['aria-expanded'] = !data.value;
+        this.update()
+    }
+
+    /**
+     * @summary Moves focus to the active or selected day cell inside the DateSelector when the floating picker mounts.
+     * @protected
+     */
+    onPickerMounted() {
+        this.dateSelector?.focusCurrentItem()
+    }
+
+    /**
+     * Serializes the field into a JSON-compatible object.
+     * @returns {Object}
+     */
+    toJSON() {
+        let me = this;
+
+        return {
+            ...super.toJSON(),
+            dateSelector      : me.dateSelector?.toJSON(),
+            dateSelectorConfig: me.serializeConfig(me.dateSelectorConfig),
+            hidePickerOnSelect: me.hidePickerOnSelect,
+            isoDate           : me.isoDate,
+            maxValue          : me.maxValue,
+            minValue          : me.minValue,
+            submitDateObject  : me.submitDateObject
         }
     }
 
@@ -265,6 +362,4 @@ class DateField extends Picker {
     }
 }
 
-Neo.applyClassConfig(DateField);
-
-export default DateField;
+export default Neo.setupClass(DateField);

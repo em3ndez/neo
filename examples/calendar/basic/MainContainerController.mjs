@@ -1,5 +1,4 @@
 import ComponentController from '../../../src/controller/Component.mjs';
-import NeoArray            from '../../../src/util/Array.mjs';
 
 /**
  * @class Neo.examples.calendar.basic.MainContainerController
@@ -22,30 +21,21 @@ class MainContainerController extends ComponentController {
             button        = data.component,
             component     = me.component,
             headerToolbar = me.getReference('headerToolbar'),
-            buttonText, cls, headerColor, iconCls, style, theme;
+            buttonText, headerColor, iconCls, style, theme;
 
         if (button.text === 'Theme Light') {
             buttonText  = 'Theme Dark';
             headerColor = '#f2f2f2';
             iconCls     = 'fa fa-moon';
-            theme       = 'neo-theme-light';
+            theme       = 'neo-theme-light'
         } else {
             buttonText  = 'Theme Light';
             headerColor = '#33343d';
             iconCls     = 'fa fa-sun';
-            theme       = 'neo-theme-dark';
+            theme       = 'neo-theme-dark'
         }
 
-        cls = [...component.cls];
-
-        component.cls.forEach(item => {
-            if (item.includes('neo-theme')) {
-                NeoArray.remove(cls, item);
-            }
-        });
-
-        NeoArray.add(cls, theme);
-        component.cls = cls;
+        component.theme = theme;
 
         button.set({
             iconCls,
@@ -54,10 +44,8 @@ class MainContainerController extends ComponentController {
 
         style = headerToolbar.style || {};
         style.backgroundColor = headerColor;
-        headerToolbar.style = style;
+        headerToolbar.style = style
     }
 }
 
-Neo.applyClassConfig(MainContainerController);
-
-export default MainContainerController;
+export default Neo.setupClass(MainContainerController);

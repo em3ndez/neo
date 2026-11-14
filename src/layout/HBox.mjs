@@ -1,6 +1,7 @@
 import Flexbox from './Flexbox.mjs';
 
 /**
+ * The HBox layout allows you to arrange components horizontally in a container.
  * @class Neo.layout.HBox
  * @extends Neo.layout.Flexbox
  */
@@ -19,6 +20,7 @@ class HBox extends Flexbox {
         /**
          * @member {String} direction='row'
          * @protected
+         * @reactive
          */
         direction: 'row'
     }
@@ -26,13 +28,12 @@ class HBox extends Flexbox {
     /**
      * Applies the flex value to an item of the container this layout is bound to
      * @param {Neo.component.Base} item
+     * @param {Number} index
      */
-    applyChildAttributes(item) {
+    applyChildAttributes(item, index) {
         // Do not apply flex if fixed width
-        !item.width && super.applyChildAttributes(item);
+        !item.width && super.applyChildAttributes(item, index)
     }
 }
 
-Neo.applyClassConfig(HBox);
-
-export default HBox;
+export default Neo.setupClass(HBox);

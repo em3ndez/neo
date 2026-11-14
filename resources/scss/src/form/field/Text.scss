@@ -6,6 +6,56 @@
     margin-top   : 5px;
     white-space  : nowrap;
 
+    &.neo-has-character-count {
+        display              : grid;
+        grid-template-areas  : "label input" ". counter" ". error";
+        grid-template-columns: auto minmax(0, 1fr);
+        grid-template-rows   : minmax(min-content, 1fr) auto auto;
+        height               : max-content;
+
+        > .neo-textfield-label {grid-area: label;}
+        > .neo-textfield-sublabel {grid-area: sublabel;}
+        > .neo-textfield-input, > .neo-input-wrapper {grid-area: input;}
+        > .neo-textfield-error-wrapper {grid-area: error;}
+
+        &.label-right {
+            grid-template-areas  : "input label" "counter ." "error .";
+            grid-template-columns: minmax(0, 1fr) auto;
+        }
+
+        &.label-top {
+            grid-template-areas  : "label" "sublabel" "input" "counter" "error";
+            grid-template-columns: minmax(0, 1fr);
+            grid-template-rows   : auto auto minmax(min-content, 1fr) auto auto;
+        }
+
+        &.label-bottom {
+            grid-template-areas  : "input" "counter" "error" "label";
+            grid-template-columns: minmax(0, 1fr);
+            grid-template-rows   : minmax(min-content, 1fr) auto auto auto;
+        }
+
+        &.label-inline {
+            display              : grid;
+            grid-template-areas  : "input" "counter" "error";
+            grid-template-columns: minmax(0, 1fr);
+
+            > .neo-label-wrapper {
+                grid-area: input;
+                height   : 100%;
+            }
+        }
+    }
+
+    .neo-textfield-character-count {
+        color       : var(--textfield-sublabel-color);
+        font-size   : var(--textfield-sublabel-font-size);
+        grid-area   : counter;
+        justify-self: end;
+        line-height : 1.4;
+        margin-top  : .3em;
+    }
+
     &.neo-focus {
         .neo-input-wrapper {
             border-color: var(--textfield-border-color-active) !important;
@@ -79,6 +129,50 @@
 
                 .neo-right-border {
                     border-right-color: var(--textfield-border-color-invalid);
+                }
+            }
+        }
+
+        &.neo-empty-required {
+            .neo-input-wrapper {
+                border-color: var(--textfield-border-color-alert);
+            }
+
+            &.label-inline {
+                .neo-label-wrapper {
+                    .neo-center-border, .neo-left-border, .neo-right-border {
+                        border-bottom-color: var(--textfield-border-color-alert);
+                    }
+
+                    .neo-left-border, .neo-right-border {
+                        border-top-color: var(--textfield-border-color-alert);
+                    }
+
+                    .neo-left-border {
+                        border-left-color: var(--textfield-border-color-alert);
+                    }
+
+                    .neo-right-border {
+                        border-right-color: var(--textfield-border-color-alert);
+                    }
+                }
+            }
+
+            .neo-textfield-error {
+                color: var(--textfield-border-color-alert);
+            }
+
+            &:not(.label-inline, .neo-input-wrapper) {
+                .neo-textfield-input {
+                    border-color: var(--textfield-border-color-alert);
+                }
+            }
+
+            &.neo-invalid:not(.neo-disabled, .neo-has-content) {
+                .neo-label-wrapper {
+                    .neo-center-border {
+                        border-top-color: var(--textfield-border-color-alert);
+                    }
                 }
             }
         }
@@ -187,7 +281,6 @@
     &.label-inline {
         display  : block;
         font-size: 14px;
-        height   : inherit;
         position : relative;
 
         &.neo-focus {
@@ -225,7 +318,7 @@
             }
 
             .neo-textfield-label {
-                color    : #777;
+                color    : var(--textfield-label-color);
                 transform: translateX(4px) translateY(calc(-62% - 0.5 * var(--textfield-border-width))) scale(.7);
             }
         }

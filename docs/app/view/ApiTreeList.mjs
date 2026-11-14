@@ -1,9 +1,9 @@
 import TreeList from '../../../src/tree/List.mjs';
-import ApiStore from '../store/Api.mjs';
 
 /**
  * @class Docs.view.ApiTreeList
  * @extends Neo.tree.List
+ * @summary Displays a root-scoped projection of the Docs structure index owned by the root state provider.
  */
 class ApiTreeList extends TreeList {
     static config = {
@@ -18,30 +18,11 @@ class ApiTreeList extends TreeList {
          */
         ntype: 'api-treelist',
         /**
-         * @member {Neo.data.Store|null} store=ApiStore
-         * @protected
+         * The root state provider owns the bound navigation store.
+         * @member {Boolean} autoDestroyStore=false
          */
-        store: ApiStore
-    }
-
-    /**
-     *
-     */
-    onConstructed() {
-        super.onConstructed();
-
-        let me = this;
-
-        Neo.Xhr.promiseJson({
-            url: '../../docs/output/structure.json'
-        }).then(data => {
-            me.store.data = data.json;
-            me.createItems(null, me.getListItemsRoot(), 0);
-            me.update();
-        });
+        autoDestroyStore: false
     }
 }
 
-Neo.applyClassConfig(ApiTreeList);
-
-export default ApiTreeList;
+export default Neo.setupClass(ApiTreeList);

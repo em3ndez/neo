@@ -25,6 +25,7 @@ class Base extends CoreBase {
         defaultHeaders: null,
         /**
          * @member {Boolean} isReady=false
+         * @reactive
          */
         isReady: false,
         /**
@@ -33,34 +34,23 @@ class Base extends CoreBase {
         resource: '/'
     }
 
+    /**
+     * Every API singleton waits for the same stored-token read: the first construction starts
+     * `Base.tokenPromise`, and each instance becomes ready when it settles.
+     */
     onConstructed() {
         super.onConstructed();
 
         const me = this;
 
-        if (!Base.initialTokenRequestSent) {
-            Base.initialTokenRequestSent = true;
-
-            setTimeout(() => {
-                Neo.main.addon.LocalStorage.readLocalStorageItem({
-                    key: LOCAL_STORAGE_KEY
-                }).then(data => {
-                    const token = data.value;
-
-                    if (token) {
-                        Base.token = token;
-                    }
-
-                    me.onReady(token);
-                    Base.fire('ready', token);
-                });
-            }, Neo.config.environment === 'development' ? 0 : 200);
-        } else {
-            Base.on({
-                ready: me.onReady,
-                scope: me
+        Base.tokenPromise ??= me.timeout(Neo.config.environment === 'development' ? 0 : 200)
+            .then(() => Neo.main.addon.LocalStorage.readLocalStorageItem({key: LOCAL_STORAGE_KEY}))
+            .then(data => {
+                Base.token = data.value || null;
+                return Base.token
             });
-        }
+
+        Base.tokenPromise.then(token => me.onReady(token))
     }
 
     /**
@@ -167,7 +157,7 @@ class Base extends CoreBase {
         return Neo.Xhr.promiseJson({
             data   : opts.data,
             method : 'POST',
-            params : params,
+            params,
             url    : this.createUrl(opts),
 
             headers: {
@@ -197,7 +187,7 @@ class Base extends CoreBase {
         return Neo.Xhr.promiseJson({
             data   : opts.data,
             method : 'PUT',
-            params : params,
+            params,
             url    : this.createUrl(opts),
 
             headers: {
@@ -211,9 +201,7 @@ class Base extends CoreBase {
     }
 }
 
-Base.initialTokenRequestSent = false;
-Base.token                   = null;
+Base.token        = null;
+Base.tokenPromise = null;
 
-Neo.applyClassConfig(Base);
-
-export default Base;
+export default Neo.setupClass(Base);

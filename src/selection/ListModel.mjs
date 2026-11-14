@@ -17,25 +17,14 @@ class ListModel extends Model {
          */
         ntype: 'selection-listmodel',
         /**
-         * @member {Boolean} stayInList=true
+         * True lets a click on an already-selected item deselect it — the removable-selection
+         * affordance a multi-select list needs (a multi-select whose selections are irrevocable
+         * is half a control). Only consulted while `singleSelect` is false: single-select keeps
+         * its click-reselects semantics untouched. Defaults to false, so every existing consumer
+         * keeps the shipped behavior unless it opts in.
+         * @member {Boolean} toggleOnClick=false
          */
-        stayInList: true
-    }
-
-    /**
-     * @param {Object} data
-     */
-    onKeyDownDown(data) {
-        !this.view.disableSelection && this.onNavKey(data, 1);
-    }
-
-    /**
-     * @param {Object} data
-     */
-    onKeyDownEnter(data) {
-        let view = this.view;
-
-        !view.disableSelection && view.onKeyDownEnter?.(this.getSelection()[0]);
+        toggleOnClick: false
     }
 
     /**
@@ -45,90 +34,76 @@ class ListModel extends Model {
     onKeyDownEscape(data) {}
 
     /**
+     * Placeholder method to get overridden by class extension list menu.ListModel
      * @param {Object} data
      */
-    onKeyDownLeft(data) {
-        this.onKeyDownUp(data);
+    onKeyDownDown(data) {}
+
+    /**
+     * Placeholder method to get overridden by class extension list menu.ListModel
+     * @param {Object} data
+     */
+    onKeyDownEnter(data) {}
+
+    /**
+     * Placeholder method to get overridden by class extension list menu.ListModel
+     * @param {Object} data
+     */
+    onKeyDownLeft(data) {}
+
+    /**
+     * Placeholder method to get overridden by class extension list menu.ListModel
+     * @param {Object} data
+     */
+    onKeyDownRight(data) {}
+
+    /**
+     * Placeholder method to get overridden by class extension list menu.ListModel
+     * @param {Object} data
+     */
+    onKeyDownUp(data) {}
+
+    /**
+     * @param {Object} data
+     */
+    onListClick({currentTarget}) {
+        let me     = this,
+            {view} = me,
+            id     = view.getItemRecordId(currentTarget),
+            record = view.store.get(id);
+
+        if (!view.disableSelection && record) {
+            // isSelected() compares raw against the vdom-id collection, so the record maps through
+            // getSelectionItemId first — the same conversion select() and deselect() apply on entry.
+            if (!me.singleSelect && me.toggleOnClick && me.isSelected(me.getSelectionItemId(record))) {
+                me.deselect(record)
+            } else {
+                me.select(record)
+            }
+        }
     }
 
     /**
      * @param {Object} data
      */
-    onKeyDownRight(data) {
-        this.onKeyDownDown(data);
-    }
+    onListNavigate(data) {
+        let {view}  = this,
+            {store} = view,
+            record, recordId;
 
-    /**
-     * @param {Object} data
-     */
-    onKeyDownUp(data) {
-        !this.view.disableSelection && this.onNavKey(data, -1);
-    }
-
-    /**
-     * @param {Object} data
-     * @param {Number} step
-     */
-    onNavKey(data, step) {
-        let me               = this,
-            view             = me.view,
-            store            = view.store,
-            maxItems         = store.getCount(),
-            preventSelection = false,
-            index, item, itemId, node, record, recordId;
-
-        for (node of data.path) {
-            if (node.cls.includes(view.itemCls)) {
-                item = node.id;
-                break;
-            }
+        if (data.activeItem) {
+            recordId = view.getItemRecordId(data.activeItem);
+            record   = store.get(recordId);
         }
 
-        item = item || me.items?.[0];
-
-        if (item) {
-            recordId = view.getItemRecordId(item);
-            index    = store.indexOf(recordId) + step;
-            record   = store.getAt(index);
-
-            while (record?.[view.disabledField] === true || record?.isHeader === true) {
-                index += step;
-                record = store.getAt(index)
-            }
-
-            if (index < 0) {
-                if (me.stayInList) {
-                    index = maxItems - 1;
-                } else {
-                    preventSelection = true;
-                    me.deselectAll();
-                    view.fire('selectPreFirstItem')
-                }
-            } else if (index >= maxItems) {
-                if (me.stayInList) {
-                    index = 0;
-
-                    while (store.getAt(index)?.isHeader === true) {
-                        index++;
-                    }
-                } else {
-                    preventSelection = true;
-                    me.deselectAll();
-                    view.fire('selectPostLastItem')
-                }
-            }
-        } else {
-            index = 0
+        if (!record) {
+            record = store.getAt(Math.min(data.activeIndex, store.getCount()))
         }
 
-        if (!preventSelection) {
-            record = store.getAt(index);
-            itemId = view.getItemId(record[me.view.getKeyProperty()]);
+        data.record      = record;
+        view._focusIndex = store.indexOf(record); // silent update, no need to refocus
 
-            me.select(itemId);
-            view.focus(itemId);
-            view.fire('itemNavigate', record)
-        }
+        view.fire('itemNavigate', data)
     }
 
     /**
@@ -137,9 +112,17 @@ class ListModel extends Model {
     register(component) {
         super.register(component);
 
-        let me   = this,
-            id   = me.id,
-            view = me.view;
+        let me         = this,
+            {id, view} = me;
+
+        view.addDomListeners([{
+            click   : me.onListClick,
+            delegate: path => view.getInteractiveItemIndex(path),
+            scope   : me
+        }, {
+            neonavigate: me.onListNavigate,
+            scope      : me
+        }]);
 
         view.keys?._keys.push(
             {fn: 'onKeyDownDown'   ,key: 'Down'   ,scope: id},
@@ -155,23 +138,19 @@ class ListModel extends Model {
      * @param {Number} index
      */
     selectAt(index) {
-        let view      = this.view,
-            recordKey = view?.store.getKeyAt(index),
-            itemId    = recordKey && view.getItemId(recordKey);
+        let {view} = this,
+            record = view?.store.getAt(index),
+            itemId = record && view.getItemId(view.getRecordId(record));
 
-        if (itemId) {
-            this.select(itemId);
-            view.focus(itemId)
-        }
+        itemId && this.select(itemId)
     }
 
     /**
      *
      */
     unregister() {
-        let me   = this,
-            id   = me.id,
-            view = me.view;
+        let me         = this,
+            {id, view} = me;
 
         view.keys?.removeKeys([
             {fn: 'onKeyDownDown'   ,key: 'Down'   ,scope: id},
@@ -186,6 +165,4 @@ class ListModel extends Model {
     }
 }
 
-Neo.applyClassConfig(ListModel);
-
-export default ListModel;
+export default Neo.setupClass(ListModel);

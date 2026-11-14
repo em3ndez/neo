@@ -37,8 +37,7 @@ class MainContainer extends Panel {
                 flex : 1
             }, {
                 handler: 'onButton2Click',
-                iconCls: 'fa fa-user',
-                text   : 'Button 2'
+                iconCls: 'fa fa-user'
             }]
         }, {
             dock : 'left',
@@ -114,7 +113,7 @@ class MainContainer extends Panel {
             items: [{
                 ntype: 'component',
                 vdom : {
-                    innerHTML: 'item 1'
+                    html: 'item 1'
                 }
             }]
         }, {
@@ -158,13 +157,11 @@ class MainContainer extends Panel {
             items: [{
                 ntype: 'component',
                 vdom : {
-                    innerHTML: 'item 2'
+                    html: 'item 2'
                 }
             }]
         }]
     }
 }
 
-Neo.applyClassConfig(MainContainer);
-
-export default MainContainer;
+export default Neo.setupClass(MainContainer);

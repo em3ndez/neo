@@ -1,11 +1,10 @@
-import Base from '../../core/Base.mjs';
+import Base from './Base.mjs';
 
 /**
  * Logic to work with stylesheets, e.g. apply & switch Neo based themes
  * main.addon.HighlightJS requires this file
  * @class Neo.main.addon.Stylesheet
- * @extends Neo.core.Base
- * @singleton
+ * @extends Neo.main.addon.Base
  */
 class Stylesheet extends Base {
     /**
@@ -24,6 +23,7 @@ class Stylesheet extends Base {
          * Remote method access for other workers
          * @member {Object} remote={app: [//...]}
          * @protected
+         * @reactive
          */
         remote: {
             app: [
@@ -34,12 +34,7 @@ class Stylesheet extends Base {
                 'setCssVariable',
                 'swapStyleSheet'
             ]
-        },
-        /**
-         * @member {Boolean} singleton=true
-         * @protected
-         */
-        singleton: true
+        }
     }
 
     /**
@@ -49,20 +44,25 @@ class Stylesheet extends Base {
         super.construct(config);
 
         let neoConfig = Neo.config,
+            env       = neoConfig.environment,
             faPath;
 
-        if (neoConfig.useFontAwesome) {
-            if (neoConfig.environment === 'development') {
-                faPath = neoConfig.basePath + 'node_modules/@fortawesome/fontawesome-free/css/all.min.css';
-            } else {
-                faPath = neoConfig.basePath.substr(6) + 'resources/fontawesome-free/css/all.min.css';
+        if (!neoConfig.useSSR) {
+            if (neoConfig.useFontAwesome) {
+                if (env === 'development' || env === 'dist/esm') {
+                    faPath = neoConfig.basePath + 'node_modules/@fortawesome/fontawesome-free/css/all.min.css'
+                } else {
+                    faPath = neoConfig.basePath.substring(6) + 'resources/fontawesome-free/css/all.min.css'
+                }
+
+                this.createStyleSheet({
+                    href: faPath
+                })
             }
 
-            this.createStyleSheet(null, null, faPath);
-        }
-
-        if (neoConfig.themes.length > 0 && neoConfig.themes[0] !== '') {
-            this.addGlobalCss();
+            if (neoConfig.themes.length > 0 && neoConfig.themes[0] !== '') {
+                this.addGlobalCss()
+            }
         }
     }
 
@@ -70,85 +70,100 @@ class Stylesheet extends Base {
      *
      */
     addGlobalCss() {
-        let config   = Neo.config,
-            themes   = config.themes,
+        let {config} = Neo,
+            {themes} = config,
             folders  = ['src', ...themes],
             env      = config.environment,
-            path      = env.startsWith('dist/') ? '' : config.appPath.includes('docs') ? `../dist/${env}/` : `../../dist/${env}/`,
-            rootPath = config.basePath.substr(6);
+            path     = env.startsWith('dist/') ? '' : config.appPath.includes('docs') ? `../dist/${env}/` : `../../dist/${env}/`,
+            rootPath = config.basePath.substring(6);
 
         document.body.classList.add(themes[0]);
 
         folders.forEach(folder => {
             if (folder.startsWith('neo-')) {
-                folder = folder.substring(4);
+                folder = folder.substring(4)
             }
 
-            this.createStyleSheet(
-                null,
-                null,
-                `${rootPath}${path}css/${folder}/Global.css`
-            );
-        });
+            this.createStyleSheet({
+                href: `${rootPath}${path}css/${folder}/Global.css`
+            })
+        })
     }
 
     /**
+     * Loads one file per class per declared theme. The fan-out is intentional and bundling is not
+     * an available alternative: any component tree, at any nesting depth, can be moved from the
+     * main window into another one, so a second window's class set is not knowable ahead of time.
+     * Pre-bundling would mean shipping every possible combination of those trees — which costs more
+     * than it saves and still cannot cover a combination nobody anticipated.
+     *
+     * File granularity is what makes the delta work instead: a window fetches exactly the classes
+     * it ends up rendering, and a single changed class is swapped in every open window without
+     * rebuilding anything. The per-class request count is the price of that, deliberately paid.
      * @param {Object} data
      * @param {String} data.appName
      * @param {String} data.className
      * @param {String[]} data.folders
      */
-    addThemeFiles(data) {
-        let className = data.className,
-            config    = Neo.config,
-            env       = config.environment,
-            path      = env.startsWith('dist/') ? '' : config.appPath.includes('docs') ? `../dist/${env}/` : `../../dist/${env}/`,
-            rootPath  = config.basePath.substr(6);
+    async addThemeFiles(data) {
+        let {className} = data,
+            {config}    = Neo,
+            env         = config.environment,
+            path        = env.startsWith('dist/') ? '' : config.appPath.includes('docs') ? `../dist/${env}/` : `../../dist/${env}/`,
+            promises    = [],
+            rootPath    = config.basePath.substring(6);
 
         if (className.startsWith('Neo.')) {
-            className = className.substring(4);
+            className = className.substring(4)
         }
 
         className = className.split('.').join('/');
 
         data.folders.forEach(folder => {
             if (folder === 'src' || folder.includes('theme-') && config.themes.includes(`neo-${folder}`)) {
-                this.createStyleSheet(
-                    null,
-                    null,
-                    `${rootPath}${path}css/${folder}/${className}.css`
-                )
+                promises.push(this.createStyleSheet({
+                    href: `${rootPath}${path}css/${folder}/${className}.css`
+                }))
             }
-        })
+        });
+
+        await Promise.all(promises)
     }
 
     /**
      * Use either name for a neo theme (e.g. 'neo-theme-dark.css') or pass a href
-     * @param {String} [name]
-     * @param {String} [id]
-     * @param {String} [href]
+     * @param {Object} data
+     * @param {String} [data.name]
+     * @param {String} [data.id]
+     * @param {String} [data.href]
+     * @returns {Promise<void>}
      */
-    createStyleSheet(name, id, href) {
+    async createStyleSheet({name, id, href}) {
         if (!name && !href) {
-            throw new Error('createStyleSheet: you need to either pass a name or a href');
+            throw new Error('createStyleSheet: you need to either pass a name or a href')
         }
 
-        const link = document.createElement('link'),
-              env  = Neo.config.environment,
-              path = env.startsWith('dist/') ? env : ('dist/' + env),
-              url  = href ? href : Neo.config.basePath + path + '/' + name;
+        return new Promise((resolve, reject) => {
+            let link = document.createElement('link'),
+                env  = Neo.config.environment,
+                path = env.startsWith('dist/') ? env : ('dist/' + env),
+                url  = href ? href : Neo.config.basePath + path + '/' + name;
 
-        Object.assign(link, {
-            href: url,
-            rel : 'stylesheet',
-            type: 'text/css'
-        });
+            Object.assign(link, {
+                href: url,
+                rel : 'stylesheet',
+                type: 'text/css'
+            });
 
-        if (id) {
-            link.id = id;
-        }
+            if (id) {
+                link.id = id
+            }
 
-        document.head.appendChild(link);
+            link.addEventListener('error', function() {reject(new Error(`Stylesheet failed to load: ${url}`))})
+            link.addEventListener('load',  function() {resolve()})
+
+            document.head.appendChild(link)
+        })
     }
 
     /**
@@ -159,7 +174,7 @@ class Stylesheet extends Base {
     deleteCssRules(data) {
         let styleEl    = document.getElementById(this.dynamicStyleSheetId),
             styleSheet = styleEl.sheet,
-            cssRules   = styleSheet.cssRules,
+            {cssRules} = styleSheet,
             i          = 0,
             len        = data.rules.length,
             j, rulesLen;
@@ -171,7 +186,7 @@ class Stylesheet extends Base {
             for (; j < rulesLen; j++) {
                 if (cssRules[j].selectorText === data.rules[i]) {
                     styleSheet.deleteRule(j);
-                    break;
+                    break
                 }
             }
         }
@@ -189,11 +204,11 @@ class Stylesheet extends Base {
         for (; i < len; i++) {
             sheet = document.styleSheets[i];
             if (sheet.href?.includes(token)) {
-                return true;
+                return true
             }
         }
 
-        return false;
+        return false
     }
 
     /**
@@ -211,13 +226,13 @@ class Stylesheet extends Base {
             styleEl = document.createElement('style');
 
             styleEl.id = this.dynamicStyleSheetId;
-            document.head.appendChild(styleEl);
+            document.head.appendChild(styleEl)
         }
 
         styleSheet = styleEl.sheet;
 
         for (; i < len; i++) {
-            styleSheet.insertRule(data.rules[i], styleSheet.cssRules.length);
+            styleSheet.insertRule(data.rules[i], styleSheet.cssRules.length)
         }
     }
 
@@ -241,19 +256,19 @@ class Stylesheet extends Base {
             if (sheet.href) {
                 excluded.forEach(name => {
                     if (sheet.href.includes(name)) {
-                        removeSheet = false;
+                        removeSheet = false
                     }
                 });
 
                 if (removeSheet) {
                     included.forEach(name => {
                         if (!sheet.href.includes(name)) {
-                            removeSheet = false;
+                            removeSheet = false
                         }
                     });
 
                     if (removeSheet) {
-                        sheet.ownerNode.parentNode.removeChild(sheet.ownerNode);
+                        sheet.ownerNode.parentNode.removeChild(sheet.ownerNode)
                     }
                 }
             }
@@ -268,11 +283,11 @@ class Stylesheet extends Base {
      * @param {String} data.value
      */
     setCssVariable(data) {
-        let key = data.key,
+        let {key} = data,
             rule, sheet;
 
         if (!key.startsWith('--')) {
-            key = '--' + key;
+            key = '--' + key
         }
 
         for (sheet of document.styleSheets) {
@@ -281,14 +296,14 @@ class Stylesheet extends Base {
                     if (Neo.typeOf(rule) === 'CSSStyleRule') {
                         if (rule.style.getPropertyValue(key) !== '') {
                             rule.style.setProperty(key, data.value, data.priority);
-                            return true;
+                            return true
                         }
                     }
                 }
             }
         }
 
-        return false;
+        return false
     }
 
     /**
@@ -297,10 +312,8 @@ class Stylesheet extends Base {
      * @param {String} data.id
      */
     swapStyleSheet(data) {
-        document.getElementById(data.id).setAttribute('href', data.href);
+        document.getElementById(data.id).setAttribute('href', data.href)
     }
 }
 
-let instance = Neo.applyClassConfig(Stylesheet);
-
-export default instance;
+export default Neo.setupClass(Stylesheet);

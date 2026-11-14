@@ -21,14 +21,24 @@ class Table extends Container {
          * @member {Object} bind
          */
         bind: {
-            country: {twoWay: true, value: data => data.country}
+            country: {key: 'country', twoWay: true}
         },
+        /**
+         * @member {String|null} country_=null
+         * @reactive
+         */
+        country_: null,
+        /**
+         * @member {Neo.data.Store} store=CountryStore
+         * @reactive
+         */
+        store: CountryStore,
         /**
          * Default configs for each column
          * @member {Object} columnDefaults
          */
         columnDefaults: {
-            align               : 'right',
+            cellAlign           : 'right',
             defaultSortDirection: 'DESC',
             renderer            : Util.formatNumber
         },
@@ -42,16 +52,17 @@ class Table extends Container {
             minWidth : 40,
             text     : '#',
             renderer : Util.indexRenderer,
+            sortable : false,
             width    : 40
         }, {
-            align               : 'left',
+            cellAlign           : 'left',
             dataField           : 'country',
             defaultSortDirection: 'ASC',
             dock                : 'left',
             text                : 'Country',
             width               : 200,
 
-            renderer: function(data) {
+            renderer(data) {
                 return {
                     cls : ['neo-country-column', 'neo-table-cell'],
                     html: [
@@ -59,7 +70,7 @@ class Table extends Container {
                             '<img style="height:20px; margin-right:10px; width:20px;" src="' + Util.getCountryFlagUrl(data.value) + '">' + data.value,
                         '</div>'
                     ].join('')
-                };
+                }
             }
         }, {
             dataField: 'cases',
@@ -100,15 +111,7 @@ class Table extends Container {
         }, {
             dataField: 'testsPerOneMillion',
             text     : 'Tests / 1M'
-        }],
-        /**
-         * @member {String|null} country_=null
-         */
-        country_: null,
-        /**
-         * @member {Neo.data.Store} store=CountryStore
-         */
-        store: CountryStore
+        }]
     }
 
     /**
@@ -119,20 +122,21 @@ class Table extends Container {
      */
     afterSetCountry(value, oldValue) {
         if (oldValue !== undefined) {
-            let me             = this,
-                selectionModel = me.selectionModel,
+            let me               = this,
+                {body}           = me,
+                {selectionModel} = body,
                 id;
 
             if (value) {
-                id = `${me.getView().id}__tr__${value}`; // the store can not be loaded on the first selection
+                id = `${body.id}__tr__${value}`; // The store might not be loaded on the first selection
 
                 if (!selectionModel.isSelected(id)) {
                     selectionModel.select(id);
 
-                    me.mounted && Neo.main.DomAccess.scrollToTableRow({id: id});
+                    me.mounted && Neo.main.DomAccess.scrollToTableRow({id, windowId: me.windowId})
                 }
             } else {
-                selectionModel.deselectAll();
+                selectionModel.deselectAll()
             }
         }
     }
@@ -142,7 +146,7 @@ class Table extends Container {
      * @param {String[]} items
      */
     onDeselect(items) {
-        this.country = null;
+        this.country = null
     }
 
     /**
@@ -155,17 +159,15 @@ class Table extends Container {
 
         if (me.store.getCount() > 0) {
             if (item) {
-                item = me.getView().getRecordByRowId(item)?.country;
+                item = me.body.getRecordByRowId(item)?.country
             }
 
             // in case getRecordByRowId() has no match, the initial row creation will include the selection
             if (item) {
-                me.country = item;
+                me.country = item
             }
         }
     }
 }
 
-Neo.applyClassConfig(Table);
-
-export default Table;
+export default Neo.setupClass(Table);

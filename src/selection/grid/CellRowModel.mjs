@@ -1,7 +1,4 @@
 import CellModel from './CellModel.mjs';
-import NeoArray  from '../../util/Array.mjs';
-import RowModel  from './RowModel.mjs';
-import VDomUtil  from '../../util/VDom.mjs';
 
 /**
  * @class Neo.selection.grid.CellRowModel
@@ -25,131 +22,65 @@ class CellRowModel extends CellModel {
          */
         cls: 'neo-selection-cellrowmodel',
         /**
-         * @member {Array|null} selectedRowIds=null
+         * @member {Boolean} selectsRows=true
          * @protected
          */
-        selectedRowIds: null
-    }
-
-    /**
-     * @param {Object} config
-     */
-    construct(config) {
-        super.construct(config);
-
-        this.selectedRowIds = [];
-    }
-
-    /**
-     * @param {Boolean} [silent] true to prevent a vdom update
-     */
-    deselectAllRows(silent) {
-        let me     = this,
-            rowIds = [...me.selectedRowIds],
-            view   = me.view;
-
-        rowIds.forEach(rowId => {
-            me.deselectRow(rowId, true);
-        });
-
-        !silent && view.update();
-    }
-
-    /**
-     * @param {String} rowId
-     * @param {Boolean} [silent] true to prevent a vdom update
-     */
-    deselectRow(rowId, silent) {
-        let me   = this,
-            view = me.view,
-            node = view.getVdomChild(rowId),
-            cls;
-
-        if (node) {
-            cls = node.cls || [];
-            NeoArray.remove(cls, me.selectedCls);
-            node.cls = cls;
-        }
-
-        NeoArray.remove(me.selectedRowIds, rowId);
-
-        !silent && view.update();
+        selectsRows: true
     }
 
     /**
      * @param {Object} data
      */
     onCellClick(data) {
-        let me   = this,
-            node = RowModel.getRowNode(data.path), // we could add a separate export for this method
-            id   = node?.id;
+        let me        = this,
+            {view}    = me,
+            {dataField, record} = data,
+            logicalId;
 
-        if (id) {
-            me.deselectAllRows(true);
-            me.selectRow(id);
+        if (record && dataField) {
+            logicalId = view.getLogicalCellId(record, dataField);
+
+            if (me.hasAnnotations(record)) {
+                me.updateAnnotations(record, !me.isSelected(logicalId))
+            } else {
+                me[me.isSelected(logicalId) ? 'deselectRow' : 'selectRow'](view.getRecordId(record), true)
+            }
         }
 
-        super.onCellClick(data);
+        super.onCellClick(data)
     }
 
     /**
-     * @param {Object} data
      * @param {Number} step
      */
-    onNavKeyRow(data, step) {
-        super.onNavKeyRow(data, step);
-
-        let me         = this,
-            node       = RowModel.getRowNode(data.path),
-            view       = me.view,
-            store      = view.store,
-            vdomNode   = VDomUtil.findVdomChild(view.vdom, node.id),
-            newIndex   = (vdomNode.index + step) % store.getCount(),
-            parentNode = vdomNode.parentNode,
-            id;
+    onNavKeyRow(step) {
+        let me           = this,
+            {view}       = me,
+            {store}      = view,
+            countRecords = store.getCount(),
+            recordId     = me.selectedRows[0] || view.getRecordId(store.getAt(0)),
+            record       = me.getRowRecord(recordId),
+            index        = store.indexOf(record),
+            newIndex     = (index + step) % countRecords;
 
         while (newIndex < 0) {
-            newIndex += store.getCount();
+            newIndex += countRecords
         }
 
-        id = parentNode.cn[newIndex].id;
+        record = store.getAt(newIndex);
 
-        if (id) {
-            me.deselectAllRows(true);
-            me.selectRow(id);
-        }
-    }
+        if (me.hasAnnotations(record)) {
+            me.updateAnnotations(record)
+        } else {
+            recordId = view.getRecordId(record);
 
-    /**
-     * @param {String} id
-     * @param {Boolean} [silent]
-     */
-    selectRow(id, silent) {
-        let me       = this,
-            view     = me.view,
-            vdomNode = id && view.getVdomChild(id),
-            cls;
-
-        if (vdomNode) {
-            cls = vdomNode.cls || [];
-            NeoArray.add(cls, me.selectedCls);
-            vdomNode.cls = cls;
-
-            me.selectedRowIds.push(id);
+            if (recordId) {
+                me.selectRow(recordId, true) // silent
+            }
         }
 
-        !silent && view.update();
-    }
-
-    /**
-     *
-     */
-    unregister() {
-        this.deselectAllRows();
-        super.unregister();
+        super.onNavKeyRow(step)
     }
 }
 
-Neo.applyClassConfig(CellRowModel);
-
-export default CellRowModel;
+export default Neo.setupClass(CellRowModel);

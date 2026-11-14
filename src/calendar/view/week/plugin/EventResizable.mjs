@@ -10,7 +10,12 @@ class EventResizable extends Resizable {
          * @member {String} className='Neo.calendar.view.week.plugin.EventResizable'
          * @protected
          */
-        className: 'Neo.calendar.view.week.plugin.EventResizable'
+        className: 'Neo.calendar.view.week.plugin.EventResizable',
+        /**
+         * @member {String} ntype='plugin-calendar-week-eventresizable'
+         * @protected
+         */
+        ntype: 'plugin-calendar-week-eventresizable'
     }
 
     /**
@@ -39,7 +44,7 @@ class EventResizable extends Resizable {
 
         me.isDragging = true;
         me.addBodyCursorCls();
-        me.owner.eventDragZone[me.currentNodeName === 'top' ? 'keepEndDate' : 'keepStartDate'] = true;
+        me.owner.eventDragZone[me.currentNodeName === 'top' ? 'keepEndDate' : 'keepStartDate'] = true
     }
 
     /**
@@ -47,12 +52,10 @@ class EventResizable extends Resizable {
      * @param {Object} data
      */
     onMouseMove(data) {
-        if (this.owner.data.events.enableDrag) {
-            super.onMouseMove(data);
+        if (this.owner.enableDrag) {
+            super.onMouseMove(data)
         }
     }
 }
 
-Neo.applyClassConfig(EventResizable);
-
-export default EventResizable;
+export default Neo.setupClass(EventResizable);

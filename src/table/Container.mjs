@@ -2,9 +2,8 @@ import BaseContainer   from '../container/Base.mjs';
 import ClassSystemUtil from '../util/ClassSystem.mjs';
 import CssUtil         from '../util/Css.mjs';
 import NeoArray        from '../util/Array.mjs';
-import RowModel        from '../selection/table/RowModel.mjs';
 import Store           from '../data/Store.mjs';
-import View            from './View.mjs';
+import TableBody       from './Body.mjs';
 import * as header     from './header/_export.mjs';
 
 /**
@@ -24,26 +23,34 @@ class Container extends BaseContainer {
          */
         ntype: 'table-container',
         /**
-         * todo: testing config, remove when Stores are ready
-         * @member {Number} amountRows=20
-         */
-        amountRows: 20,
-        /**
          * @member {String[]} baseCls=['neo-table-container']
          */
         baseCls: ['neo-table-container'],
+        /**
+         * Configs for Neo.table.Body
+         * @member {Object|null} [bodyConfig=null]
+         */
+        bodyConfig: null,
+        /**
+         * @member {String|null} bodyId_=null
+         * @protected
+         * @reactive
+         */
+        bodyId_: null,
+        /**
+         * true uses table.plugin.CellEditing
+         * @member {Boolean} cellEditing_=false
+         * @reactive
+         */
+        cellEditing_: false,
         /**
          * Default configs for each column
          * @member {Object} columnDefaults=null
          */
         columnDefaults: null,
         /**
-         * todo: testing config, remove when Stores are ready
-         * @member {Boolean} createRandomData=false
-         */
-        createRandomData: false,
-        /**
          * @member {Object[]} columns_=[]
+         * @reactive
          */
         columns_: [],
         /**
@@ -53,15 +60,12 @@ class Container extends BaseContainer {
         headerToolbarConfig: null,
         /**
          * @member {String|null} headerToolbarId_=null
+         * @reactive
          */
         headerToolbarId_: null,
         /**
-         * Additional used keys for the selection model
-         * @member {Object} keys
-         */
-        keys: {},
-        /**
          * @member {String} layout='base'
+         * @reactive
          */
         layout: 'base',
         /**
@@ -70,39 +74,35 @@ class Container extends BaseContainer {
          */
         scrollbarsCssApplied: false,
         /**
-         * @member {Neo.selection.Model} selectionModel_=null
-         */
-        selectionModel_: null,
-        /**
          * @member {Boolean} showHeaderFilters_=false
+         * @reactive
          */
         showHeaderFilters_: false,
         /**
          * @member {Boolean} sortable_=true
+         * @reactive
          */
         sortable_: true,
         /**
+         * @member {Boolean} useInternalId_=true
+         * @reactive
+         */
+        useInternalId_: true,
+        /**
          * @member {Neo.data.Store} store_=null
+         * @reactive
          */
         store_: null,
         /**
          * todo: only works for chrome & safari -> add a check
          * @member {Boolean} useCustomScrollbars_=true
+         * @reactive
          */
         useCustomScrollbars_: true,
         /**
-         * Configs for Neo.table.View
-         * @member {Object|null} [viewConfig=null]
-         */
-        viewConfig: null,
-        /**
-         * @member {String|null} viewId_=null
-         * @protected
-         */
-        viewId_: null,
-        /**
          * @member {Array|null} items=null
          * @protected
+         * @reactive
          */
         items: null,
         /**
@@ -115,6 +115,22 @@ class Container extends BaseContainer {
     }
 
     /**
+     * Convenience method to access the Neo.table.Body
+     * @returns {Neo.table.Body|null}
+     */
+    get body() {
+        return Neo.getComponent(this.bodyId) || Neo.get(this.bodyId)
+    }
+
+    /**
+     * Convenience method to access the Neo.table.header.Toolbar
+     * @returns {Neo.table.header.Toolbar|null}
+     */
+    get headerToolbar() {
+        return Neo.getComponent(this.headerToolbarId) || Neo.get(this.headerToolbarId)
+    }
+
+    /**
      * @param {Object} config
      */
     construct(config) {
@@ -122,8 +138,8 @@ class Container extends BaseContainer {
 
         let me = this;
 
+        me.bodyId          = Neo.getId('table-body');
         me.headerToolbarId = Neo.getId('table-header-toolbar');
-        me.viewId          = Neo.getId('table-view');
 
         me.items = [{
             module           : header.Toolbar,
@@ -132,27 +148,60 @@ class Container extends BaseContainer {
             sortable         : me.sortable,
             ...me.headerToolbarConfig
         }, {
-            module         : View,
-            containerId    : me.id,
-            id             : me.viewId,
-            store          : me.store,
-            useRowRecordIds: !me.createRandomData,
-            ...me.viewConfig
+            module       : TableBody,
+            containerId  : me.id,
+            id           : me.bodyId,
+            store        : me.store,
+            useInternalId: me.useInternalId,
+            ...me.bodyConfig
         }];
 
         me.vdom.id = me.getWrapperId();
 
-        me.createColumns(me.columns);
+        me.createColumns(me.columns)
     }
 
     /**
-     * Triggered after the selectionModel config got changed
-     * @param {Neo.selection.Model} value
-     * @param {Neo.selection.Model} oldValue
+     * Triggered after the cellEditing config got changed
+     * @param {Boolean} value
+     * @param {Boolean} oldValue
      * @protected
      */
-    afterSetSelectionModel(value, oldValue) {
-        this.rendered && value.register(this);
+    afterSetCellEditing(value, oldValue) {
+        if (value) {
+            import('./plugin/CellEditing.mjs').then(module => {
+                let me        = this,
+                    {appName} = me,
+                    plugins   = me.plugins || [];
+
+                plugins.push({
+                    module: module.default,
+                    appName
+                });
+
+                me.plugins = plugins
+            })
+        }
+    }
+
+    /**
+     * Triggered after the columns config got changed
+     * @param {Object[]|null} value
+     * @param {Object[]|null} oldValue
+     * @protected
+     */
+    afterSetColumns(value, oldValue) {
+        if (Array.isArray(oldValue) && oldValue.length > 0) {
+            let me              = this,
+                {headerToolbar} = me;
+
+            if (headerToolbar) {
+                headerToolbar.items = value;
+                headerToolbar.createItems()
+            }
+
+            me.body?.createViewData()
+        }
     }
 
     /**
@@ -163,7 +212,7 @@ class Container extends BaseContainer {
      */
     afterSetShowHeaderFilters(value, oldValue) {
         if (oldValue !== undefined) {
-            Neo.getComponent(this.headerToolbarId).showHeaderFilters = value;
+            this.headerToolbar.showHeaderFilters = value
         }
     }
 
@@ -175,7 +224,42 @@ class Container extends BaseContainer {
      */
     afterSetSortable(value, oldValue) {
         if (oldValue !== undefined) {
-            Neo.getComponent(this.headerToolbarId).sortable = value;
+            this.headerToolbar.sortable = value
+        }
+    }
+
+    /**
+     * Triggered after the useInternalId config got changed
+     * @param {Boolean} value
+     * @param {Boolean} oldValue
+     * @protected
+     */
+    afterSetUseInternalId(value, oldValue) {
+        if (oldValue !== undefined && this.body) {
+            this.body.useInternalId = value
+        }
+    }
+
+    /**
+     * Triggered after the store config got changed
+     * @param {Number} value
+     * @param {Number} oldValue
+     * @protected
+     */
+    afterSetStore(value, oldValue) {
+        let me        = this,
+            listeners = {
+                filter: me.onStoreFilter,
+                load  : me.onStoreLoad,
+                scope : me
+            };
+
+        value   ?.on({...listeners});
+        oldValue?.un({...listeners});
+
+        // in case we dynamically change the store, the body needs to get the new reference
+        if (me.body) {
+            me.body.store = value
         }
     }
 
@@ -187,7 +271,7 @@ class Container extends BaseContainer {
      */
     afterSetUseCustomScrollbars(value, oldValue) {
         if (value === true) {
-            this.vdom.cls = NeoArray.union(this.vdom.cls, ['neo-use-custom-scrollbar']);
+            this.vdom.cls = NeoArray.union(this.vdom.cls, ['neo-use-custom-scrollbar'])
         }
     }
 
@@ -200,17 +284,28 @@ class Container extends BaseContainer {
             cssRules = [];
 
         if (me.dockLeftMargin) {
-            cssRules.push('#' + id + '::-webkit-scrollbar-track:horizontal {margin-left: ' + me.dockLeftMargin + 'px;}');
+            cssRules.push('#' + id + '::-webkit-scrollbar-track:horizontal {margin-left: ' + me.dockLeftMargin + 'px;}')
         }
 
         if (me.dockRightMargin) {
-            cssRules.push('#' + id + '::-webkit-scrollbar-track:horizontal {margin-right: ' + me.dockRightMargin + 'px;}');
-        }
-        if (cssRules.length > 0) {
-            CssUtil.insertRules(me.appName, cssRules);
+            cssRules.push('#' + id + '::-webkit-scrollbar-track:horizontal {margin-right: ' + me.dockRightMargin + 'px;}')
         }
 
-        me.scrollbarsCssApplied = true;
+        if (cssRules.length > 0) {
+            CssUtil.insertRules(me.windowId, cssRules)
+        }
+
+        me.scrollbarsCssApplied = true
+    }
+
+    /**
+     * Triggered before the bodyId config gets changed.
+     * @param {String} value
+     * @param {String} oldValue
+     * @protected
+     */
+    beforeSetBodyId(value, oldValue) {
+        return value || oldValue
     }
 
     /**
@@ -221,10 +316,10 @@ class Container extends BaseContainer {
      */
     beforeSetColumns(value, oldValue) {
         if (this.configsApplied) {
-            return this.createColumns(value);
+            return this.createColumns(value)
         }
 
-        return value;
+        return value
     }
 
     /**
@@ -234,66 +329,44 @@ class Container extends BaseContainer {
      * @protected
      */
     beforeSetHeaderToolbarId(value, oldValue) {
-        return value ? value : oldValue;
-    }
-
-    /**
-     * Triggered before the selectionModel config gets changed.
-     * @param {Neo.selection.Model} value
-     * @param {Neo.selection.Model} oldValue
-     * @protected
-     */
-    beforeSetSelectionModel(value, oldValue) {
-        oldValue?.destroy();
-
-        return ClassSystemUtil.beforeSetInstance(value, RowModel);
+        return value || oldValue
     }
 
     /**
      * Triggered before the store config gets changed.
-     * @param {Neo.data.Store} value
-     * @param {Neo.data.Store} oldValue
+     * @param {Object|Neo.data.Store|null} value
+     * @param {Neo.data.Store}             oldValue
      * @protected
      */
     beforeSetStore(value, oldValue) {
-        oldValue?.destroy();
-
         if (value) {
-            let me = this,
-
-            listeners = {
-                filter      : me.onStoreFilter,
-                load        : me.onStoreLoad,
-                recordChange: me.onStoreRecordChange,
-                scope       : me
-            };
-
-            if (value instanceof Store) {
-                value.on(listeners);
-                value.getCount() > 0 && me.onStoreLoad(value.items);
-            } else {
-                value = ClassSystemUtil.beforeSetInstance(value, Store, {
-                    listeners
-                });
-            }
-
-            // in case we dynamically change the store, the view needs to get the new reference
-            if (me.view) {
-                me.view.store = value;
-            }
+            value = ClassSystemUtil.beforeSetInstance(value, Store)
         }
 
-        return value;
+        return value
     }
 
     /**
-     * Triggered before the viewId config gets changed.
-     * @param {String} value
-     * @param {String} oldValue
-     * @protected
+     * In case you want to update multiple existing records in parallel,
+     * using this method is faster than updating each record one by one.
+     * At least until we introduce row based vdom updates.
+     * @param {Object[]} records
      */
-    beforeSetViewId(value, oldValue) {
-        return value ? value : oldValue;
+    bulkUpdateRecords(records) {
+        let {body, store} = this,
+            {keyProperty} = store;
+
+        if (body) {
+            body.silentVdomUpdate = true;
+
+            records.forEach(item => {
+                store.get(item[keyProperty])?.set(item)
+            });
+
+            body.silentVdomUpdate = false;
+
+            body.update()
+        }
     }
 
     /**
@@ -301,9 +374,9 @@ class Container extends BaseContainer {
      * @returns {*}
      */
     createColumns(columns) {
-        let me             = this,
-            columnDefaults = me.columnDefaults,
-            sorters        = me.store?.sorters,
+        let me               = this,
+            {columnDefaults} = me,
+            sorters          = me.store?.sorters,
             renderer;
 
         if (!columns || !columns.length) {
@@ -320,47 +393,24 @@ class Container extends BaseContainer {
             }
 
             if (renderer && Neo.isString(renderer) && me[renderer]) {
-                column.renderer = me[renderer];
+                column.renderer = me[renderer]
             }
 
             if (sorters?.[0]) {
                 if (column.dataField === sorters[0].property) {
-                    column.isSorted = sorters[0].direction;
+                    column.isSorted = sorters[0].direction
                 }
             }
 
             column.listeners = {
                 sort : me.onSortColumn,
                 scope: me
-            };
+            }
         });
 
         me.items[0].items = columns;
 
-        return columns;
-    }
-
-    /**
-     * @param {Number} countRows
-     */
-    createRandomViewData(countRows) {
-        this.loadData(countRows);
-    }
-
-    /**
-     * @param {Array} inputData
-     */
-    createViewData(inputData) {
-        let me    = this,
-            items = me.items;
-
-        items[1].createViewData(inputData); // todo: save a reference to the view & headerContainer
-
-        if (me.useCustomScrollbars && me.scrollbarsCssApplied === false) {
-            me.applyCustomScrollbarsCss();
-        }
-
-        me.items = items;
+        return columns
     }
 
     /**
@@ -368,21 +418,14 @@ class Container extends BaseContainer {
      * @returns {*}
      */
     getVdomRoot() {
-        return this.vdom.cn[0];
+        return this.vdom.cn[0]
     }
 
     /**
      * @returns {Object[]} The new vdom items root
      */
     getVdomItemsRoot() {
-        return this.vdom.cn[0];
-    }
-
-    /**
-     * @returns {Neo.table.View}
-     */
-    getView() {
-        return Neo.getComponent(this.viewId) || Neo.get(this.viewId);
+        return this.vdom.cn[0]
     }
 
     /**
@@ -390,48 +433,25 @@ class Container extends BaseContainer {
      * @returns {Neo.vdom.VNode}
      */
     getVnodeRoot() {
-        return this.vnode.childNodes[0];
+        return this.vnode.childNodes[0]
     }
 
     /**
      * @returns {String}
      */
     getWrapperId() {
-        return `${this.id}__wrapper`;
+        return `${this.id}__wrapper`
     }
 
     /**
-     * @param {Number} countRows
-     */
-    loadData(countRows) {
-        let me           = this,
-            columns      = me.items[0].items,
-            countColumns = columns.length;
-
-        Neo.manager.Store.createRandomData([countColumns, countRows]).then(data => {
-            me.createViewData(data);
-        });
-    }
-
-    /**
+     * @summary Sorts the store. The body re-renders off the store's own `load` event, not from here.
      *
-     */
-    onConstructed() {
-        super.onConstructed();
-
-        let me = this;
-
-        me.selectionModel?.register(me);
-
-        if (me.createRandomData) {
-            // todo: if mounting apply after mount
-            setTimeout(() => {
-                me.createRandomViewData(me.amountRows);
-            }, 50);
-        }
-    }
-
-    /**
+     * `me.store.sort()` runs synchronously into {@link Neo.data.Store#onCollectionSort}, which re-fires the
+     * sort as a `load` — and `table.Body` binds that event itself (`Body#afterSetStore`). So the body has
+     * already re-rendered by the time this method returns. Calling `me.body.onStoreLoad()` here as well ran
+     * the full row rebuild a second time on every column-header sort. `grid.Container#onSortColumn` never
+     * made that call, which is what showed the event path is sufficient on its own.
+     *
      * @param {Object} opts
      * @param {String} opts.direction
      * @param {String} opts.property
@@ -441,53 +461,29 @@ class Container extends BaseContainer {
         let me = this;
 
         me.store.sort(opts);
-        me.removeSortingCss(opts.property);
-        me.onStoreLoad(me.store.items);
+        me.removeSortingCss(opts.property)
     }
 
     /**
      *
      */
     onStoreFilter() {
-        this.onStoreLoad(this.store.items);
+        this.onStoreLoad()
     }
 
     /**
-     * @param {Object[]} data
      * @protected
      */
-    onStoreLoad(data) {
-        let me = this,
-            listenerId;
+    onStoreLoad() {
+        let me = this;
 
-        if (me.rendered) {
-            me.createViewData(data);
-
-            if (me.store.sorters.length < 1) {
-                me.removeSortingCss();
-            }
-        } else {
-            listenerId = me.on('rendered', () => {
-                me.un('rendered', listenerId);
-                setTimeout(() => {
-                    me.createViewData(data);
-                }, 50);
-            });
+        if (me.useCustomScrollbars && me.scrollbarsCssApplied === false) {
+            me.applyCustomScrollbarsCss()
         }
-    }
 
-    /**
-     * Gets triggered after changing the value of a record field.
-     * E.g. myRecord.foo = 'bar';
-     * @param {Object} opts
-     * @param {String} opts.field The name of the field which got changed
-     * @param {Neo.data.Model} opts.model The model instance of the changed record
-     * @param {*} opts.oldValue
-     * @param {Object} opts.record
-     * @param {*} opts.value
-     */
-    onStoreRecordChange(opts) {
-        Neo.getComponent(this.viewId).onStoreRecordChange(opts);
+        if (me.store.sorters?.length < 1) {
+            me.removeSortingCss()
+        }
     }
 
     /**
@@ -495,14 +491,12 @@ class Container extends BaseContainer {
      * @protected
      */
     removeSortingCss(dataField) {
-        this.items[0].items.forEach(column => {
+        this.headerToolbar.items.forEach(column => {
             if (column.dataField !== dataField) {
-                column.removeSortingCss();
+                column.removeSortingCss()
             }
-        });
+        })
     }
 }
 
-Neo.applyClassConfig(Container);
-
-export default Container;
+export default Neo.setupClass(Container);

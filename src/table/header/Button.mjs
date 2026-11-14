@@ -1,6 +1,7 @@
-import BaseButton from '../../button/Base.mjs';
-import NeoArray   from '../../util/Array.mjs';
-import TextField  from '../../form/field/Text.mjs';
+import BaseButton        from '../../button/Base.mjs';
+import NeoArray          from '../../util/Array.mjs';
+import TextField         from '../../form/field/Text.mjs';
+import {resolveCallback} from '../../util/Function.mjs';
 
 /**
  * @class Neo.table.header.Button
@@ -33,12 +34,15 @@ class Button extends BaseButton {
         /**
          * Alignment of the matching table cells. Valid values are left, center, right
          * @member {String} cellAlign_='left'
+         * @reactive
          */
         cellAlign_: 'left',
         /**
-         * @member {String|null} dataField=null
+         * The Store field addressed by this header's sort and inline filter projection.
+         * @member {String|null} dataField_=null
+         * @reactive
          */
-        dataField: null,
+        dataField_: null,
         /**
          * Sort direction when clicking on an unsorted button
          * @member {String} defaultSortDirection='ASC'
@@ -46,6 +50,7 @@ class Button extends BaseButton {
         defaultSortDirection: 'ASC',
         /**
          * @member {Boolean} draggable_=true
+         * @reactive
          */
         draggable_: true,
         /**
@@ -63,30 +68,48 @@ class Button extends BaseButton {
         filterField: null,
         /**
          * @member {String} iconCls='fa fa-arrow-circle-up'
+         * @reactive
          */
         iconCls: 'fa fa-arrow-circle-up',
         /**
          * @member {String} iconPosition='right'
+         * @reactive
          */
         iconPosition: 'right',
         /**
          * 'ASC', 'DESC' or null
          * @member {String|null} isSorted_=null
          * @protected
+         * @reactive
          */
         isSorted_: null,
         /**
+         * @member {Function|String|null} renderer_='cellRenderer'
+         * @reactive
+         */
+        renderer_: 'cellRenderer',
+        /**
          * Scope to execute the column renderer.
-         * Defaults to the matching table.Container
+         *
+         * An instance set here wins. A `renderer` string resolves against an instance and records it here:
+         * `'up.name'` the ancestor that defines the method, a plain name the view controller that defines it or
+         * else the column. A `renderer` function names no instance and runs on the matching table.Container.
          * @member {Neo.core.Base|null} rendererScope=null
          */
         rendererScope: null,
         /**
+         * @member {Boolean} resizable_=true
+         * @reactive
+         */
+        resizable_: true,
+        /**
          * @member {Boolean} showHeaderFilter_=false
+         * @reactive
          */
         showHeaderFilter_: false,
         /**
          * @member {Boolean} sortable_=true
+         * @reactive
          */
         sortable_: true,
         /**
@@ -105,42 +128,8 @@ class Button extends BaseButton {
         ]}
     }
 
-    /**
-     * @param {Object} config
-     */
-    construct(config) {
-        super.construct(config);
-
-        let me = this;
-
-        me.draggable && me.addDomListeners({
-            dragend  : me.onDragEnd,
-            dragenter: me.onDragEnter,
-            dragleave: me.onDragLeave,
-            dragover : me.onDragOver,
-            dragstart: me.onDragStart,
-            drop     : me.onDrop,
-            scope    : me
-        })
-    }
-
-    /**
-     * Triggered after the draggable config got changed
-     * @param {Boolean} value
-     * @param {Boolean} oldValue
-     * @protected
-     */
-    afterSetDraggable(value, oldValue) {
-        let me = this;
-
-        if (value === true) {
-            me.getVdomRoot().draggable = true;
-        } else {
-            delete me.getVdomRoot().draggable;
-        }
-
-        me.update();
-    }
+    /** @member {Promise|null} headerFilterReady=null @protected */
+    headerFilterReady = null
 
     /**
      * Triggered after the isSorted config got changed
@@ -150,36 +139,69 @@ class Button extends BaseButton {
      */
     afterSetIsSorted(value, oldValue) {
         let me        = this,
-            cls       = me.cls,
-            container = me.up('table-container');
+            container = me.up('table-container'),
+            // WAI-ARIA 1.2 allows aria-sort on a columnheader only. In a table that is the <th> this button sits
+            // in, not the button itself, so the attribute cannot ride on changeVdomRootKey(): that one addresses
+            // getVdomRoot(), which this class points at the native button for the top level style attributes.
+            // The class change below rides in the same vdom update, so the write needs no update() of its own.
+            header    = me.vdom;
 
-        switch(value) {
+        if (value) header['aria-sort'] = value === 'ASC' ? 'ascending' : 'descending';
+        else delete header['aria-sort'];
+
+        switch (value) {
             case null:
-                NeoArray.add(cls, 'neo-sort-hidden');
-                break;
+                me.addCls('neo-sort-hidden');
+                break
             case 'ASC':
-                NeoArray.remove(cls, 'neo-sort-desc');
-                NeoArray.remove(cls, 'neo-sort-hidden');
-                NeoArray.add(cls, 'neo-sort-asc');
-                break;
+                me.removeAddCls(['neo-sort-desc', 'neo-sort-hidden'], 'neo-sort-asc');
+                break
             case 'DESC':
-                NeoArray.remove(cls, 'neo-sort-asc');
-                NeoArray.remove(cls, 'neo-sort-hidden');
-                NeoArray.add(cls, 'neo-sort-desc');
-                break;
+                me.removeAddCls(['neo-sort-asc', 'neo-sort-hidden'], 'neo-sort-desc');
+                break
         }
-
-        me.cls = cls;
 
         // testing check until all example tables have a store
         if (!container || !container.store) {
-            return;
+            return
         }
 
         me.mounted && me.fire('sort', {
             direction: value,
             property : me.dataField
-        });
+        })
+    }
+
+    /**
+     * Triggered after the resizable config got changed.
+     * Guards the lazy `Resizable` plugin import against post-destroy or mid-flight `resizable` changes.
+     * @param {Boolean} value
+     * @param {Boolean} oldValue
+     * @protected
+     */
+    afterSetResizable(value, oldValue) {
+        let me     = this,
+            plugin = me.getPlugin('plugin-table-header-resizable');
+
+        if (value) {
+            if (!plugin) {
+                import('./plugin/Resizable.mjs').then(module => {
+                    if (!me.isDestroyed && !me.isDestroying && me.resizable && !me.getPlugin('plugin-table-header-resizable')) {
+                        let {appName} = me,
+                            plugins   = me.plugins || [];
+
+                        plugins.push({
+                            module: module.default,
+                            appName
+                        });
+
+                        me.plugins = plugins
+                    }
+                })
+            }
+        } else {
+            plugin?.removeAllNodes()
+        }
     }
 
     /**
@@ -199,6 +221,8 @@ class Button extends BaseButton {
                     flag     : 'filter-field',
                     hideLabel: true,
                     parentId : me.id,
+                    style    : {marginLeft: '.5em', marginRight: '.5em'},
+                    windowId : me.windowId,
 
                     listeners: {
                         change        : me.changeFilterValue,
@@ -206,22 +230,37 @@ class Button extends BaseButton {
                         scope         : me
                     },
 
-                    style: {
-                        marginLeft : '.5em',
-                        marginRight: '.5em'
-                    },
                     ...me.editorConfig
                 });
 
-                me.vdom.cn.push(me.filterField.vdom);
+                me.vdom.cn.push(me.filterField.createVdomReference())
             } else {
-                delete me.filterField.vdom.removeDom;
+                delete me.filterField.vdom.removeDom
             }
+            me.ensureHeaderFilterProjection()
         } else if (me.filterField) {
-            me.filterField.vdom.removeDom = true;
+            me.filterField.vdom.removeDom = true
         }
 
-        me.update();
+        me.updateDepth = 2;
+        me.update()
+    }
+
+    /**
+     * @summary Attaches the shared inline projection once without introducing a Table menu surface.
+     * @returns {Promise}
+     */
+    ensureHeaderFilterProjection() {
+        return this.headerFilterReady ||= import('../../plugin/HeaderFilter.mjs').then(({default: module}) => {
+            if (!this.isDestroyed && !this.isDestroying) {
+                let plugin = this.getPlugin('plugin-header-filter');
+                if (!plugin) {
+                    this.plugins = [...(this.plugins || []), {module}];
+                    plugin = this.getPlugin('plugin-header-filter')
+                }
+                plugin.syncField()
+            }
+        })
     }
 
     /**
@@ -230,26 +269,14 @@ class Button extends BaseButton {
      * @param {Boolean} oldValue
      * @protected
      */
-     afterSetSortable(value, oldValue) {
-        let me = this,
-            cls = me.cls;
+    afterSetSortable(value, oldValue) {
+        let me    = this,
+            {cls} = me;
 
-        if (value === true) {
-            NeoArray.remove(cls, 'neo-sort-hidden');
-            me.addDomListeners({
-                click: me.onButtonClick,
-                scope: me
-            });
-        } else {
-            NeoArray.add(cls, 'neo-sort-hidden');
-            me.removeDomListeners({
-                click: me.onButtonClick,
-                scope: me
-            });
-        }
+        NeoArray.toggle(cls, 'neo-sort-hidden', !value);
 
         me.cls = cls;
-        me.update();
+        me.update()
     }
 
     /**
@@ -259,7 +286,107 @@ class Button extends BaseButton {
      * @protected
      */
     beforeSetCellAlign(value, oldValue) {
-        return this.beforeSetEnumValue(value, oldValue, 'cellAlign', 'cellAlignValues');
+        return this.beforeSetEnumValue(value, oldValue, 'cellAlign', 'cellAlignValues')
+    }
+
+    /**
+     * Triggered before the renderer config gets changed
+     * @param {Function|String|null} value
+     * @param {Function|String|null} oldValue
+     * @protected
+     */
+    beforeSetRenderer(value, oldValue) {
+        let me          = this,
+            {fn, scope} = resolveCallback(value, me);
+
+        // A name resolves against the instance its method must run on, a function against none.
+        // An explicit rendererScope stays the author's.
+        if (Neo.isString(value) && fn && !me.rendererScope) {
+            me.rendererScope = scope
+        }
+
+        return fn
+    }
+
+    /**
+     * @param {Object}              data
+     * @param {Neo.button.Base}     data.column
+     * @param {Number}              data.columnIndex
+     * @param {String}              data.dataField
+     * @param {Object}              data.record
+     * @param {Number}              data.rowIndex
+     * @param {Neo.table.Container} data.tableContainer
+     * @param {Number|String}       data.value
+     * @returns {*}
+     */
+    cellRenderer(data) {
+        return data.value
+    }
+
+    /**
+     * @summary Updates the shared inline contribution without replacing picker or application predicates.
+     * @param {Object} data
+     */
+    changeFilterOperator(data) {
+        let me             = this,
+            tableContainer = me.up('table-container'),
+            store          = tableContainer?.store,
+            operator       = data.value,
+            filter;
+
+        if (store) {
+            filter = store.getFilter(me.dataField, 'header-inline');
+
+            if (!filter) {
+                store.filters = [...store.filters, {
+                    ...me.filterConfig,
+                    property : me.dataField,
+                    value    : null,
+                    operator,
+                    ownerRole: 'header-inline'
+                }]
+            } else {
+                filter.operator = operator
+            }
+        }
+    }
+
+    /**
+     * @summary Writes input into the shared inline contribution; filterConfig supplies creation defaults only.
+     * @param {Object} data
+     */
+    changeFilterValue(data) {
+        let me             = this,
+            tableContainer = me.up('table-container'),
+            store          = tableContainer?.store,
+            {value}        = data,
+            field, filter, model;
+
+        if (store) {
+            filter = store.getFilter(me.dataField, 'header-inline');
+            model  = store.model;
+            field  = model && model.getField(me.dataField);
+
+            if (value && field?.type?.toLowerCase() === 'date') {
+                value = new Date(value)
+            }
+
+            if (Neo.isRecord(value)) {
+                value = value[me.filterField.displayField]
+            }
+
+            if (!filter) {
+                store.filters = [...store.filters, {
+                    operator: 'like',
+                    ...me.filterConfig,
+                    property : me.dataField,
+                    value,
+                    ownerRole: 'header-inline'
+                }]
+            } else {
+                filter.value = value
+            }
+        }
     }
 
     /**
@@ -268,7 +395,7 @@ class Button extends BaseButton {
     destroy(...args) {
         this.filterField?.destroy();
 
-        super.destroy(...args);
+        super.destroy(...args)
     }
 
     /**
@@ -277,7 +404,7 @@ class Button extends BaseButton {
      * @returns {Object} The new vdom root
      */
     getVdomRoot() {
-        return this.vdom.cn[0];
+        return this.vdom.cn[0]
     }
 
     /**
@@ -286,13 +413,23 @@ class Button extends BaseButton {
      * @returns {Object} The new vnode root
      */
     getVnodeRoot() {
-        return this.vnode.childNodes[0];
+        return this.vnode.childNodes[0]
     }
 
     /**
+     * @summary Sorts header gestures without treating inline filter controls or resize handles as sort actions.
+     * @param {Object} data
      * @protected
      */
-    onButtonClick() {
+    onClick(data) {
+        const {filterField} = this;
+        if (
+            filterField && data.path.some(node => node.id === filterField.id) ||
+            data.path[0]?.cls?.includes('neo-resizable')
+        ) {
+            return
+        }
+
         let me = this,
             map;
 
@@ -301,178 +438,65 @@ class Button extends BaseButton {
                 ASC : null,
                 DESC: 'ASC',
                 null: 'DESC'
-            };
+            }
         } else {
             map = {
                 ASC : 'DESC',
                 DESC: null,
                 null: 'ASC'
-            };
-        }
-
-        me.isSorted = map[me.isSorted + ''];
-    }
-
-    /**
-     * @protected
-     */
-    onDragEnd() {
-        let me    = this,
-            style = me.style;
-
-        delete style.opacity;
-        me.style = style;
-    }
-
-    /**
-     * @protected
-     */
-    onDragEnter() {
-        let me  = this,
-            cls = me.cls;
-
-        NeoArray.add(cls, 'neo-drag-over');
-        me.cls = cls;
-    }
-
-    /**
-     * @protected
-     */
-    onDragLeave() {
-        let me  = this,
-            cls = me.cls;
-
-        NeoArray.remove(cls, 'neo-drag-over');
-        me.cls = cls;
-    }
-
-    /**
-     * @param {Object} event
-     */
-    onDragOver(event) {
-        //console.log('onDragOver', event);
-    }
-
-    /**
-     * @protected
-     */
-    onDragStart() {
-        let me    = this,
-            style = me.style;
-
-        style.opacity = 0.4;
-        me.style = style;
-    }
-
-    /**
-     * @param {Object} data
-     */
-    onDrop(data) {
-        let me             = this,
-            headerToolbar  = Neo.getComponent(me.parentId),
-            style          = me.style,
-            tableContainer = Neo.getComponent(headerToolbar.parentId);
-
-        me.onDragLeave();
-        headerToolbar.switchItems(me.id, data.srcId);
-        tableContainer.createViewData(tableContainer.store.data);
-
-        style.opacity = 1;
-        me.style = style;
-    }
-
-    /**
-     * @param {Object} data
-     */
-    changeFilterOperator(data) {
-        let me             = this,
-            tableContainer = me.up('table-container'),
-            store          = tableContainer?.store,
-            operator       = data.value,
-            filter, filters;
-
-        if (store) {
-            filter = store.getFilter(me.dataField);
-
-            if (!filter) {
-                filters = store.filters;
-
-                filters.push({
-                    property: me.dataField,
-                    operator,
-                    value   : null,
-                    ...me.filterConfig
-                });
-
-                store.filters = filters;
-            } else {
-                filter.operator = operator;
             }
         }
-    }
 
-    /**
-     * @param {Object} data
-     */
-    changeFilterValue(data) {
-        let me             = this,
-            tableContainer = me.up('table-container'),
-            store          = tableContainer?.store,
-            value          = data.value,
-            field, filter, filters, model;
-
-        if (store) {
-            filter = store.getFilter(me.dataField);
-            model  = store.model;
-            field  = model && model.getField(me.dataField);
-
-            if (value && field.type.toLowerCase() === 'date') {
-                value = new Date(value);
-            }
-
-            if (!filter) {
-                filters = store.filters;
-
-                filters.push({
-                    property: me.dataField,
-                    operator: 'like',
-                    value,
-                    ...me.filterConfig
-                });
-
-                store.filters = filters;
-            } else {
-                filter.value = value;
-            }
+        // A non-sortable header keeps its click (the button handler), but never starts a sort
+        if (me.sortable) {
+            me.isSorted = map[me.isSorted + '']
         }
+
+        super.onClick(data)
     }
 
     /**
      * @protected
      */
     removeSortingCss() {
-        let me  = this,
-            cls = me.cls;
+        let me    = this,
+            {cls} = me;
+
+        // This path resets _isSorted directly, so it bypasses afterSetIsSorted() and owns the aria-sort clear.
+        // It cannot lean on the class change below either: a header that was already hidden writes the same
+        // cls array back and produces no update, which would leave the stale attribute in the DOM. The container
+        // runs this on every other header on each sort, and only the one losing its sort carries the attribute.
+        if ('aria-sort' in me.vdom) {
+            delete me.vdom['aria-sort'];
+            me.update()
+        }
 
         NeoArray.add(cls, 'neo-sort-hidden');
 
         me.cls       = cls;
-        me._isSorted = null;
+        me._isSorted = null
     }
 
     /**
-     * @param {Object} data
-     * @param {String} data.dataField
-     * @param {Number} data.index
-     * @param {Object} data.record
-     * @param {Number|String} data.value
-     * @returns {*}
+     * Serializes the table header button configuration into a JSON-compatible object.
+     * @returns {Object}
      */
-    renderer(data) {
-        return data.value;
+    toJSON() {
+        let me = this;
+
+        return {
+            ...super.toJSON(),
+            cellAlign           : me.cellAlign,
+            dataField           : me.dataField,
+            defaultSortDirection: me.defaultSortDirection,
+            editorConfig        : me.serializeConfig(me.editorConfig),
+            filterConfig        : me.serializeConfig(me.filterConfig),
+            isSorted            : me.isSorted,
+            resizable           : me.resizable,
+            showHeaderFilter    : me.showHeaderFilter,
+            sortable            : me.sortable
+        }
     }
 }
 
-Neo.applyClassConfig(Button);
-
-export default Button;
+export default Neo.setupClass(Button);

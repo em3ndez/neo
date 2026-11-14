@@ -30,31 +30,29 @@ class FormContainerController extends Component {
      * @param {Object} data
      */
     onNextPageButtonClick(data) {
-        this.getModel().data.activeIndex++;
+        this.getStateProvider().data.activeIndex++;
     }
 
     /**
      * @param {Object} data
      */
     onPrevPageButtonClick(data) {
-        this.getModel().data.activeIndex--;
+        this.getStateProvider().data.activeIndex--;
     }
 
     /**
      * @param {Object} data
      */
     async onSaveButtonClick(data) {
-        let form       = this.getReference('main-form'),
-            formValues = await form.getValues();
+        let form       = me.getReference('main-form'),
+            formValues = await form.getSubmitValues();
 
         Neo.main.addon.LocalStorage.updateLocalStorageItem({
-            appName: this.component.appName,
-            key    : 'neo-form',
-            value  : JSON.stringify(formValues)
+            key     : 'neo-form',
+            value   : JSON.stringify(formValues),
+            windowId: this.windowId
         })
     }
 }
 
-Neo.applyClassConfig(FormContainerController);
-
-export default FormContainerController;
+export default Neo.setupClass(FormContainerController);

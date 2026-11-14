@@ -22,6 +22,7 @@ class FormContainer extends BaseFormContainer {
         baseCls: ['form-form-container', 'neo-container'],
         /**
          * @member {Neo.controller.Component} controller=FormContainerController
+         * @reactive
          */
         controller: FormContainerController,
         /**
@@ -100,6 +101,4 @@ class FormContainer extends BaseFormContainer {
     }
 }
 
-Neo.applyClassConfig(FormContainer);
-
-export default FormContainer;
+export default Neo.setupClass(FormContainer);

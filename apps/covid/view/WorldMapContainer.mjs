@@ -17,10 +17,12 @@ class WorldMapContainer extends Container {
         className: 'Covid.view.WorldMapContainer',
         /**
          * @member {Neo.controller.Component} controller=WorldMapContainerController
+         * @reactive
          */
         controller: WorldMapContainerController,
         /**
          * @member {Object} layout={ntype: 'vbox', align: 'stretch'}
+         * @reactive
          */
         layout: {ntype: 'vbox', align: 'stretch'},
         /**
@@ -54,21 +56,21 @@ class WorldMapContainer extends Container {
                 handler: 'onSeriesButtonClick',
                 series : 'cases',
                 style  : {marginRight: '2px'},
-                text   : '<span style="color: #bbbbbb">●</span> Cases'
+                text   : [{tag: 'span', style: {color: '#bbbbbb'}, text: '●'}, {vtype: 'text', text: ' Cases'}]
             }, {
                 handler: 'onSeriesButtonClick',
                 series : 'active',
                 style  : {marginRight: '2px'},
-                text   : '<span style="color: #64b5f6">●</span> Active'
+                text   : [{tag: 'span', style: {color: '#64b5f6'}, text: '●'}, {vtype: 'text', text: ' Active'}]
             }, {
                 handler: 'onSeriesButtonClick',
                 series : 'recovered',
                 style  : {marginRight: '2px'},
-                text   : '<span style="color: #28ca68">●</span> Recovered'
+                text   : [{tag: 'span', style: {color: '#28ca68'}, text: '●'}, {vtype: 'text', text: ' Recovered'}]
             }, {
                 handler: 'onSeriesButtonClick',
                 series : 'deaths',
-                text   : '<span style="color: #fb6767">●</span> Deaths'
+                text   : [{tag: 'span', style: {color: '#fb6767'}, text: '●'}, {vtype: 'text', text: ' Deaths'}]
             }]
         }, {
             module   : WorldMapComponent,
@@ -78,6 +80,4 @@ class WorldMapContainer extends Container {
     }
 }
 
-Neo.applyClassConfig(WorldMapContainer);
-
-export default WorldMapContainer;
+export default Neo.setupClass(WorldMapContainer);

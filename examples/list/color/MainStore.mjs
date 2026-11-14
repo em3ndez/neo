@@ -25,11 +25,10 @@ class MainStore extends Store {
         ],
         /**
          * @member {Neo.data.Model} model=MainModel
+         * @reactive
          */
         model: MainModel
     }
 }
 
-Neo.applyClassConfig(MainStore);
-
-export default MainStore;
+export default Neo.setupClass(MainStore);

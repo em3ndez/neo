@@ -23,16 +23,16 @@ class Search extends Text {
         /**
          * Value for the hideLabel_ textfield config
          * @member {Boolean} hideLabel=true
+         * @reactive
          */
         hideLabel: true,
         /**
          * Value for the placeholderText_ textfield config
          * @member {String} placeholderText='Search'
+         * @reactive
          */
         placeholderText: 'Search'
     }
 }
 
-Neo.applyClassConfig(Search);
-
-export default Search;
+export default Neo.setupClass(Search);

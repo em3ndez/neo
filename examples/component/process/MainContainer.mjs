@@ -1,8 +1,8 @@
+import CheckBox              from '../../../src/form/field/CheckBox.mjs';
+import ColorField            from '../../../src/form/field/Color.mjs';
 import ConfigurationViewport from '../../ConfigurationViewport.mjs';
-import Process               from '../../../src/component/Process.mjs';
 import Container             from '../../../src/container/Base.mjs';
-import CheckBox              from "../../../src/form/field/CheckBox.mjs";
-import ColorField             from "../../../src/form/field/Color.mjs"
+import Process               from '../../../src/component/Process.mjs';
 
 /**
  * @class Neo.examples.component.process.MainContainer
@@ -10,7 +10,7 @@ import ColorField             from "../../../src/form/field/Color.mjs"
  */
 class MainContainer extends ConfigurationViewport {
     static config = {
-        className           : 'Neo.examples.component.process.MainContainer',
+        className: 'Neo.examples.component.process.MainContainer',
     }
 
     createConfigurationComponents() {
@@ -34,7 +34,7 @@ class MainContainer extends ConfigurationViewport {
             labelText: 'iconColor',
             value: '#953499',
             listeners: {change: me.onConfigChange.bind(me, 'iconColor')}
-        }];
+        }]
     }
 
     createExampleComponent() {
@@ -71,7 +71,7 @@ class MainContainer extends ConfigurationViewport {
                     text   : 'Suspendisse dui purus, scelerisque at, vulputate vitae, pretium mattis, nunc. Mauris eget neque at sem venenatis eleifend. Ut nonummy.'
                 }]
             }]
-        });
+        })
     }
 
     /**
@@ -81,10 +81,8 @@ class MainContainer extends ConfigurationViewport {
     onConfigChange(config, opts) {
         const process = this.down({flag: 'color-change'});
 
-        process[config] = opts.value;
+        process[config] = opts.value
     }
 }
 
-Neo.applyClassConfig(MainContainer);
-
-export default MainContainer;
+export default Neo.setupClass(MainContainer);

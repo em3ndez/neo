@@ -6,8 +6,13 @@ import VDomUtil      from '../util/VDom.mjs';
  * @extends Neo.component.Base
  *
  * @example
- *     ntype: 'video',
- *     url: 'https://video-ssl.itunes.apple.com/itunes-assets/Video125/v4/a0/57/54/a0575426-dd8e-2d25-bdf3-139702870b50/mzvf_786190431362224858.640x464.h264lc.U.p.m4v'
+ *     ntype   : 'video',
+ *     url     : 'https://video-ssl.itunes.apple.com/itunes-assets/Video125/v4/a0/57/54/a0575426-dd8e-2d25-bdf3-139702870b50/mzvf_786190431362224858.640x464.h264lc.U.p.m4v'
+ *     autoPlay: true
+ *
+ * @methods
+ *      play
+ *      pause
  */
 class Video extends BaseComponent {
     static config = {
@@ -26,17 +31,25 @@ class Video extends BaseComponent {
          */
         baseCls: ['neo-video'],
         /**
+         * Automatically start the video
+         * Initial setting, which does not make sense to change later
+         * !!Most browsers only support muted autostart
+         * @member {Boolean} autoPlay=false
+         */
+        autoPlay: false,
+        /**
          * Current state of the video
-         * @member {Boolean} playing=false
+         * @member {Boolean} playing_=false
+         * @reactive
          */
         playing_: false,
         /**
          * Type of the video
-         * @member {Boolean} type='video/mp4'
+         * @member {String} type='video/mp4'
          */
         type: 'video/mp4',
         /*
-         * @member {String} url=null
+         * @member {String|null} url_=null
          */
         url_: null,
         /**
@@ -45,18 +58,17 @@ class Video extends BaseComponent {
         _vdom: {
             cn: [{
                 flag: 'ghost',
-                cls : ['neo-video-ghost'],
-                cn  : [{
-                    // The <i> tag defines a part of text in an alternate voice or mood. The content inside is typically displayed in italic.
+                cls: ['neo-video-ghost'],
+                cn: [{
                     tag: 'i',
                     cls: ['fa-solid', 'fa-circle-play']
                 }]
             }, {
                 // Neo specific configs
-                tag      : 'video',
-                flag     : 'media',
+                tag: 'video',
+                flag: 'media',
+                cls: ['neo-video-media'],
                 removeDom: true,
-                cls      : ['neo-video-media'],
                 // dom attributes
                 autoplay: true,
                 controls: true
@@ -70,33 +82,10 @@ class Video extends BaseComponent {
     construct(config) {
         super.construct(config);
 
-        let me           = this,
-            domListeners = me.domListeners;
+        let me = this;
 
-        domListeners.push({
-            click   : me.play,
-            delegate: '.neo-video-ghost'
-        }, {
-            click   : me.pause,
-            delegate: '.neo-video-media'
-        });
-
-        me.domListeners = domListeners;
-    }
-
-    /**
-     * beforeSetPlaying autgen by playing_
-     *
-     * @param {Boolean} value
-     * @param {Boolean} oldValue
-     * @returns {Boolean}
-     */
-    beforeSetPlaying(value, oldValue) {
-        if (!Neo.isBoolean(value)) {
-            return oldValue;
-        }
-
-        return value;
+        me.handleAutoplay();
+        me.addDomListeners({click: me.play, delegate: '.neo-video-ghost'});
     }
 
     /**
@@ -105,31 +94,27 @@ class Video extends BaseComponent {
      * @param {Boolean} oldValue
      */
     afterSetPlaying(value, oldValue) {
-        let vdom  = this.vdom,
+        let {vdom} = this,
             media = VDomUtil.getFlags(vdom, 'media')[0],
             ghost = VDomUtil.getFlags(vdom, 'ghost')[0];
 
         ghost.removeDom = value;
         media.removeDom = !value;
 
-        this.vdom = vdom;
+        this.update()
     }
 
     /**
-     * afterSetUrl
      * Add a source element into the video element containing the url
-     *
      * @param {String} value
      * @param {String|null} oldValue
      */
     afterSetUrl(value, oldValue) {
-        if (!value) {
-            return;
-        }
+        if (!value) return;
 
-        const me = this;
-        let vdom  = me.vdom,
-            media = vdom.cn[1];
+        let me     = this,
+            {vdom} = me,
+            media  = VDomUtil.getFlags(vdom, 'media')[0];
 
         media.cn = [{
             tag : 'source',
@@ -137,24 +122,46 @@ class Video extends BaseComponent {
             type: me.type
         }];
 
-        me.vdom = vdom;
+        this.update()
+    }
+
+    /**
+     * autoplay - run the event listeners
+     * Only called in constructor and sets playing => calls update already
+     *
+     * Rationale: update() sends the vdom & vnode on a workers roundtrip to get the deltas.
+     * While this is happening,  the component locks itself for future updates until the new vnode got back (async).
+     * After the delay the framework  would trigger a 2nd roundtrip to get the deltas for the visible node.
+     *
+     * @protected
+     */
+    handleAutoplay() {
+        if (!this.autoPlay) return;
+
+        let {vdom} = this,
+            media  = VDomUtil.getFlags(vdom, 'media')[0];
+
+        // Most browsers require videos to be muted for autoplay to work.
+        media.muted = true;
+        // Allows inline playback on iOS devices
+        media.playsInline = true;
+
+        this.playing = true
+    }
+
+    /**
+     * Simulates `Clicked media` programmatically
+     */
+    pause() {
+        this.playing = false
     }
 
     /**
      * Clicked ghost
      */
     play() {
-        this.playing = true;
-    }
-
-    /**
-     * Clicked media
-     */
-    pause() {
-        this.playing = false;
+        this.playing = true
     }
 }
 
-Neo.applyClassConfig(Video);
-
-export default Video;
+export default Neo.setupClass(Video);

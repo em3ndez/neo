@@ -1,11 +1,11 @@
-import CalendarsContainer    from './calendars/Container.mjs';
-import Container             from '../../container/Base.mjs';
-import DateSelector          from '../../component/DateSelector.mjs';
-import DateUtil              from '../../util/Date.mjs';
-import EditCalendarContainer from './calendars/EditContainer.mjs';
-import EditEventContainer    from './EditEventContainer.mjs';
-import MainContainerModel    from './MainContainerModel.mjs';
-import Toolbar               from '../../toolbar/Base.mjs';
+import CalendarsContainer         from './calendars/Container.mjs';
+import Container                  from '../../container/Base.mjs';
+import DateSelector               from '../../component/DateSelector.mjs';
+import DateUtil                   from '../../util/Date.mjs';
+import EditCalendarContainer      from './calendars/EditContainer.mjs';
+import EditEventContainer         from './EditEventContainer.mjs';
+import MainContainerStateProvider from './MainContainerStateProvider.mjs';
+import Toolbar                    from '../../toolbar/Base.mjs';
 
 const todayDate = new Date();
 
@@ -36,6 +36,7 @@ class MainContainer extends Container {
          * The currently active view. Must be a value included inside the views config.
          * valid values: 'day', 'week', 'month', 'year'
          * @member {String} activeView_='week'
+         * @reactive
          */
         activeView_: 'week',
         /**
@@ -45,6 +46,7 @@ class MainContainer extends Container {
         /**
          * Scale the calendar with using s different base font-size
          * @member {Number|null} baseFontSize_=null
+         * @reactive
          */
         baseFontSize_: null,
         /**
@@ -53,10 +55,12 @@ class MainContainer extends Container {
         calendarsContainer: null,
         /**
          * @member {Object|null} calendarStoreConfig_=null
+         * @reactive
          */
         calendarStoreConfig_: null,
         /**
          * @member {Object|null} colorStoreConfig_=null
+         * @reactive
          */
         colorStoreConfig_: null,
         /**
@@ -78,6 +82,7 @@ class MainContainer extends Container {
         /**
          * Read only
          * @member {Neo.calendar.view.calendars.EditContainer|null} editCalendarContainer_=null
+         * @reactive
          */
         editCalendarContainer_: null,
         /**
@@ -87,6 +92,7 @@ class MainContainer extends Container {
         /**
          * Read only
          * @member {Neo.calendar.view.EditEventContainer|null} editEventContainer_=null
+         * @reactive
          */
         editEventContainer_: null,
         /**
@@ -95,17 +101,15 @@ class MainContainer extends Container {
         editEventContainerConfig: null,
         /**
          * @member {Object|null} eventStoreConfig_=null
+         * @reactive
          */
         eventStoreConfig_: null,
         /**
          * @member {Object} layout={ntype:'vbox',align:'stretch'}
          * @protected
+         * @reactive
          */
         layout: {ntype: 'vbox', align: 'stretch'},
-        /**
-         * @member {Neo.calendar.view.MainContainerModel} model=MainContainerModel
-         */
-        model: MainContainerModel,
         /**
          * @member {Neo.calendar.view.Component|null} monthComponent=null
          */
@@ -129,10 +133,12 @@ class MainContainer extends Container {
         settingsContainerWidth: 310,
         /**
          * @member {Boolean} settingsExpanded_=false
+         * @reactive
          */
         settingsExpanded_: false,
         /**
          * @member {Boolean} sideBarExpanded_=true
+         * @reactive
          */
         sideBarExpanded_: true,
         /**
@@ -140,12 +146,19 @@ class MainContainer extends Container {
          */
         sideBarWidth: 220,
         /**
+         * @member {Neo.calendar.view.MainContainerStateProvider} stateProvider=MainContainerStateProvider
+         * @reactive
+         */
+        stateProvider: MainContainerStateProvider,
+        /**
          * @member {Boolean} useSettingsContainer_=true
+         * @reactive
          */
         useSettingsContainer_: true,
         /**
          * Any combination and order of 'day', 'week', 'month', 'year'
          * @member {String[]} views_=['day','week','month','year']
+         * @reactive
          */
         views_: ['day', 'week', 'month', 'year'],
         /**
@@ -175,7 +188,7 @@ class MainContainer extends Container {
         let me = this;
 
         me.createItemsContent();
-        !me.sideBarExpanded && me.afterSetSideBarExpanded(false, true);
+        !me.sideBarExpanded && me.afterSetSideBarExpanded(false, true)
     }
 
     /**
@@ -192,29 +205,36 @@ class MainContainer extends Container {
 
             me.items[0].items[1].items.forEach(item => {
                 if (item.toggleGroup === 'mainViews') {
-                    item.pressed = item.value === value;
+                    item.pressed = item.value === value
                 }
             });
         }
     }
 
     /**
-     * Triggered after the baseFontSize config got changed
+     * @summary Updates the root `fontSize` style and refreshes the mounted MonthComponent header height.
+     *
+     * Triggered after the baseFontSize config got changed.
      * @param {String} value
      * @param {String} oldValue
      * @protected
      */
     afterSetBaseFontSize(value, oldValue) {
         if (oldValue !== undefined) {
-            let style = this.style || {};
+            let me    = this,
+                style = me.style || {};
 
             if (!value) {
-                delete style.fontSize;
+                delete style.fontSize
             } else {
-                style.fontSize = `${value}px`;
+                style.fontSize = `${value}px`
             }
 
-            this.style = style;
+            me.style = style;
+
+            if (me.monthComponent?.mounted) {
+                me.monthComponent.updateHeaderHeight()
+            }
         }
     }
 
@@ -231,17 +251,17 @@ class MainContainer extends Container {
 
             if (value) {
                 if (settingsContainer) {
-                    settingsContainer.expand();
+                    settingsContainer.expand()
                 } else {
                     me.createSettingsContainer(true).then(() => {
                         // short delay to ensure the vnode already exists
-                        setTimeout(() => {
-                            me.items[1].items[2].expand();
-                        }, 50);
-                    });
+                        me.timeout(50).then(() => {
+                            me.items[1].items[2].expand()
+                        })
+                    })
                 }
             } else {
-                settingsContainer.collapse(me.settingsContainerWidth);
+                settingsContainer.collapse(me.settingsContainerWidth)
             }
         }
     }
@@ -259,30 +279,53 @@ class MainContainer extends Container {
                 style   = sideBar.style || {};
 
             if (value) {
+                me.updateDepth = -1;
+
+                // todo: updates colliding with parent updates need to pass the update depth for the next parent update cycle
                 delete sideBar.vdom.removeDom;
 
                 me.promiseUpdate().then(() => {
                     sideBar.mounted = true;
 
-                    setTimeout(() => {
+                    me.timeout(50).then(() => {
                         style.marginLeft = '0px';
-                        sideBar.style = style;
-                    }, 50);
-                });
+                        sideBar.style = style
+                    })
+                })
             } else {
                 style.marginLeft    = `-${me.sideBarWidth}px`;
                 sideBar._style      = style; // silent update
                 sideBar._vdom.style = style; // silent update
 
-                me.promiseUpdate().then(() => {
-                    setTimeout(() => {
+                sideBar.promiseUpdate().then(() => {
+                    me.timeout(400).then(() => {
                         sideBar.vdom.removeDom = true;
                         sideBar.update();
 
-                        sideBar.mounted = false;
-                    }, 400);
-                });
+                        sideBar.mounted = false
+                    })
+                })
             }
+        }
+    }
+
+    /**
+     * Triggered after the theme config got changed
+     * @param {String} value
+     * @param {String} oldValue
+     * @protected
+     */
+    afterSetTheme(value, oldValue) {
+        super.afterSetTheme(value, oldValue);
+
+        let me = this;
+
+        if (me._editCalendarContainer) {
+            me._editCalendarContainer.theme = value
+        }
+
+        if (me._editEventContainer) {
+            me._editEventContainer.theme = value
         }
     }
 
@@ -299,17 +342,17 @@ class MainContainer extends Container {
             me.settingsExpanded && me.createSettingsContainer(false);
 
             // we need a short delay to ensure the items already got created
-            setTimeout(() => {
+            me.timeout(10).then(() => {
                 me.items[0].items[1].add({
                     handler: me.toggleSettings.bind(me),
                     iconCls: 'fa fa-cog',
                     style  : {marginLeft: '10px'}
-                });
-            }, 10);
+                })
+            })
         } else if (!value && oldValue) {
             // we only need this logic in case we dynamically change the config from true to false
             me.items[1]         .removeLast();
-            me.items[0].items[1].removeLast();
+            me.items[0].items[1].removeLast()
         }
     }
 
@@ -323,16 +366,18 @@ class MainContainer extends Container {
             let me = this;
 
             me._editCalendarContainer = value = Neo.create({
-                module : EditCalendarContainer,
-                appName: me.appName,
-                model  : {parent: me.getModel()},
-                owner  : me,
-                width  : 250,
+                module       : EditCalendarContainer,
+                appName      : me.appName,
+                owner        : me,
+                stateProvider: {parent: me.getStateProvider()},
+                theme        : me.theme,
+                width        : 250,
+                windowId     : me.windowId,
                 ...me.editCalendarContainerConfig
-            });
+            })
         }
 
-        return value;
+        return value
     }
 
     /**
@@ -345,16 +390,18 @@ class MainContainer extends Container {
             let me = this;
 
             me._editEventContainer = value = Neo.create({
-                module : EditEventContainer,
-                appName: me.appName,
-                model  : {parent: me.getModel()},
-                owner  : me,
-                width  : 250,
+                module       : EditEventContainer,
+                appName      : me.appName,
+                owner        : me,
+                stateProvider: {parent: me.getStateProvider()},
+                theme        : me.theme,
+                width        : 250,
+                windowId     : me.windowId,
                 ...me.editEventContainerConfig
-            });
+            })
         }
 
-        return value;
+        return value
     }
 
     /**
@@ -364,7 +411,7 @@ class MainContainer extends Container {
      * @protected
      */
     beforeSetActiveView(value, oldValue) {
-        return this.beforeSetEnumValue(value, oldValue, 'activeView', 'validViews');
+        return this.beforeSetEnumValue(value, oldValue, 'activeView', 'validViews')
     }
 
     /**
@@ -379,11 +426,11 @@ class MainContainer extends Container {
         value.forEach(view => {
             if (!validViews.includes(view)) {
                 console.error(view, 'is not a valid entry for views. Stick to:', validViews);
-                return oldValue;
+                return oldValue
             }
         });
 
-        return value;
+        return value
     }
 
     /**
@@ -391,7 +438,7 @@ class MainContainer extends Container {
      * @protected
      */
     changeActiveView(view) {
-        this.activeView = view;
+        this.activeView = view
     }
 
     /**
@@ -422,7 +469,7 @@ class MainContainer extends Container {
             module: Toolbar,
             cls   : ['neo-calendar-header-toolbar', 'neo-toolbar'],
             items : ['->', ...me.createViewHeaderButtons()]
-        }];
+        }]
     }
 
     /**
@@ -443,8 +490,9 @@ class MainContainer extends Container {
             appName  : me.appName,
             flex     : 'none',
             height   : me.sideBarWidth,
-            listeners: {change: me.onDateSelectorChange, scope: me},
+            listeners: {dateChange: me.onDateSelectorChange, scope: me},
             parentId : me.id, // we need the parentId to access the model inside the ctor
+            value    : null,
 
             bind: {
                 locale              : data => data.locale,
@@ -467,11 +515,12 @@ class MainContainer extends Container {
             flex  : 1,
             layout: {ntype: 'hbox', align: 'stretch'},
             items : [{
-                module: Container,
-                cls   : ['neo-calendar-sidebar', 'neo-container'],
-                layout: {ntype: 'vbox', align: 'stretch'},
-                width : me.sideBarWidth,
-                items : [me.dateSelector, me.calendarsContainer]
+                module  : Container,
+                cls     : ['neo-calendar-sidebar', 'neo-container'],
+                layout  : {ntype: 'vbox', align: 'stretch'},
+                minWidth: me.sideBarWidth,
+                width   : me.sideBarWidth,
+                items   : [me.dateSelector, me.calendarsContainer]
             }, {
                 module   : Container,
                 flex     : 1,
@@ -483,7 +532,7 @@ class MainContainer extends Container {
                     removeInactiveCards: me.removeInactiveCards
                 }
             }]
-        }];
+        }]
     }
 
     /**
@@ -497,12 +546,13 @@ class MainContainer extends Container {
             me.items[1].add({
                 module             : module.default,
                 collapsed,
+                minWidth           : me.settingsContainerWidth,
                 removeInactiveCards: me.removeInactiveCards,
                 style              : {marginRight: !collapsed ? '0' : `-${me.settingsContainerWidth}px`},
                 width              : me.settingsContainerWidth,
                 ...me.settingsContainerConfig
-            });
-        });
+            })
+        })
     }
 
     /**
@@ -521,10 +571,10 @@ class MainContainer extends Container {
                 text       : Neo.capitalize(view),
                 toggleGroup: 'mainViews',
                 value      : view
-            });
+            })
         });
 
-        return buttons;
+        return buttons
     }
 
     /**
@@ -573,7 +623,7 @@ class MainContainer extends Container {
             cards.push(cmp);
         });
 
-        return cards;
+        return cards
     }
 
     /**
@@ -583,7 +633,7 @@ class MainContainer extends Container {
         this[`${data.item.flag}Component`] = data.item;
 
         // fire the event on this instance as well => setting views can subscribe to it more easily
-        this.fire('cardLoaded', {item: data.item});
+        this.fire('cardLoaded', {item: data.item})
     }
 
     /**
@@ -591,53 +641,53 @@ class MainContainer extends Container {
      * @param {String} data.oldValue
      * @param {String} data.value
      */
-    onDateSelectorChange(data) {
-        data.oldValue !== undefined && this.getModel().setData('currentDate', new Date(`${data.value}T00:00:00.000Z`));
+    onDateSelectorChange({value}) {
+        this.setState('currentDate', value)
     }
 
     /**
      * @param data
      */
     onNextIntervalButtonClick(data) {
-        this.switchInterval(1);
+        this.switchInterval(1)
     }
 
     /**
      * @param data
      */
     onPreviousIntervalButtonClick(data) {
-        this.switchInterval(-1);
+        this.switchInterval(-1)
     }
 
     /**
      * @param data
      */
     onTodayButtonClick(data) {
-        this.model.setData({
+        this.stateProvider.setData({
             currentDate: todayDate
-        });
+        })
     }
 
     /**
      * @protected
      */
     toggleSettings() {
-        this.settingsExpanded = !this.settingsExpanded;
+        this.settingsExpanded = !this.settingsExpanded
     }
 
     /**
      * @protected
      */
     toggleSidebar() {
-        this.sideBarExpanded = !this.sideBarExpanded;
+        this.sideBarExpanded = !this.sideBarExpanded
     }
 
     /**
      * @param {Number} multiplier
      */
     switchInterval(multiplier) {
-        let me          = this,
-            currentDate = me.data.currentDate,
+        let me            = this,
+            {currentDate} = me.data,
 
         map = {
             day  : () => {currentDate.setDate(    currentDate.getDate()     + multiplier)},
@@ -648,10 +698,8 @@ class MainContainer extends Container {
 
         map[me.activeView]();
 
-        me.model.setData({currentDate});
+        me.stateProvider.setData({currentDate})
     }
 }
 
-Neo.applyClassConfig(MainContainer);
-
-export default MainContainer;
+export default Neo.setupClass(MainContainer);

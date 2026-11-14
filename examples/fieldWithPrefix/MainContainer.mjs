@@ -1,8 +1,7 @@
+import ComboBox              from '../../src/form/field/ComboBox.mjs';
 import ConfigurationViewport from '../ConfigurationViewport.mjs';
-
-import PrefixPlugin from '../../src/plugin/PrefixField.mjs';
-import SelectField  from '../../src/form/field/Select.mjs';
-import TextField    from '../../src/form/field/Text.mjs';
+import PrefixPlugin          from '../../src/plugin/PrefixField.mjs';
+import TextField             from '../../src/form/field/Text.mjs';
 
 /**
  * @class Neo.examples.fieldWithPrefix.MainContainer
@@ -20,13 +19,13 @@ class MainContainer extends ConfigurationViewport {
 
     onPluginConfigChange(config, opts) {
         const textfield = this.exampleComponent.items[0],
-              plugin    = textfield.getPlugin({flag: 'prefix'});
+              plugin    = textfield.getPlugin('prefixfield');
 
         if (config === 'accept') {
-            plugin.accept = opts.record.value;
+            plugin.accept = opts.record.value
         } else {
             plugin[config] = opts.value;
-            textfield.value = '';
+            textfield.value = ''
         }
     }
 
@@ -50,7 +49,7 @@ class MainContainer extends ConfigurationViewport {
             value    : '_',
             style    : {marginTop: '10px'}
         }, {
-            module: SelectField,
+            module: ComboBox,
             store : {
                 model: {fields: [{name: 'id'}, {name: 'name'}, {name: 'value'}]},
                 data : [
@@ -71,7 +70,7 @@ class MainContainer extends ConfigurationViewport {
             labelText: 'accept',
             listeners: {change: me.onPluginConfigChange.bind(me, 'accept')},
             style    : {marginTop: '10px'}
-        }];
+        }]
     }
 
     /**
@@ -89,7 +88,6 @@ class MainContainer extends ConfigurationViewport {
                 plugins  : [
                     {
                         module : PrefixPlugin,
-                        flag   : 'prefix',
                         pattern: '+1 (___) ___-___-____',
                         slots  : '_'
                     }
@@ -100,7 +98,6 @@ class MainContainer extends ConfigurationViewport {
                 plugins  : [
                     {
                         module : PrefixPlugin,
-                        flag   : 'prefix',
                         pattern: 'dd/mm/yyyy hh:mm',
                         slots  : 'dmyh'
                     }
@@ -111,7 +108,6 @@ class MainContainer extends ConfigurationViewport {
                 plugins  : [
                     {
                         module : PrefixPlugin,
-                        flag   : 'prefix',
                         pattern: 'XX:XX:XX:XX:XX:XX',
                         slots  : 'X',
                         accept : '[A-H]'
@@ -123,7 +119,6 @@ class MainContainer extends ConfigurationViewport {
                 plugins  : [
                     {
                         module : PrefixPlugin,
-                        flag   : 'prefix',
                         pattern: '__-__-__-____',
                         slots  : '_',
                         accept : /\w/
@@ -135,7 +130,6 @@ class MainContainer extends ConfigurationViewport {
                 plugins  : [
                     {
                         module : PrefixPlugin,
-                        flag   : 'prefix',
                         pattern: '.... .... .... ....',
                         slots  : '.',
                         accept : /\d/
@@ -146,6 +140,4 @@ class MainContainer extends ConfigurationViewport {
     }
 }
 
-Neo.applyClassConfig(MainContainer);
-
-export default MainContainer;
+export default Neo.setupClass(MainContainer);

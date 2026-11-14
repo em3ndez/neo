@@ -1,11 +1,11 @@
 import CircleComponent from '../component/Circle.mjs';
-import Component       from './Component.mjs';
+import ComponentList   from './Component.mjs';
 
 /**
  * @class Neo.list.Circle
  * @extends Neo.list.Component
  */
-class Circle extends Component {
+class Circle extends ComponentList {
     static config = {
         /**
          * @member {String} className='Neo.list.Circle'
@@ -30,11 +30,13 @@ class Circle extends Component {
         /**
          * Defaults to px
          * @member {Number|null} itemHeight=300
+         * @reactive
          */
         itemHeight: 300,
         /**
          * Defaults to px
          * @member {Number|null} itemWidth=300
+         * @reactive
          */
         itemWidth: 300,
         /**
@@ -61,7 +63,8 @@ class Circle extends Component {
             };
 
         if (listItem) {
-            listItem.setSilent(config);
+            me.updateDepth = 2;
+            listItem.setSilent(config)
         } else {
             items[index] = listItem = Neo.create({
                 appName    : me.appName,
@@ -71,17 +74,16 @@ class Circle extends Component {
                 parentId   : me.id,
                 tabIndex   : -1,
                 width      : me.itemWidth,
+                windowId   : me.windowId,
                 ...me.itemDefaults,
                 ...config
-            });
+            })
         }
 
         me.items = items;
 
-        return [listItem.vdom];
+        return [listItem.createVdomReference()]
     }
 }
 
-Neo.applyClassConfig(Circle);
-
-export default Circle;
+export default Neo.setupClass(Circle);

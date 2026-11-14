@@ -3,12 +3,13 @@ import Component       from '../component/Base.mjs';
 import ListModel       from '../selection/ListModel.mjs';
 import NeoArray        from '../util/Array.mjs';
 import Store           from '../data/Store.mjs';
+import StringUtil      from '../util/String.mjs';
 
 /**
  * @class Neo.list.Base
  * @extends Neo.component.Base
  */
-class Base extends Component {
+class List extends Component {
     static config = {
         /**
          * @member {String} className='Neo.list.Base'
@@ -21,11 +22,8 @@ class Base extends Component {
          */
         ntype: 'list',
         /**
-         * @member {Number|null} activeIndex_=null
-         */
-        activeIndex_: null,
-        /**
          * @member {Boolean} animate_=false
+         * @reactive
          */
         animate_: false,
         /**
@@ -38,6 +36,20 @@ class Base extends Component {
          */
         baseCls: ['neo-list'],
         /**
+         * Record field name to link the item's checked state when `useCheckBoxes` is `true`.
+         *
+         * The link activates when `useCheckBoxes` is `true` and the bound store's model declares
+         * this field (`store.model.getField(checkedField)`) or a raw record carries the property
+         * (`checkedField in record`). When active, explicit item selection and deselection
+         * (`selectionModel.select()` / `selectionModel.deselect()`) write `true` / `false` back
+         * into `record[checkedField]`, while view-initiated resets (`disableSelection`,
+         * `selectedIndex = null`, `deselectAll()`) leave record data untouched. In `singleSelect`
+         * mode, only the first initially checked record seeds `selectionModel.items`, and selecting
+         * a new item unchecks any previously checked record.
+         * @member {String} checkedField='checked'
+         */
+        checkedField: 'checked',
+        /**
          * An optional record field to make items non-clickable and visually greyed out.
          * The field expects the Boolean type.
          * @member {String} disabledField='disabled'
@@ -45,6 +57,7 @@ class Base extends Component {
         disabledField: 'disabled',
         /**
          * @member {Boolean} disableSelection_=false
+         * @reactive
          */
         disableSelection_: false,
         /**
@@ -53,6 +66,7 @@ class Base extends Component {
         displayField: 'name',
         /**
          * @member {Boolean} draggable_=false
+         * @reactive
          */
         draggable_: false,
         /**
@@ -64,11 +78,19 @@ class Base extends Component {
          */
         dragZoneConfig: null,
         /**
+         * Keeps track of the focussed item index and allows bindings and programmatic changes.
+         * You can either pass the index or the related record
+         * @member {Number|Object|null} focusIndex_=null
+         * @reactive
+         */
+        focusIndex_: null,
+        /**
          * In case we are using list item headers and want to bind list item indexes to e.g. a card layout
          * for e.g. a sidenav, this config comes in handy.
-         * @member {Number|null} headerlessActiveIndex_=null
+         * @member {Number|null} headerlessSelectedIndex_=null
+         * @reactive
          */
-        headerlessActiveIndex_: null,
+        headerlessSelectedIndex_: null,
         /**
          * @member {Boolean} highlightFilterValue=true
          */
@@ -80,6 +102,7 @@ class Base extends Component {
         /**
          * Defaults to px
          * @member {Number|null} itemHeight_=null
+         * @reactive
          */
         itemHeight_: null,
         /**
@@ -90,45 +113,94 @@ class Base extends Component {
         /**
          * Defaults to px
          * @member {Number|null} itemWidth_=null
+         * @reactive
          */
         itemWidth_: null,
+        /**
+         * @member {Boolean} itemsFocusable=true
+         */
+        itemsFocusable: true,
+        /**
+         * The config will get passed to the navigator main thread addon.
+         * E.g. for ComboBoxes, which shall preserve their focussed list item when filtering the store, use true.
+         * @member {Boolean} keepFocusIndex=false
+         */
+        keepFocusIndex: false,
         /**
          * Additional used keys for the selection model
          * @member {Object} keys
          */
         keys: {},
         /**
+         * Class names that mark a rendered item as non-interactive: excluded from the click delegate
+         * and from arrow-key navigation alike.
+         *
+         * The rule needs a single source because it is consumed twice, in two different languages —
+         * as a CSS `:not()` selector handed to `Neo.main.addon.Navigator` (see `afterSetMounted`), and
+         * as the class check in `getInteractiveItemIndex()`, which pointer delegates call because they
+         * cannot parse a selector. Both were hardcoded literals until a third concept needed adding and revealed that
+         * editing one and missing the other yields a row that is unclickable but still arrow-navigable.
+         *
+         * **Read at construct time.** The navigator selector is built once, behind `hasNavigator`, and
+         * frozen at subscribe time — so a later change would leave the subscribed selector disagreeing
+         * with the per-event delegate, which is the same drift in a harder-to-see form. Extend it as a
+         * class config on a subclass, not per instance after mount. An instance may still override the
+         * navigator's `selector` outright via the `navigator` config; that escape hatch is preserved.
+         * @member {String[]} nonInteractiveItemCls=['neo-disabled','neo-list-header']
+         */
+        nonInteractiveItemCls: ['neo-disabled', 'neo-list-header'],
+        /**
          * config values for Neo.list.plugin.Animate
          * @member {Object} pluginAnimateConfig=null
          */
         pluginAnimateConfig: null,
         /**
+         * Keeps track of the selected item index and allows bindings and programmatic changes
+         * @member {Number|null} selectedIndex_=null
+         * @reactive
+         */
+        selectedIndex_: null,
+        /**
          * Either pass a selection.Model module, an instance or a config object
          * @member {Object|Neo.selection.Model} selectionModel_=null
+         * @reactive
          */
         selectionModel_: null,
         /**
-         * Set this to true in case a select event should only update _vdom (e.g. when used inside a form.field.Select
+         * Set this to true in case a keyboard navigation should immediately select the focussed item
+         * @member {Boolean} selectOnFocus=false
+         */
+        selectOnFocus: false,
+        /**
+         * Set this to true in case a select event should only update _vdom (e.g. when used inside a form.field.ComboBox
          * @member {Boolean} silentSelect=false
          */
         silentSelect: false,
         /**
          * @member {Neo.data.Store|null} store_=null
+         * @reactive
          */
         store_: null,
         /**
          * True will add a checkbox in front of each list item
          * @member {Boolean} stacked_=true
+         * @reactive
          */
         useCheckBoxes_: false,
+        /**
+         * @member {Boolean} useInternalId=true
+         */
+        useInternalId: true,
         /**
          * Setting this config to true will switch to dl, dt & dd tags instead of using ul & li.
          * Use the {Boolean} model field isHeader.
          * @member {Boolean} useHeaders_=false
+         * @reactive
          */
         useHeaders_: false,
         /**
          * @member {Boolean} useWrapperNode_=false
+         * @reactive
          */
         useWrapperNode_: false,
         /**
@@ -142,6 +214,11 @@ class Base extends Component {
      * @member {String|null} itemRole=null
      */
     itemRole = null
+    /**
+     * An object to help configure the navigation. Used to pass to {@link Neo.main.addon.Navigator#subscribe}.
+     * @member {Object} navigator={}
+     */
+    navigator = {}
     /**
      * Defaults to false in case useHeaders is set to true
      * @member {Boolean} scrollIntoViewOnFocus=true
@@ -157,32 +234,13 @@ class Base extends Component {
         let me = this;
 
         if (me.useHeaders) {
-            me.scrollIntoViewOnFocus = false;
+            me.scrollIntoViewOnFocus = false
         }
 
         me.addDomListeners({
             click: me.onClick,
             scope: me
-        });
-    }
-
-    /**
-     * Triggered after the activeIndex config got changed
-     * @param {Number|null} value
-     * @param {Number|null} oldValue
-     * @protected
-     */
-    afterSetActiveIndex(value, oldValue) {
-        let me             = this,
-            selectionModel = me.selectionModel;
-
-        if (Neo.isNumber(value)) {
-            selectionModel?.selectAt(value);
-            me.headerlessActiveIndex = me.getHeaderlessIndex(value);
-        } else if (Neo.isNumber(oldValue)) {
-            selectionModel.deselectAll();
-            me.headerlessActiveIndex = null;
-        }
+        })
     }
 
     /**
@@ -192,29 +250,31 @@ class Base extends Component {
      * @protected
      */
     afterSetAnimate(value, oldValue) {
-        value && import('./plugin/Animate.mjs').then(module => {
-            let me      = this,
-                plugins = me.plugins || [];
+        if (value && !this.getPlugin('list-animate')) {
+            import('./plugin/Animate.mjs').then(module => {
+                let me      = this,
+                    plugins = me.plugins || [];
 
-            plugins.push({
-                module : module.default,
-                appName: me.appName,
-                id     : 'animate',
-                ...me.pluginAnimateConfig
-            });
+                plugins.push({
+                    module: module.default,
+                    ...me.pluginAnimateConfig
+                });
 
-            me.plugins = plugins;
-        });
+                me.plugins = plugins
+            })
+        }
     }
 
     /**
-     * Triggered after the disableSelection config got changed
+     * @summary Restores checked-record selection and its annotations when selection is re-enabled.
      * @param {Boolean} value
      * @param {Boolean} oldValue
      * @protected
      */
     afterSetDisableSelection(value, oldValue) {
-        value && this.rendered && this.selectionModel?.deselectAll();
+        if (this.vnodeInitialized) {
+            value ? this.selectionModel?.deselectAll() : this.seedCheckedSelection(true)
+        }
     }
 
     /**
@@ -229,31 +289,96 @@ class Base extends Component {
         if (value && !me.dragZone) {
             import('../draggable/list/DragZone.mjs').then(module => {
                 me.dragZone = Neo.create({
-                    module : module.default,
-                    appName: me.appName,
-                    owner  : me,
+                    module  : module.default,
+                    appName : me.appName,
+                    owner   : me,
+                    windowId: me.windowId,
                     ...me.dragZoneConfig
-                });
-            });
+                })
+            })
         }
     }
 
     /**
-     * Triggered after the headerlessActiveIndex config got changed
+     * Triggered after the focusIndex config got changed
+     * @param {Number|Object|null} value
+     * @param {Number|Object|null} oldValue
+     * @protected
+     */
+    afterSetFocusIndex(value, oldValue) {
+        value !== null && this.updateItemFocus(value)
+    }
+
+    /**
+     * Triggered after the headerlessSelectedIndex config got changed
      * @param {Number} value
      * @param {Number} oldValue
      * @protected
      */
-    afterSetHeaderlessActiveIndex(value, oldValue) {
-        let me = this,
-            activeIndex;
+    afterSetHeaderlessSelectedIndex(value, oldValue) {
+        let me = this;
 
         if (Neo.isNumber(value)) {
-            activeIndex = me.getActiveIndex(value);
-
-            me.activeIndex = activeIndex;
+            me.selectedIndex = me.store.getCount() ? me.getSelectedIndex(value) : null
         } else if (Neo.isNumber(oldValue)) {
-            me.activeIndex = null;
+            me.selectedIndex = null
+        }
+    }
+
+    /**
+     * Triggered after the mounted config got changed
+     * @param {Boolean} value
+     * @param {Boolean} oldValue
+     * @protected
+     */
+    afterSetMounted(value, oldValue) {
+        let me = this;
+
+        // Tear down navigation before we lose the element
+        if (!value && me.hasNavigator) {
+            Neo.main.addon.Navigator.unsubscribe(me.navigator);
+
+            me.hasNavigator  = false;
+            me.selectedIndex = null
+        }
+
+        if (value) {
+            // Set up item navigation in the list
+            if (!me.hasNavigator) {
+                me.navigator = Neo.merge({
+                    appName       : me.appName,
+                    autoClick     : me.selectOnFocus,
+                    id            : me.id,
+                    keepFocusIndex: me.keepFocusIndex,
+                    selector      : me.getNavigableItemSelector(),
+                    windowId      : me.windowId
+                }, me.navigator);
+
+                me.hasNavigator = true
+            }
+
+            Neo.main.addon.Navigator.subscribe(me.navigator)
+        }
+
+        super.afterSetMounted(value, oldValue)
+    }
+
+    /**
+     * Triggered after the selectedIndex config got changed
+     * @param {Number|null} value
+     * @param {Number|null} oldValue
+     * @protected
+     */
+    afterSetSelectedIndex(value, oldValue) {
+        let me               = this,
+            {selectionModel} = me;
+
+        if (Neo.isNumber(value)) {
+            selectionModel?.selectAt(value);
+            me.headerlessSelectedIndex = me.getHeaderlessIndex(value)
+        } else if (Neo.isNumber(oldValue)) {
+            selectionModel.deselectAll();
+            me.headerlessSelectedIndex = null
         }
     }
 
@@ -264,7 +389,8 @@ class Base extends Component {
      * @protected
      */
     afterSetSelectionModel(value, oldValue) {
-        this.rendered && value.register(this);
+        value?.on('selectionChange', this.onSelectionChange, this);
+        this.vnodeInitialized && value.register(this)
     }
 
     /**
@@ -284,7 +410,7 @@ class Base extends Component {
             scope       : me
         });
 
-        value?.getCount() > 0 && me.onStoreLoad();
+        value?.getCount() > 0 && me.onStoreLoad()
     }
 
     /**
@@ -294,11 +420,11 @@ class Base extends Component {
      * @protected
      */
     afterSetUseCheckBoxes(value, oldValue) {
-        let me  = this,
-            cls = me.cls;
+        let me    = this,
+            {cls} = me;
 
-        NeoArray[value ? 'add' : 'remove'](cls, 'neo-use-checkicons');
-        me.cls = cls;
+        NeoArray.toggle(cls, 'neo-use-checkicons', !!value);
+        me.cls = cls
     }
 
     /**
@@ -312,7 +438,7 @@ class Base extends Component {
             let me = this;
 
             me.vdom.tag = 'dl';
-            me.itemTagName = 'dd';
+            me.itemTagName = 'dd'
         }
     }
 
@@ -323,15 +449,30 @@ class Base extends Component {
      * @protected
      */
     afterSetUseWrapperNode(value, oldValue) {
-        let me         = this,
-            cls        = me.cls,
-            wrapperCls = me.wrapperCls;
+        let me                = this,
+            {cls, wrapperCls} = me;
 
         NeoArray[value ? 'add' : 'remove'](cls, 'neo-use-wrapper-node');
         NeoArray[value ? 'add' : 'remove'](wrapperCls, 'neo-list-wrapper');
 
         me.wrapperCls = wrapperCls;
-        me.cls        = cls;
+        me.cls        = cls
+    }
+
+    /**
+     * Triggered after the windowId config got changed
+     * @param {String} value
+     * @param {String} oldValue
+     * @protected
+     */
+    afterSetWindowId(value, oldValue) {
+        super.afterSetWindowId(value, oldValue);
+
+        let {navigator} = this;
+
+        if (value && navigator) {
+            navigator.windowId = value
+        }
     }
 
     /**
@@ -343,7 +484,7 @@ class Base extends Component {
      */
     beforeSetSelectionModel(value, oldValue) {
         oldValue?.destroy();
-        return ClassSystemUtil.beforeSetInstance(value, ListModel);
+        return ClassSystemUtil.beforeSetInstance(value, ListModel)
     }
 
     /**
@@ -354,33 +495,37 @@ class Base extends Component {
      * @protected
      */
     beforeSetStore(value, oldValue) {
-        oldValue?.destroy();
-        return ClassSystemUtil.beforeSetInstance(value, Store);
+        // The same ownership destroy() honours: a list told it does not own its store never destroys it
+        this.autoDestroyStore && oldValue?.destroy();
+        return ClassSystemUtil.beforeSetInstance(value, Store)
     }
 
     /**
      * Override this method for custom list items
      * @param {Object} record
-     * @param {Number} index
+     * @param {Number} index Logical index in the bound store.
+     * @param {Number} [poolIndex=index] Physical render-slot index. Ordinary lists keep this equal
+     * to `index`; buffered list subclasses pass a bounded slot so component instances can recycle
+     * without confusing their physical identity with the record's logical position.
      * @returns {Object} The list item vdom object
      */
-    createItem(record, index) {
-        let me             = this,
-            cls            = [me.itemCls],
-            hasItemHeight  = me.itemHeight !== null,
-            hasItemWidth   = me.itemWidth  !== null,
-            isHeader       = me.useHeaders && record.isHeader,
-            itemContent    = me.createItemContent(record, index),
-            itemId         = me.getItemId(record[me.getKeyProperty()]),
-            selectionModel = me.selectionModel,
-            item;
+    createItem(record, index, poolIndex=index) {
+        let me               = this,
+            cls              = [me.itemCls],
+            hasItemHeight    = me.itemHeight !== null,
+            hasItemWidth     = me.itemWidth !== null,
+            isHeader         = me.useHeaders && record.isHeader,
+            itemContent      = me.createItemContent(record, index, poolIndex),
+            itemId           = me.getItemId(me.getRecordId(record)),
+            {selectionModel} = me,
+            isSelected       = (!me.disableSelection && selectionModel?.isSelected(itemId))
+                            || (me.hasCheckedField(record) && Boolean(record[me.checkedField])),
+            item, removeDom;
 
         isHeader && cls.push('neo-list-header');
 
-        if (!me.disableSelection && selectionModel) {
-            if (selectionModel.isSelected(itemId)) {
-                cls.push(selectionModel.selectedCls)
-            }
+        if (isSelected) {
+            cls.push(selectionModel?.selectedCls || 'neo-selected')
         }
 
         if (record.cls) {
@@ -392,102 +537,134 @@ class Base extends Component {
         }
 
         item = {
-            tag     : isHeader ? 'dt' : me.itemTagName,
-            cls,
-            id      : itemId,
-            tabIndex: -1
+            id             : itemId,
+            tag            : isHeader ? 'dt' : me.itemTagName,
+            'aria-selected': isSelected,
+            cls
         };
 
+        if (me.itemsFocusable) {
+            item.tabIndex = -1
+        }
+
+        if (record.hidden || itemContent.removeDom) {
+            item.removeDom = true
+        }
+
         if (me.itemRole) {
-            item.role = me.itemRole;
+            item.role = me.itemRole
         }
 
         switch (Neo.typeOf(itemContent)) {
             case null: {
-                return null;
+                return null
             }
 
             case 'Array': {
                 item.cn = itemContent;
-                break;
+
+                removeDom = true;
+
+                itemContent.forEach(item => {
+                    if (!item.removeDom) {
+                        removeDom = false
+                    }
+                })
+
+                if (removeDom) {
+                    item.removeDom = true
+                }
+
+                break
             }
 
             case 'Object': {
+                // We want a merge for custom cls rules
+                if (itemContent.cls) {
+                    NeoArray.add(item.cls, itemContent.cls);
+                    delete itemContent.cls
+                }
+
                 Object.assign(item, itemContent);
-                break;
+                break
             }
 
             case 'Number':
             case 'String': {
                 item.html = itemContent;
+                break
             }
         }
 
         if (hasItemHeight || hasItemWidth) {
             item.style = item.style || {};
 
-            if (hasItemHeight && !item.hasOwnProperty('height')) {
-                item.style.height = `${me.itemHeight}px`;
+            if (hasItemHeight && !Object.hasOwn(item, 'height')) {
+                item.style.height = `${me.itemHeight}px`
             }
 
-            if (hasItemWidth && !item.hasOwnProperty('width')) {
-                item.style.width = `${me.itemWidth}px`;
+            if (hasItemWidth && !Object.hasOwn(item, 'width')) {
+                item.style.width = `${me.itemWidth}px`
             }
         }
 
-        return item;
+        return item
     }
 
     /**
      * Override this method for custom renderers
+     * @summary Renders the content for a single list item, highlighting literal store filter matches when enabled.
      * @param {Object} record
-     * @param {Number} index
+     * @param {Number} index Logical index in the bound store.
+     * @param {Number} [poolIndex=index] Physical render-slot index for buffered subclasses.
      * @returns {Object|Object[]|String} Either a config object to assign to the item, a vdom cn array or a html string
      */
-    createItemContent(record, index) {
+    createItemContent(record, index, poolIndex=index) {
         let me       = this,
             itemText = record[me.displayField],
             filter;
 
         if (me.highlightFilterValue) {
-            filter = me.store.getFilter(me.displayField);
+            filter = me.store.getFilter(me.displayField, null);
 
             if (filter && filter.value !== null && filter.value !== '') {
-                itemText = itemText.replace(new RegExp(filter.value, 'gi'), function(match) {
-                    return '<span class="neo-highlight-search">' + match + '</span>';
-                });
+                itemText = itemText.replace(new RegExp(StringUtil.escapeRegExp(String(filter.value)), 'gi'), function(match) {
+                    return '<span class="neo-highlight-search">' + match + '</span>'
+                })
             }
         }
 
-        return itemText;
+        return itemText
     }
 
     /**
-     * @param {Boolean} [silent=false]
+     * @param {Boolean} silent=false
      */
     createItems(silent=false) {
-        let me                    = this,
-            headerlessActiveIndex = me.headerlessActiveIndex,
-            vdom                  = me.getVdomRoot(),
+        let me                        = this,
+            {headerlessSelectedIndex} = me,
+            vdom                      = me.getVdomRoot(),
             listItem;
 
-        // in case we set headerlessActiveIndex before the store was loaded, activeIndex can be null
+        // in case we set headerlessSelectedIndex before the store was loaded, selectedIndex can be null
         // and the wanted selection is not initially there
-        if (Neo.isNumber(headerlessActiveIndex) && !Neo.isNumber(me.activeIndex)) {
-            me.afterSetHeaderlessActiveIndex(headerlessActiveIndex, null);
+        if (Neo.isNumber(headerlessSelectedIndex) && !Neo.isNumber(me.selectedIndex)) {
+            me.afterSetHeaderlessSelectedIndex(headerlessSelectedIndex, null)
         }
 
-        if (!(me.animate && !me.getPlugin('animate'))) {
+        if (!(me.animate && !me.getPlugin('list-animate'))) {
             vdom.cn = [];
 
-            me.store.items.forEach((item, index) => {
+            me.seedCheckedSelection();
+
+            me.store.forEach((item, index) => {
                 listItem = me.createItem(item, index);
-                listItem && vdom.cn.push(listItem);
+                listItem && vdom.cn.push(listItem)
             });
 
             !silent && me.promiseUpdate().then(() => {
-                me.fire('createItems');
-            });
+                me.fire('createItems')
+            })
         }
     }
 
@@ -501,48 +678,52 @@ class Base extends Component {
 
         me.autoDestroyStore && me.store?.destroy();
 
-        super.destroy(...args);
+        super.destroy(...args)
     }
 
     /**
      * Calls focus() on the top level DOM node of this component or on a given node via id
-     * @param {String} [id]
+     * @param {String} [id=this.id]
      */
-    focus(id) {
-        super.focus(id);
-
-        let me = this;
-
-        id && me.scrollIntoViewOnFocus && Neo.main.DomAccess.scrollIntoView({
-            appName : me.appName,
-            behavior: 'auto',
-            id      : id || me.id
+    focus(id=this.id) {
+        this.mounted && Neo.main.addon.Navigator.navigateTo({
+            data    : this.navigator,
+            target  : id,
+            windowId: this.windowId
         })
     }
 
     /**
+     * @param {Object} record
+     * @returns {String|Number}
+     */
+    getRecordId(record) {
+        return this.useInternalId ? this.store.getInternalId(record) : this.store.getKey(record)
+    }
+
+    /**
      * Transforms an index excluding list item headers into the real store index
-     * @param {Number} headerlessIndex
+     * @param {Number} headerlessSelectedIndex
      * @returns {Number}
      */
-    getActiveIndex(headerlessIndex) {
+    getSelectedIndex(headerlessSelectedIndex) {
         let delta   = 0,
             i       = 0,
             records = this.store.items,
-            len     = headerlessIndex;
+            len     = headerlessSelectedIndex;
 
         if (records.length < 1) {
-            return null;
+            return null
         }
 
         for (; i <= len; i++) {
             if (records[i].isHeader) {
                 delta++;
-                len++;
+                len++
             }
         }
 
-        return headerlessIndex + delta;
+        return headerlessSelectedIndex + delta
     }
 
     /**
@@ -557,19 +738,66 @@ class Base extends Component {
 
         for (; i < index; i++) {
             if (!records[i].isHeader) {
-                headerlessIndex++;
+                headerlessIndex++
             }
         }
 
-        return headerlessIndex;
+        return headerlessIndex
     }
 
     /**
-     * @param {Number|String} recordId
+     * @param {Number|String|object} recordOrId
      * @returns {String}
      */
-    getItemId(recordId) {
-        return `${this.id}__${recordId}`;
+    getItemId(recordOrId) {
+        let id = recordOrId;
+
+        if (recordOrId.isRecord) {
+            id = this.getRecordId(recordOrId)
+        }
+
+        return `${this.id}__${id}`
+    }
+
+    /**
+     * @summary Returns the event-path index of the first item a pointer may act on.
+     *
+     * The class check behind `getNavigableItemSelector()`, for DOM listener delegates, which cannot parse a
+     * selector yet (TODO parse delegate selectors). Every pointer consumer — the selection model's click, a
+     * menu's hover — calls it, so all of them exclude the same items.
+     * @param {Object[]} path The DOM event path
+     * @returns {Number|undefined}
+     */
+    getInteractiveItemIndex(path) {
+        const {itemCls, nonInteractiveItemCls} = this;
+
+        for (let i = 0, {length} = path; i < length; i++) {
+            const {cls} = path[i];
+
+            if (cls.includes(itemCls) && !nonInteractiveItemCls.some(name => cls.includes(name))) {
+                return i
+            }
+        }
+    }
+
+    /**
+     * Builds the CSS selector matching every item a pointer or an arrow key may land on.
+     *
+     * The selector form of the rule `getInteractiveItemIndex()` evaluates per pointer event. Both
+     * derive from `nonInteractiveItemCls`, so a subclass adding a non-interactive concept — a menu
+     * separator, say — is excluded from clicking and navigation by one declaration instead of two
+     * hand-kept copies.
+     * @returns {String}
+     */
+    getNavigableItemSelector() {
+        let me        = this,
+            {itemCls} = me,
+            excluded  = me.nonInteractiveItemCls;
+
+        // An empty list must degrade to "every item is navigable", not to `:not(.)` — that is invalid
+        // CSS and throws inside the addon's querySelectorAll, taking navigation down entirely rather
+        // than widening it.
+        return excluded?.length > 0 ? `.${itemCls}:not(.${excluded.join(',.')})` : `.${itemCls}`
     }
 
     /**
@@ -577,16 +805,13 @@ class Base extends Component {
      * @returns {String|Number} itemId
      */
     getItemRecordId(vnodeId) {
-        let itemId   = vnodeId.split('__')[1],
-            model    = this.store.model,
-            keyField = model?.getField(model.keyProperty),
-            keyType  = keyField?.type?.toLowerCase();
+        let itemId = vnodeId.split('__')[1];
 
-        if (keyType === 'integer' || keyType === 'number') {
-            itemId = parseInt(itemId);
+        if (!this.useInternalId) {
+            itemId = this.store.getCanonicalKey(itemId)
         }
 
-        return itemId;
+        return itemId
     }
 
     /**
@@ -594,7 +819,22 @@ class Base extends Component {
      * @returns {String}
      */
     getKeyProperty() {
-        return this.store.keyProperty || this.store.model.keyProperty;
+        return this.store.keyProperty || this.store.model.keyProperty
+    }
+
+    /**
+     * @summary Checks whether `useCheckBoxes` is enabled and `record` defines {@link #checkedField}.
+     * @param {Object} record
+     * @returns {Boolean}
+     */
+    hasCheckedField(record) {
+        let {checkedField} = this;
+
+        if (!this.useCheckBoxes || !checkedField || !record) {
+            return false
+        }
+
+        return Boolean(this.store?.model?.getField?.(checkedField)) || checkedField in record
     }
 
     /**
@@ -605,12 +845,12 @@ class Base extends Component {
             item;
 
         if (data.path[0].id === me.id) {
-            me.onContainerClick(data);
+            me.onContainerClick(data)
         } else {
             for (item of data.path) {
                 if (item.cls.includes(me.itemCls)) {
                     me.onItemClick(item, data);
-                    break;
+                    break
                 }
             }
         }
@@ -622,7 +862,7 @@ class Base extends Component {
     onConstructed() {
         super.onConstructed();
 
-        this.selectionModel?.register(this);
+        this.selectionModel?.register(this)
     }
 
     /**
@@ -637,7 +877,7 @@ class Base extends Component {
          * @param {String[]} path the event path
          * @returns {Object}
          */
-        this.fire('containerClick', data);
+        this.fire('containerClick', data)
     }
 
     /**
@@ -651,59 +891,118 @@ class Base extends Component {
         // pass the record to class extensions
         data.record = record;
 
-        if (!me.disableSelection && (!me.useHeaders || !record.isHeader)) {
-            me.selectionModel?.select(node.id);
-        }
-
         /**
          * The itemClick event fires when a click occurs on a list item
          * @event itemClick
          * @param {String} id the record matching the list item
          * @returns {Object}
          */
-        me.fire('itemClick', record);
+        me.fire('itemClick', {
+            record
+        })
+    }
+
+    /**
+     * @summary Synchronizes each record's {@link #checkedField} on explicit item `select` / `deselect` while skipping view-level `deselectAll` resets.
+     * @param {Object} data
+     * @param {String[]} [data.deselected]
+     * @param {Object[]} [data.records]
+     * @param {String[]} data.selection
+     */
+    onSelectionChange({deselected, records, selection}) {
+        let me = this;
+
+        if (!me.useCheckBoxes || !me.checkedField || !me.store || me.disableSelection) {
+            return
+        }
+
+        if (Array.isArray(records)) {
+            let selectedSet = new Set(selection || []);
+
+            if (me.selectionModel?.singleSelect) {
+                me.store.forEach(record => {
+                    if (me.hasCheckedField(record)) {
+                        let itemId          = me.getItemId(me.getRecordId(record)),
+                            shouldBeChecked = selectedSet.has(itemId);
+
+                        if (Boolean(record[me.checkedField]) !== shouldBeChecked) {
+                            record[me.checkedField] = shouldBeChecked
+                        }
+                    }
+                })
+            } else {
+                for (let itemId of selectedSet) {
+                    let record = me.store.get(me.getItemRecordId(itemId));
+
+                    if (me.hasCheckedField(record) && !record[me.checkedField]) {
+                        record[me.checkedField] = true
+                    }
+                }
+            }
+        } else if (Array.isArray(deselected)) {
+            for (let itemId of deselected) {
+                let record = me.store.get(me.getItemRecordId(itemId));
+
+                if (me.hasCheckedField(record) && record[me.checkedField]) {
+                    record[me.checkedField] = false
+                }
+            }
+        }
     }
 
     /**
      *
      */
     onStoreFilter() {
-        this.createItems();
+        this.createItems()
     }
 
     /**
      *
      */
     onStoreLoad() {
-        let me = this,
-            listenerId;
+        let me = this;
 
-        if (!me.mounted && me.rendering) {
-            listenerId = me.on('mounted', () => {
-                me.un('mounted', listenerId);
-                me.createItems();
-            });
+        if (!me.mounted && me.isVnodeInitializing) {
+            me.on('mounted', () => {
+                me.createItems()
+            }, me, {once: true});
         } else {
-            me.createItems();
+            me.createItems()
         }
     }
 
     /**
+     * @summary Re-renders the changed record's item at its current index: `data.index` predates the
+     * listeners, and one of them may have re-sorted the Store on the same edit.
      * @param {Object} data
      * @param {Object[]} data.fields Each field object contains the keys: name, oldValue, value
-     * @param {Number} data.index
      * @param {Neo.data.Model} data.model
      * @param {Object} data.record
-     *
      */
     onStoreRecordChange(data) {
-        let me    = this,
-            index = data.index;
+        let me               = this,
+            {fields, record} = data,
+            index            = me.store.indexOf(record);
 
         // ignore changes for records which have not been added to the list yet
         if (index > -1) {
-            me.vdom.cn[index] = me.createItem(data.record, index);
-            me.update();
+            if (me.hasCheckedField(record) && fields?.some(field => field.name === me.checkedField)) {
+                let itemId           = me.getItemId(me.getRecordId(record)),
+                    isChecked        = Boolean(record[me.checkedField]),
+                    {selectionModel} = me;
+
+                if (!me.disableSelection && selectionModel) {
+                    if (isChecked && !selectionModel.isSelected(itemId)) {
+                        selectionModel.select(itemId)
+                    } else if (!isChecked && selectionModel.isSelected(itemId)) {
+                        selectionModel.deselect(itemId)
+                    }
+                }
+            }
+
+            me.vdom.cn[index] = me.createItem(record, index);
+            me.update()
         }
     }
 
@@ -714,18 +1013,85 @@ class Base extends Component {
      * @param {Neo.data.Store} data.scope
      */
     onStoreSort(data) {
-        this.createItems();
+        this.createItems()
+    }
+
+    /**
+     * @summary Seeds selection from checked records without selection events or record writes.
+     * @param {Boolean} [restore=false] Restore annotations on existing items through the normal update path.
+     * @protected
+     */
+    seedCheckedSelection(restore=false) {
+        let me                      = this,
+            {selectionModel, store} = me;
+
+        if (!me.useCheckBoxes || !me.checkedField || me.disableSelection || !selectionModel || !store) return;
+
+        store.forEach(item => {
+            if (me.hasCheckedField(item) && item[me.checkedField]) {
+                let itemId = me.getItemId(me.getRecordId(item));
+
+                if (!selectionModel.isSelected(itemId) && (!selectionModel.singleSelect || selectionModel.items.length === 0)) {
+                    NeoArray.add(selectionModel.items, itemId)
+                }
+            }
+        });
+
+        restore && selectionModel.restoreSelection()
     }
 
     /**
      * Convenience shortcut
-     * @param {Number} index
+     * @param {Number|String} item
      */
-    selectItem(index) {
-        !this.disableSelection && this.selectionModel?.selectAt(index);
+    selectItem(item) {
+        let me = this;
+
+        if (!me.disableSelection) {
+            // Selecting index
+            if (Neo.isNumber(item)) {
+                me.selectionModel?.selectAt(item)
+            }
+            // Selecting record
+            else if (item) {
+                me.selectionModel?.selectAt(me.store.indexOf(item))
+            }
+        }
+    }
+
+    /**
+     *
+     * @param {Number|Object} value
+     * @returns {Promise<void>}
+     */
+    async updateItemFocus(value) {
+        let me           = this,
+            {navigateTo} = Neo.main.addon.Navigator;
+
+        if (me.mounted) {
+            if (Neo.isNumber(value)) {
+                navigateTo({
+                    data    : me.navigator,
+                    target  : me.getHeaderlessIndex(value),
+                    windowId: me.windowId
+                })
+            } else if (value) {
+                navigateTo({
+                    data    : me.navigator,
+                    target  : me.getItemId(me.getRecordId(value)),
+                    windowId: me.windowId
+                })
+            }
+        } else {
+            me.on('mounted', () => {
+                // We could subscribe multiple times before getting mounted,
+                // so only trigger the callback for the last focusIndex
+                if (value === me.focusIndex) {
+                    me.updateItemFocus(me.focusIndex)
+                }
+            }, me, {once: true})
+        }
     }
 }
 
-Neo.applyClassConfig(Base);
-
-export default Base;
+export default Neo.setupClass(List);

@@ -23,6 +23,7 @@ class BooleanContainer extends Container {
         baseCls: ['neo-filter-booleancontainer'],
         /**
          * @member {Object} layout={ntype: 'hbox', align: 'center'}
+         * @reactive
          */
         layout: {ntype: 'hbox', align: 'center'},
         /**
@@ -32,6 +33,7 @@ class BooleanContainer extends Container {
         radioConfig: null,
         /**
          * @member {Boolean|null} value_=null
+         * @reactive
          */
         value_: null
     }
@@ -47,7 +49,7 @@ class BooleanContainer extends Container {
                 component: this,
                 oldValue,
                 value
-            });
+            })
         }
     }
 
@@ -67,25 +69,25 @@ class BooleanContainer extends Container {
 
         me.items = [{
             ...defaults,
-            checked       : me.value === true,
-            fieldValue    : true,
-            valueLabelText: '<i class="fa fa-check"></i>',
+            checked   : me.value === true,
+            fieldValue: true,
+            valueLabel: {tag: 'i', cls: ['fa', 'fa-check']},
             ...me.radioConfig
         }, {
             ...defaults,
-            checked       : me.value === false,
-            fieldValue    : false,
-            valueLabelText: '<i class="fa fa-times"></i>',
+            checked   : me.value === false,
+            fieldValue: false,
+            valueLabel: {tag: 'i', cls: ['fa', 'fa-times']},
             ...me.radioConfig
         }, {
             ...defaults,
-            checked       : me.value === null,
-            fieldValue    : null,
-            valueLabelText: '<i class="fa fa-check"></i> <i class="fa fa-times"></i>',
+            checked   : me.value === null,
+            fieldValue: null,
+            valueLabel: [{tag: 'i', cls: ['fa', 'fa-check']}, {tag: 'i', cls: ['fa', 'fa-times'], style: {marginLeft: '5px'}}],
             ...me.radioConfig
         }];
 
-        super.createItems();
+        super.createItems()
     }
 
     /**
@@ -93,11 +95,9 @@ class BooleanContainer extends Container {
      */
     onRadioChange(data) {
         if (data.value) {
-            this.value = data.component.fieldValue;
+            this.value = data.component.fieldValue
         }
     }
 }
 
-Neo.applyClassConfig(BooleanContainer);
-
-export default BooleanContainer;
+export default Neo.setupClass(BooleanContainer);

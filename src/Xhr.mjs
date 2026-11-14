@@ -18,8 +18,9 @@ class Xhr extends XhrConnection {
          */
         ntype: 'xhr',
         /**
-         * @member {Object} remote={app:['promiseRequest','promiseJson']}
+         * @member {Object} remote={app:['promiseRequest','promiseJson','setDefaultHeaders']}
          * @protected
+         * @reactive
          */
         remote: {
             app: [
@@ -36,6 +37,4 @@ class Xhr extends XhrConnection {
     }
 }
 
-let instance = Neo.applyClassConfig(Xhr);
-
-export default instance;
+export default Neo.setupClass(Xhr);

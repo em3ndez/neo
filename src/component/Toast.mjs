@@ -1,4 +1,4 @@
-import Base         from '../component/Base.mjs';
+import Component    from '../component/Base.mjs';
 import NeoArray     from "../util/Array.mjs";
 import ToastManager from '../manager/Toast.mjs';
 
@@ -11,6 +11,7 @@ import ToastManager from '../manager/Toast.mjs';
             // mandatory
             appName         : this.component.appName,
             msg             : 'Alarm was set to 11:30 for journey into Neo development',
+            windowId        : this.component.windowId
             // optional                        defaults
             closable        : true,         // false
             iconCls         : 'fa fa-bell', // null
@@ -20,7 +21,7 @@ import ToastManager from '../manager/Toast.mjs';
             title           : 'Alarm Clock' // null
         })
  */
-class Toast extends Base {
+class Toast extends Component {
     /**
      * Valid values for positions
      * @member {String[]} positions = ['tl','tc','tr','bl','bc','br']
@@ -52,75 +53,90 @@ class Toast extends Base {
          */
         baseCls: ['neo-toast'],
         /**
-         * If true makes the toast sticky and show a close icon
-         * @member {Boolean} closable=false
+         * True renders a close icon so the user can dismiss the toast manually.
+         * Auto-dismissal after mount is controlled independently by {@link #removeDelay}.
+         * @member {Boolean} closable_=false
+         * @reactive
          */
         closable_: false,
         /**
+         * @member {Boolean} floating=true
+         */
+        floating: true,
+        /**
          * If set, it shows this icon in front of the text
          * e.g. 'fa fa-cog'
-         * @member {String|null} iconCls=null
+         * @member {String|null} iconCls_=null
+         * @reactive
          */
         iconCls_: null,
         /**
          * Limits the width of the Toast
          * @member {Number} maxWidth=250
+         * @reactive
          */
         maxWidth: 250,
         /**
          * Sets the minimum height of the Toast
          * @member {Number} minHeight=50
+         * @reactive
          */
         minHeight: 50,
         /**
          * Your message. You can also pass in an iconCls
          * @member {String|null} msg_=null
+         * @reactive
          */
         msg_: null,
         /**
          * Describes the position of the toast, e.g. bl=bottom-left
          * This creates a cls `noe-toast-position`
-         * @member {'tl'|'tc'|'tr'|'bl'|'bc'|'br'} position='tr'
+         * @member {'tl'|'tc'|'tr'|'bl'|'bc'|'br'} position_='tr'
+         * @reactive
          */
         position_: 'tr',
         /**
          * Describes which direction from which side the toasts slides-in
          * This creates a cls `neo-toast-slide-${direction}-in`
          * @member {'down'|'up'|'left'|'right'} slideDirection_='right'
+         * @reactive
          */
         slideDirection_: 'right',
         /**
          * Adds a title to the toast
          * @member {Number} title_=null
+         * @reactive
          */
         title_: null,
         /**
          * @member {String|null} title=null
+         * @reactive
          */
         vdom:
-        {cn: [{
-            cls: 'neo-toast-inner', cn: [
+        {cn: [
+            {cls: 'neo-toast-inner', cn: [
                 {cls: ['neo-toast-icon'], removeDom: true},
                 {cls: 'neo-toast-text', cn: [
                     {cls: ['neo-toast-title'], removeDom: true},
                     {cls: 'neo-toast-msg'}
                 ]},
                 {cls: ['neo-toast-close', 'fa', 'fa-close'], removeDom: true}
-            ]
-        }]}
+            ]}
+        ]}
     }
 
+    /**
+     * Timeout in ms after which a mounted toast is automatically dismissed.
+     * Set to `0` or `null` to disable auto-dismissal (sticky toast).
+     * @member {Number|null} removeDelay=3000
+     */
+    removeDelay = 3000
     /**
      * Used by the ToastManager
      * @member {Boolean} running=false
      * @private
      */
     running = false
-    /**
-     * Timeout in ms after which the toast is removed
-     * @member {Number} timeout=3000
-     */
-    timeout = 3000
 
     /**
      * @param {Object} config
@@ -135,17 +151,18 @@ class Toast extends Base {
             {click: {fn: me.destroy, delegate: '.neo-toast-close', scope: me}}
         ]);
 
-        ToastManager.register(me);
+        ToastManager.register(me)
     }
 
     /**
-     * @param {String|null} value
-     * @param {String|null} oldValue
+     * @param {Boolean} value
+     * @param {Boolean} oldValue
      */
     afterSetClosable(value, oldValue) {
         let vdom = this.getVdomInner().cn[2];
 
         vdom.removeDom = !value;
+        oldValue !== undefined && this.update()
     }
 
     /**
@@ -154,10 +171,10 @@ class Toast extends Base {
      */
     afterSetIconCls(value, oldValue) {
         let vdom  = this.getVdomInner().cn[0],
-            cls   = vdom.cls;
+            {cls} = vdom;
 
         vdom.removeDom = Neo.isEmpty(value);
-        NeoArray[value ? 'add' : 'remove'](cls, value);
+        NeoArray[value ? 'add' : 'remove'](cls, value)
     }
 
     /**
@@ -170,7 +187,7 @@ class Toast extends Base {
     afterSetMsg(value, oldValue) {
         let vdom = this.getTextRootVdom().cn[1];
 
-        vdom.innerHTML = value;
+        vdom.text = value
     }
 
     /**
@@ -192,7 +209,8 @@ class Toast extends Base {
     }
 
     /**
-     * Close the toast after the mounted if not closable
+     * Automatically dismisses the toast after {@link #removeDelay} ms when mounted,
+     * regardless of {@link #closable}, as long as `removeDelay > 0`.
      * @param {Boolean} value
      * @param {Boolean} oldValue
      */
@@ -201,10 +219,12 @@ class Toast extends Base {
 
         let me = this;
 
-        if (!me.closable && value) {
-            setTimeout(() => {
-                this.destroy(true);
-            }, me.timeout)
+        if (value && me.removeDelay > 0) {
+            me.trap(me.timeout(me.removeDelay)).then(() => {
+                if (!me.isDestroyed && !me.isDestroying && !me.cls.includes('neo-toast-fade-out')) {
+                    me.destroy(true)
+                }
+            }).catch(() => {})
         }
     }
 
@@ -216,8 +236,10 @@ class Toast extends Base {
         let vdom = this.getTextRootVdom().cn[0];
 
         vdom.removeDom = Neo.isEmpty(value);
-        vdom.innerHTML = value;
-        NeoArray[value ? 'add' : 'remove'](vdom.cls, 'neo-toast-has-title');
+        vdom.text      = value;
+        NeoArray.toggle(vdom.cls, 'neo-toast-has-title', value);
+
+        this.update()
     }
 
     /**
@@ -227,7 +249,7 @@ class Toast extends Base {
      * @protected
      */
     beforeSetPosition(value, oldValue) {
-        return this.beforeSetEnumValue(value, oldValue, 'position');
+        return this.beforeSetEnumValue(value, oldValue, 'position')
     }
 
     /**
@@ -237,14 +259,21 @@ class Toast extends Base {
      * @protected
      */
     beforeSetSlideDirection(value, oldValue) {
-        return this.beforeSetEnumValue(value, oldValue, 'slideDirection');
+        return this.beforeSetEnumValue(value, oldValue, 'slideDirection')
     }
 
     /**
-     *
+     * Initiates the toast fade-out sequence and unregisters/destroys the instance on `animationend`.
+     * Guards against duplicate invocations when manual close and {@link #removeDelay} overlap.
+     * @param {...*} args
      */
     async destroy(...args) {
         let me = this;
+
+        if (me.isDestroyed || me.cls.includes('neo-toast-fade-out')) {
+            return
+        }
+
         const superDestroy = super.destroy.bind(me);
 
         me.addDomListeners({
@@ -263,7 +292,7 @@ class Toast extends Base {
      * @returns {Object} vdom
      */
     getTextRootVdom() {
-        return this.getVdomInner().cn[1];
+        return this.getVdomInner().cn[1]
     }
 
     /**
@@ -271,10 +300,8 @@ class Toast extends Base {
      * @returns {Object} vdom
      */
     getVdomInner() {
-        return this.vdom.cn[0];
+        return this.vdom.cn[0]
     }
 }
 
-Neo.applyClassConfig(Toast);
-
-export default Toast;
+export default Neo.setupClass(Toast);

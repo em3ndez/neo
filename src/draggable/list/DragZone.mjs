@@ -32,10 +32,10 @@ class DragZone extends BaseDragZone {
     construct(config) {
         super.construct(config);
 
-        let me    = this,
-            owner = me.owner,
-            opts  = {delegate: '.neo-draggable', scope: me},
-            store = owner.store;
+        let me      = this,
+            {owner} = me,
+            opts    = {delegate: '.neo-draggable', scope: me},
+            {store} = owner;
 
         owner.addDomListeners([
             {'drag:end'  : me.onDragEnd,   ...opts},
@@ -49,7 +49,7 @@ class DragZone extends BaseDragZone {
 
         // check if the store is already loaded
         if (store.getCount() > 0) {
-            me.onStoreLoad();
+            me.onStoreLoad()
         }
     }
 
@@ -57,21 +57,21 @@ class DragZone extends BaseDragZone {
      * @param {Boolean} draggable
      */
     adjustListItemCls(draggable) {
-        let me    = this,
-            owner = me.owner,
-            store = owner.store,
+        let me      = this,
+            {owner} = me,
+            {store} = owner,
             node;
 
-        store.items.forEach((record, index) => {
+        store.forEach((record, index) => {
             node = me.getItemVdom(record, index);
 
             if (node) {
                 node.cls = node.cls || [];
-                NeoArray[draggable ? 'add' : 'remove'](node.cls, 'neo-draggable');
+                NeoArray[draggable ? 'add' : 'remove'](node.cls, 'neo-draggable')
             }
         });
 
-        owner.update();
+        owner.update()
     }
 
     /**
@@ -80,7 +80,7 @@ class DragZone extends BaseDragZone {
      * @returns {Object|null} vdom
      */
     getItemVdom(record, index) {
-        return this.owner.vdom.cn[index];
+        return this.owner.vdom.cn[index]
     }
 
     /**
@@ -98,28 +98,28 @@ class DragZone extends BaseDragZone {
             proxy.cls = cls;
 
             // ensure to get into the next animation frame
-            setTimeout(() => {
+            me.timeout(30).then(() => {
                 wrapperStyle.left = `${rect.left}px`;
                 wrapperStyle.top  = `${rect.top}px`;
 
                 proxy.wrapperStyle = wrapperStyle;
 
-                setTimeout(() => {
-                    me.dragEnd();
-                }, 300);
-            }, 30);
+                me.timeout(300).then(() => {
+                    me.dragEnd()
+                })
+            })
         }
     }
 
     /**
      * @param {Object} data
      */
-    onDragStart(data) {
+    async onDragStart(data) {
         let me = this;
 
         if (me.owner.draggable) {
-            me.dragElement = VDomUtil.findVdomChild(me.owner.vdom, data.path[0].id).vdom;
-            me.dragStart(data);
+            me.dragElement = VDomUtil.find(me.owner.vdom, data.path[0].id).vdom;
+            await me.dragStart(data)
         }
     }
 
@@ -127,7 +127,7 @@ class DragZone extends BaseDragZone {
      *
      */
     onStoreLoad() {
-        this.adjustListItemCls(true);
+        this.adjustListItemCls(true)
     }
 
     /**
@@ -135,15 +135,15 @@ class DragZone extends BaseDragZone {
      */
     setData(data={}) {
         let me       = this,
-            owner    = me.owner,
-            recordId = owner.getItemRecordId(me.getDragElementRoot().id);
+            {owner}  = me,
+            {store}  = owner,
+            recordId = owner.getItemRecordId(me.getDragElementRoot().id),
+            record   = store.get(recordId);
 
-        data.record = owner.store.get(recordId);
+        data.record = record;
 
-        super.setData(data);
+        super.setData(data)
     }
 }
 
-Neo.applyClassConfig(DragZone);
-
-export default DragZone;
+export default Neo.setupClass(DragZone);

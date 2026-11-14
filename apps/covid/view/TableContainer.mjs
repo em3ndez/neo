@@ -27,10 +27,12 @@ class TableContainer extends Container {
         },
         /**
          * @member {Neo.controller.Component|null} controller=TableContainerController
+         * @reactive
          */
         controller: TableContainerController,
         /**
          * @member {Object} countryRecord_=null
+         * @reactive
          */
         countryRecord_: null,
         /**
@@ -48,6 +50,7 @@ class TableContainer extends Container {
         tableConfig: null,
         /**
          * @member {Object|null} layout={ntype: 'hbox', align: 'stretch'}
+         * @reactive
          */
         layout: {ntype: 'hbox', align: 'stretch'},
         /**
@@ -127,7 +130,7 @@ class TableContainer extends Container {
                         reference: 'line-chart',
                     }],
 
-                    tabButtonConfig: {
+                    header: {
                         iconCls: 'fa fa-chart-line',
                         text   : 'Chart'
                     }
@@ -150,7 +153,7 @@ class TableContainer extends Container {
             parentId : me.id,
             reference: 'historical-data-table',
 
-            tabButtonConfig: {
+            header: {
                 iconCls: 'fa fa-table',
                 text   : 'Table'
             },
@@ -178,12 +181,12 @@ class TableContainer extends Container {
      * @protected
      */
     afterSetCountryRecord(value, oldValue) {
-        setTimeout(() => {
-            this.controller.onCountryChange(value);
-        }, this.isConstructed ? 0 : 50);
+        let me = this;
+
+        me.timeout(me.isConstructed ? 0 : 50).then(() => {
+            me.controller.onCountryChange(value)
+        })
     }
 }
 
-Neo.applyClassConfig(TableContainer);
-
-export default TableContainer;
+export default Neo.setupClass(TableContainer);

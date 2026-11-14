@@ -1,10 +1,10 @@
-import Base      from '../../core/Base.mjs';
-import DomAccess from '../DomAccess.mjs'
+import Base      from './Base.mjs';
+import DomAccess from '../DomAccess.mjs';
+
 /**
  * Addon for Popover
  * @class Neo.main.addon.Popover
- * @extends Neo.core.Base
- * @singleton
+ * @extends Neo.main.addon.Base
  */
 class Popover extends Base {
     static config = {
@@ -17,6 +17,7 @@ class Popover extends Base {
          * Remote method access for other workers
          * @member {Object} remote={app: [//...]}
          * @protected
+         * @reactive
          */
         remote: {
             app: [
@@ -24,12 +25,7 @@ class Popover extends Base {
                 'show',
                 'toggle'
             ]
-        },
-        /**
-         * @member {Boolean} singleton=true
-         * @protected
-         */
-        singleton: true
+        }
     }
 
     /**
@@ -39,7 +35,7 @@ class Popover extends Base {
      */
     hide(data) {
         this.getPopover(data.id).hidePopover();
-        return true;
+        return true
     }
 
     /**
@@ -49,7 +45,7 @@ class Popover extends Base {
      */
     show(data) {
         this.getPopover(data.id).showPopover();
-        return true;
+        return true
     }
 
     /**
@@ -59,17 +55,14 @@ class Popover extends Base {
      */
     toggle(data) {
         this.getPopover(data.id).togglePopover();
-        return true;
+        return true
     }
 
     getPopover(parentId) {
-        const parent = document.getElementById(parentId),
-              popover = document.getElementById(parent.getAttribute('popovertarget'));
+        const parent = DomAccess.getElement(parentId);
 
-        return popover;
+        return DomAccess.getElement(parent.getAttribute('popovertarget'))
     }
 }
 
-let instance = Neo.applyClassConfig(Popover);
-
-export default instance;
+export default Neo.setupClass(Popover);

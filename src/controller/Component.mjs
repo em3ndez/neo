@@ -1,5 +1,5 @@
-import Base   from './Base.mjs';
-import Logger from '../util/Logger.mjs';
+import Base              from './Base.mjs';
+import {resolveCallback} from '../util/Function.mjs';
 
 /**
  * @class Neo.controller.Component
@@ -24,13 +24,18 @@ class Component extends Base {
         component: null,
         /**
          * @member {Neo.controller.Component|null} parent_=null
+         * @reactive
          */
         parent_: null,
         /**
          * @member {Object} references=null
          * @protected
          */
-        references: null
+        references: null,
+        /**
+         * @member {String|null} windowId=null
+         */
+        windowId: null
     }
 
     /**
@@ -39,19 +44,17 @@ class Component extends Base {
     construct(config) {
         super.construct(config);
 
-        let me        = this,
-            component = me.component,
-            listenerId;
+        let me          = this,
+            {component} = me;
 
         me.references = {};
 
         if (component.isConstructed) {
             me.onComponentConstructed()
         } else {
-            listenerId = component.on('constructed', () => {
-                component.un('constructed', listenerId);
+            component.on('constructed', () => {
                 me.onComponentConstructed()
-            });
+            }, me, {once: true})
         }
     }
 
@@ -67,25 +70,28 @@ class Component extends Base {
 
     /**
      * @param {String} handlerName
-     * @returns {Neo.controller.Component|null}
+     * @param {Neo.component.Base|null} [component]
+     * @returns {Neo.controller.Component|Boolean|null}
      */
-    getHandlerScope(handlerName) {
-        let me     = this,
-            parent = me.parent;
+    getHandlerScope(handlerName, component) {
+        let me       = this,
+            {parent} = me,
+            handlerCb;
+
+        if (component) {
+            // Look for ths function *name* first in the Component itself.
+            // If we find it, return true so calling code knows not to continue to search.
+            handlerCb = resolveCallback(handlerName, component);
+
+            // Handler fn is resolved in the Component or its own parent chain.
+            // Return a status indicating that we do not need an early binding
+            if (handlerCb.fn) {
+                return true
+            }
+        }
 
         return Neo.isFunction(me[handlerName]) ?
-            me : parent ?
-            parent.getHandlerScope(handlerName) : null;
-    }
-
-    /**
-     * sameLevelOnly=false will return the closest VM inside the component parent tree,
-     * in case there is none on the same level.
-     * @param {Boolean} [sameLevelOnly=false]
-     */
-    getModel(sameLevelOnly=false) {
-        let component = this.component;
-        return sameLevelOnly ? component.model : component.getModel()
+            me : parent?.getHandlerScope(handlerName) || null
     }
 
     /**
@@ -93,17 +99,14 @@ class Component extends Base {
      * @returns {Neo.controller.Component|null}
      */
     getParent() {
-        let me = this,
-            parentComponent, parentId;
+        let me       = this,
+            {parent} = me;
 
-        if (me.parent) {
-            return me.parent;
+        if (parent) {
+            return parent
         }
 
-        parentId        = me.component.parentId;
-        parentComponent = parentId && Neo.getComponent(parentId);
-
-        return parentComponent?.getController() || null
+        return me.component.parent?.getController() || null
     }
 
     /**
@@ -127,129 +130,65 @@ class Component extends Base {
     }
 
     /**
+     * Convenience shortcut
+     * @param args
+     * @returns {*}
+     */
+    getState(...args) {
+        return this.getStateProvider().getData(...args)
+    }
+
+    /**
+     * sameLevelOnly=false will return the closest stateProvider inside the component parent tree,
+     * in case there is none on the same level.
+     * @param {Boolean} [sameLevelOnly=false]
+     */
+    getStateProvider(sameLevelOnly=false) {
+        let {component} = this;
+        return sameLevelOnly ? component.stateProvider : component.getStateProvider()
+    }
+
+    /**
+     * Convenience shortcut for accessing state.Provider based data.Stores
+     * @param {String} key
+     * @returns {Neo.data.Store}
+     */
+    getStore(key) {
+        return this.getStateProvider().getStore(key)
+    }
+
+    /**
      * Override this method inside your view controllers as a starting point in case you need references
      * (instead of using onConstructed() inside your controller)
      */
     onComponentConstructed() {}
 
     /**
-     * @param {Neo.component.Base} component=this.component
-     */
-    parseConfig(component=this.component) {
-        let me        = this,
-            handler   = component.handler,
-            listeners = component.listeners,
-            reference = component.reference,
-            validator = component.validator,
-            eventHandler, handlerScope;
-
-        if (handler && typeof handler === 'string') {
-            handlerScope = me.getHandlerScope(handler);
-
-            component.handler = handlerScope[handler].bind(component.handlerScope || handlerScope)
-        }
-
-        if (listeners) {
-            Object.entries(listeners).forEach(([key, value]) => {
-                if (key !== 'scope' && key !== 'delegate') {
-                    if (Neo.isString(value)) {
-                        eventHandler = value;
-                        handlerScope = me.getHandlerScope(eventHandler);
-
-                        if (!handlerScope) {
-                            Logger.logError('Unknown event handler for', eventHandler, component)
-                        } else {
-                            listeners[key] = {};
-                            listeners[key].fn = handlerScope[eventHandler].bind(handlerScope)
-                        }
-                    } else {
-                        value.forEach(listener => {
-                            if (Neo.isObject(listener) && listener.hasOwnProperty('fn') && Neo.isString(listener.fn)) {
-                                eventHandler = listener.fn;
-                                handlerScope = me.getHandlerScope(eventHandler);
-
-                                if (!handlerScope) {
-                                    Logger.logError('Unknown event handler for', eventHandler, component)
-                                } else {
-                                    listener.fn = handlerScope[eventHandler].bind(handlerScope)
-                                }
-                            }
-                        });
-                    }
-                }
-            });
-        }
-
-        if (Neo.isString(validator)) {
-            handlerScope = me.getHandlerScope(validator);
-
-            if (!handlerScope) {
-                Logger.logError('Unknown validator for', component.id, component)
-            } else {
-                component.validator = handlerScope[validator].bind(handlerScope)
-            }
-        }
-
-        if (reference) {
-            me.references[reference] = component
-        }
-    }
-
-    /**
-     * @param {Neo.component.Base} component=this.component
-     */
-    parseDomListeners(component=this.component) {
-        let me           = this,
-            domListeners = component.domListeners,
-            eventHandler, scope;
-
-        if (domListeners) {
-            domListeners.forEach(domListener => {
-                Object.entries(domListener).forEach(([key, value]) => {
-                    eventHandler = null;
-
-                    if (key !== 'scope' && key !== 'delegate') {
-                        if (Neo.isString(value)) {
-                            eventHandler = value;
-                        } else if (Neo.isObject(value) && value.hasOwnProperty('fn') && Neo.isString(value.fn)) {
-                            eventHandler = value.fn;
-                        }
-
-                        if (eventHandler) {
-                            scope = me.getHandlerScope(eventHandler);
-
-                            if (!scope) {
-                                Logger.logError('Unknown domEvent handler for', eventHandler, component)
-                            } else {
-                                domListener[key] = scope[eventHandler].bind(scope)
-                            }
-                        }
-                    }
-                })
-            })
-        }
-    }
-
-    /**
      * Will get called by component.Base: destroy() in case the component has a reference config
      * @param {Neo.component.Base} component
      */
     removeReference(component) {
-        let me = this,
-            references = me.references,
+        let me           = this,
+            {references} = me,
             key;
 
         for (key in references) {
             if (component === references[key]) {
                 delete references[key];
-                break;
+                break
             }
         }
 
         me.getParent()?.removeReference(component)
     }
+
+    /**
+     * Convenience shortcut
+     * @param args
+     */
+    setState(...args) {
+        this.getStateProvider().setData(...args)
+    }
 }
 
-Neo.applyClassConfig(Component);
-
-export default Component;
+export default Neo.setupClass(Component);

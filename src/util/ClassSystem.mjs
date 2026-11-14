@@ -14,34 +14,35 @@ class ClassSystem extends Base {
     }
 
     /**
-     * can get used inside beforeSet methods in case you want to create instances like stores
+     * Can get used inside beforeSet methods in case you want to create instances like stores
+     * @summary Normalizes a config object, class, or instance into a Neo.core.Base instance, applying DefaultClass when module, className, and ntype are omitted.
      * @param {Object|Neo.core.Base|null} config
      * @param {Neo.core.Base|String} [DefaultClass=null]
      * @param {Object} [defaultValues={}]
      * @returns {Neo.core.Base} instance
      */
     static beforeSetInstance(config, DefaultClass=null, defaultValues={}) {
-        let isInstance = config instanceof Neo.core.Base;
+        let configType = Neo.typeOf(config);
 
         if (Neo.isString(DefaultClass)) {
-            DefaultClass = Neo.ns(DefaultClass);
+            DefaultClass = Neo.ns(DefaultClass)
         }
 
         if (!config && DefaultClass) {
-            config = Neo.create(DefaultClass, defaultValues);
-        } else if (config?.isClass) {
-            config = Neo.create(config, defaultValues);
-        } else if (Neo.isObject(config) && !isInstance) {
+            config = Neo.create(DefaultClass, defaultValues)
+        } else if (configType === 'NeoClass') {
+            config = Neo.create(config, defaultValues)
+        } else if (configType === 'Object') {
             if (config.ntype) {
                 config = Neo.ntype({
                     ...defaultValues,
                     ...config
-                });
+                })
             } else {
-                const newConfig = {};
+                let newConfig = {};
 
-                if (DefaultClass) {
-                    newConfig.module = DefaultClass;
+                if (DefaultClass && !config.className) {
+                    newConfig.module = DefaultClass
                 }
 
                 Object.assign(newConfig, {
@@ -49,18 +50,16 @@ class ClassSystem extends Base {
                     ...config
                 });
 
-                config = Neo.create(newConfig);
+                config = Neo.create(newConfig)
             }
-        } else if (isInstance) {
+        } else if (configType === 'NeoInstance') {
             if (defaultValues?.listeners) {
-                config.on(defaultValues.listeners);
+                config.on(defaultValues.listeners)
             }
         }
 
-        return config;
+        return config
     }
 }
 
-Neo.applyClassConfig(ClassSystem);
-
-export default ClassSystem;
+export default Neo.setupClass(ClassSystem);

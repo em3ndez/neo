@@ -1,14 +1,118 @@
-import Base            from '../collection/Base.mjs';
+import {internalId}    from '../core/ConfigSymbols.mjs';
 import ClassSystemUtil from '../util/ClassSystem.mjs';
+import Collection      from '../collection/Base.mjs';
+import Filter          from '../collection/Filter.mjs';
 import Model           from './Model.mjs';
 import Observable      from '../core/Observable.mjs';
+import Pipeline        from './Pipeline.mjs';
 import RecordFactory   from './RecordFactory.mjs';
+import SearchFilter    from '../collection/SearchFilter.mjs';
+import StoreManager    from '../manager/Store.mjs';
+
+const
+    initialIndexSymbol   = Symbol.for('initialIndex'),
+    noValueSymbol        = Symbol.for('noValue'),
+    ownValuesSymbol      = Symbol.for('ownValues'),
+    updatingIndexSymbol  = Symbol.for('updatingIndex'),
+    pushInsertStrategies = new Set(['insert', 'reload', 'reloadWhenUncertain', 'upsert']),
+    // Model field types whose values a SearchFilter can match as text without a fieldText hook
+    plainTextFieldTypes  = new Set(['auto', 'boolean', 'float', 'int', 'integer', 'number', 'string']);
 
 /**
  * @class Neo.data.Store
  * @extends Neo.collection.Base
+ * @mixes Neo.core.Observable
+ *
+ * @summary A powerful, observable collection that manages a set of data records.
+ *
+ * Neo.data.Store is the central data management class in the framework. It handles the lifecycle of
+ * data records, including loading, filtering, sorting, and synchronization with backend APIs.
+ *
+ * ### Record Instantiation Strategies: Eager vs. Lazy ("Turbo Mode")
+ *
+ * The Store supports two distinct strategies for handling record creation, controlled by the `autoInitRecords` config
+ * (which defaults to `true`) and the `init` parameter in methods like `add()` and `insert()`.
+ *
+ * **1. Eager Instantiation (Default: `autoInitRecords: true`)**
+ *    - **Behavior**: Raw data objects are immediately converted into `Neo.data.Model` instances.
+ *    - **Use Case**: Standard operations, adding single items, interactive edits.
+ *    - **Pros**: Returns usable Record instances immediately. High Developer Experience (DX).
+ *    - **Cons**: Can be slow for massive datasets (10k+ records).
+ *
+ * **2. Lazy Instantiation ("Turbo Mode")**
+ *    - **Behavior**: Raw data objects are stored directly. `Neo.data.Model` instances are created
+ *      "just-in-time" only when they are accessed via `get()`, `getAt()`, or iteration.
+ *    - **Use Case**: Bulk loading large datasets (e.g., grids, charts with thousands of points).
+ *    - **Pros**: Massive performance gains for initial data load. Enables internal "chunking" to prevent UI freezes.
+ *    - **Cons**: `add()` returns a count instead of records. Records are not available until accessed.
+ *    - **How to enable**:
+ *      - **Global**: Set `autoInitRecords: false` on the Store config.
+ *      - **Per-call**: Pass `false` as the second argument to `add()` or `insert()`.
+ *      ```javascript
+ *      // Global setting
+ *      Neo.create(Store, {
+ *          autoInitRecords: false,
+ *          data: hugeArrayOfData
+ *      });
+ *
+ *      // Per-call override
+ *      store.add(hugeArrayOfData, false);
+ *      ```
+ *
+ * ### Soft Hydration & Field Dependencies
+ *
+ * When operating in Turbo Mode (`autoInitRecords: false`), the Store sorts and filters using raw JSON objects.
+ * If a sort or filter operation requires a calculated field that isn't present on the raw object, the Store
+ * performs **Soft Hydration** via `resolveField()`. It derives the field's value the way the row's record will
+ * (`Neo.data.RecordFactory#deriveRecordData()`: the record's own mapping and default pass, on a copy) and keeps
+ * it on the raw object under the field's name, where sorters and filters read it. The row remembers its own value
+ * under that name, and the record created from it later parses that, never the kept one: a row's record never
+ * depends on what read the row before it.
+ *
+ * If a calculated field relies on other calculated fields, the Model definition must declare a `depends: []` array.
+ * The Store uses this array to recursively resolve and cache all dependencies before executing the main calculation,
+ * preventing severe performance bottlenecks (like redundant array reductions).
+ *
+ * ### Progressive Loading (Streaming)
+ *
+ * When using a `parser` (e.g., {@link Neo.data.parser.Stream}), the Store supports **Progressive Loading**.
+ * Instead of waiting for the entire dataset to load, the Store updates itself incrementally as chunks of data arrive.
+ *
+ * - **Events:** The `load` event fires multiple times (once per chunk) with the cumulative `total`.
+ * - **UI Integration:** Components like `Neo.grid.Container` listen to these events to update their scrollbars and render rows immediately.
  */
-class Store extends Base {
+class Store extends Collection {
+    /**
+     * @member {Boolean} #appendNotification=false Synchronous load-commit continuation context.
+     * @private
+     */
+    #appendNotification = false;
+    /**
+     * Record notifications deferred while an opted-in key transaction commits its maps.
+     * @member {Map} #keyChanges=new Map()
+     * @private
+     */
+    #keyChanges = new Map();
+    /**
+     * True while the current Model was created by this Store from a class or config; a passed instance stays its
+     * owner's to retire.
+     * @member {Boolean} #ownsModel=false
+     * @private
+     */
+    #ownsModel = false;
+    /**
+     * @member {Number} #pendingLoads=0 Outstanding load invocations, including transport readiness.
+     * @private
+     */
+    #pendingLoads = 0;
+    /** @member {Set<Function>} #streamingReads Read handlers that have received progressive data. @private */
+    #streamingReads = new Set();
+    /**
+     * @member {Boolean} #sortingRecordChange=false Prevents derived tree statistics from recursively sorting.
+     * @private
+     */
+    #sortingRecordChange = false;
+
     /**
      * True automatically applies the core.Observable mixin
      * @member {Boolean} observable=true
@@ -42,24 +146,34 @@ class Store extends Base {
          * @example
          * api: 'MyApp.backend.UserService'
          * @member {Object|String|null} api_=null
+         * @reactive
          */
         api_: null,
+        /**
+         * True to automatically create record instances when adding items.
+         * Set to false to enable "Turbo Mode" (Lazy Instantiation) globally for this store.
+         * @member {Boolean} autoInitRecords=true
+         */
+        autoInitRecords: true,
         /**
          * @member {Boolean} autoLoad=false
          */
         autoLoad: false,
         /**
          * @member {Number} currentPage_=1
+         * @reactive
          */
         currentPage_: 1,
         /**
          * @member {Array|null} data_=null
+         * @reactive
          */
         data_: null,
         /**
-         * @member {Array|null} initialData_=null
+         * The initial chunk size for adding large datasets. Set to 0 to disable chunking.
+         * @member {Number} initialChunkSize=0
          */
-        initialData_: null,
+        initialChunkSize: 0,
         /**
          * @member {Boolean} isGrouped=false
          */
@@ -73,14 +187,47 @@ class Store extends Base {
          */
         isLoading: false,
         /**
+         * True while any load() invocation is pending. Consumers observe this state; Store owns its writes.
+         * Unlike isLoading, first progressive data does not clear it, and local data edits do not set it.
+         * @member {Boolean} isLoadPending_=false
+         * @readonly
+         * @reactive
+         */
+        isLoadPending_: false,
+        /**
+         * True while an active Pipeline read has delivered progressive data. Store owns this state in either
+         * execution realm; later chunks preserve the current view, and settlement releases only that read.
+         * @member {Boolean} isStreaming=false
+         * @readonly
+         */
+        isStreaming: false,
+        /**
          * @member {Neo.data.Model} model_=null
+         * @reactive
          */
         model_: null,
         /**
          * Use a value of 0 to not limit the pageSize
          * @member {Number} pageSize_=0
+         * @reactive
          */
         pageSize_: 0,
+        /**
+         * @member {Object|Neo.data.Pipeline|null} pipeline_=null
+         * @reactive
+         */
+        pipeline_: null,
+        /**
+         * Controls how unknown keyed pipeline pushes are handled.
+         *
+         * The default keeps the conservative existing behavior and ignores unknown ids. `insert` and
+         * `upsert` add unknown records only when the Store owns its local projection. `reload` always
+         * reloads for unknown ids. `reloadWhenUncertain` inserts locally, but reloads instead when
+         * remote filtering, remote sorting, or pagination means the pushed record cannot prove visible
+         * membership or order.
+         * @member {Boolean|String} pushInsertStrategy=false
+         */
+        pushInsertStrategy: false,
         /**
          * True to let the backend handle the filtering.
          * Useful for buffered stores
@@ -104,6 +251,11 @@ class Store extends Base {
          */
         totalCount: 0,
         /**
+         * True to track internalIds in a separate map for O(1) lookup
+         * @member {Boolean} trackInternalId=true
+         */
+        trackInternalId: true,
+        /**
          * Url for Ajax requests
          * @member {String|null} url=null
          */
@@ -114,25 +266,125 @@ class Store extends Base {
      * @param {Object} config
      */
     construct(config) {
+        config = config || {};
+        config.itemFactory = this.assignInternalId.bind(this);
+
         super.construct(config);
 
         let me = this;
 
-        // todo
         me.on({
             mutate: me.onCollectionMutate,
             sort  : me.onCollectionSort,
             scope : me
         });
+
+        StoreManager.register(me)
     }
 
     /**
-     * Overrides collection.Base: add() to convert items into records if needed
-     * @param {Array|Object} item The item(s) to add
-     * @returns {Number} the collection count
+     * Aborts the current parser operation if the parser supports it.
      */
-    add(item) {
-        return super.add(this.beforeSetData(item));
+    abort() {
+        this.pipeline?.parser?.abort?.()
+    }
+
+    /**
+     * Overrides collection.Base: add() to convert items into records if needed.
+     *
+     * **1. Eager Mode (`init=true` - Default):**
+     * Immediately converts raw data into `Neo.data.Model` instances.
+     * Returns an `Array` of the created records.
+     *
+     * **2. Lazy Mode (`init=false`):**
+     * Adds raw data directly for maximum performance. Instantiates records only on access.
+     *
+     * - **Chunking Active**: If `initialChunkSize > 0` and `items.length > threshold`:
+     *   Adds items in chunks to prevent blocking the App Worker (Main Actor).
+     *   Returns the new collection `count` (Number).
+     *
+     * - **No Chunking**: If `initialChunkSize === 0` or `items.length <= threshold`:
+     *   Adds raw items directly.
+     *   Returns an `Array` of the added raw data objects.
+     *
+     * @example
+     * // 1. Default: Get records immediately
+     * const [newRecord] = store.add({name: 'New Item'});
+     *
+     * @example
+     * // 2. Turbo Mode (No Chunking): Get raw objects
+     * const [rawObject] = store.add({name: 'Item'}, false);
+     *
+     * @example
+     * // 3. Turbo Mode (Chunking): Get new count
+     * store.initialChunkSize = 1000;
+     * const newCount = store.add(hugeDataArray, false);
+     *
+     * @param {Array|Object} item The item(s) to add
+     * @param {Boolean} [init=this.autoInitRecords] True to return the created records, false for "Turbo Mode"
+     * @returns {Number|Object[]|Neo.data.Model[]} The collection count, raw items, or created records
+     */
+    add(item, init=this.autoInitRecords) {
+        let me        = this,
+            items     = Array.isArray(item) ? item : [item],
+            threshold = me.initialChunkSize;
+
+        if (init) {
+            const prepared = me.prepareAddedItems(items);
+
+            super.add(prepared);
+
+            me.isLoaded = true;
+
+            // the VISIBLE instance per key: the existing record for a duplicate, null for a row an
+            // active filter hides
+            return prepared.map(i => me.get(me.getKey(i)))
+        }
+
+        if (threshold > 0 && items.length > threshold) {
+            const total = me.count + items.length,
+                  chunk = items.splice(0, threshold);
+
+            me.chunkingTotal = total;
+
+            // 1. Add the first chunk. This fires 'mutate' -> 'load' (via onCollectionMutate)
+            //    and triggers the initial grid render. The 'load' event will contain the final total count.
+            super.add(chunk); // Pass raw chunk directly
+
+            // 2. Suspend events to prevent the next 'add' from firing 'load'.
+            me.suspendEvents = true;
+
+            // 3. Add the rest of the items silently.
+            super.add(items); // Pass raw items directly
+
+            // 4. Resume events.
+            me.suspendEvents = false;
+
+            // 5. Manually fire a final 'load' event to update the grid's scrollbar and notify other listeners.
+            me.fire('load', {items: me.items, postChunkLoad: true, total: me.chunkingTotal});
+
+            delete me.chunkingTotal;
+
+            return me.count
+        }
+
+        const returnValue = super.add(items);
+
+        // If we use add() initially instead of setting `data`, we need to set the loaded flag here.
+        me.isLoaded = true;
+
+        return returnValue // Pass raw item directly
+    }
+
+    /**
+     * @summary Adds loaded items while marking their synchronous collection notification as a continuation.
+     * @param {Array|Object} items
+     * @param {Boolean} [append=false]
+     * @returns {Number|Object[]|Neo.data.Model[]}
+     * @private
+     */
+    addLoadedItems(items, append=false) {
+        return this.#notifyAs(append, () => this.add(items))
     }
 
     /**
@@ -142,7 +394,7 @@ class Store extends Base {
      * @protected
      */
     afterSetCurrentPage(value, oldValue) {
-        oldValue && this.load();
+        oldValue && this.load()
     }
 
     /**
@@ -156,12 +408,12 @@ class Store extends Base {
         if (me.configsApplied) {
             if (value) {
                 if (oldValue) {
-                    me.clear();
-                } else {
-                    me.initialData = [...value];
+                    me.clear()
                 }
 
-                me.add(value);
+                me.isLoading = false;
+
+                me.add(value, me.autoInitRecords)
             }
         }
     }
@@ -178,16 +430,7 @@ class Store extends Base {
 
         me._currentPage = 1; // silent update
 
-        oldValue && me.remoteFilter && me.load();
-    }
-
-    /**
-     * @param value
-     * @param oldValue
-     * @protected
-     */
-    afterSetInitialData(value, oldValue) {
-        // console.log('afterSetInitialData', value, oldValue);
+        oldValue && me.remoteFilter && me.load()
     }
 
     /**
@@ -197,8 +440,7 @@ class Store extends Base {
      */
     afterSetModel(value, oldValue) {
         if (value) {
-            value.storeId = this.id;
-            RecordFactory.createRecordClass(value);
+            value.storeId = this.id
         }
     }
 
@@ -211,8 +453,20 @@ class Store extends Base {
     afterSetPageSize(value, oldValue) {
         if (oldValue) {
             this._currentPage = 1; // silent update
-            this.load();
+            this.load()
         }
+    }
+
+    /**
+     * @param {Neo.data.Pipeline|null} value
+     * @param {Neo.data.Pipeline|null} oldValue
+     * @protected
+     */
+    afterSetPipeline(value, oldValue) {
+        let me = this;
+
+        oldValue?.un('push', me.onPipelinePush, me);
+        value   ?.on('push', me.onPipelinePush, me)
     }
 
     /**
@@ -227,7 +481,54 @@ class Store extends Base {
 
         me._currentPage = 1; // silent update
 
-        oldValue && me.remoteSort && me.load();
+        oldValue && me.remoteSort && me.load()
+    }
+
+    /**
+     * @summary Runs synchronous mutations as a continuation of the current data view.
+     *
+     * Every `load` that `fn`'s mutations fire carries `postChunkLoad: true`, which a bound grid reads as "keep the
+     * reader's scroll" (`grid.Body#onStoreLoad`), where an ordinary load resets it to the top. A producer that
+     * appends to or trims the rows a reader is looking at, like a live feed's tick, declares that intent here;
+     * replacing the data set stays an ordinary load. The previous context returns afterwards, also when `fn`
+     * throws, so later mutations stay ordinary.
+     * @param {Function} fn Runs synchronously
+     * @returns {*} The return value of `fn`
+     */
+    asContinuation(fn) {
+        return this.#notifyAs(true, fn)
+    }
+
+    /**
+     * @summary Runs `fn` with its synchronous `load` notifications marked as continuation or as ordinary.
+     * The previous context returns afterwards, also when `fn` throws.
+     * @param {Boolean} continuation
+     * @param {Function} fn
+     * @returns {*} The return value of `fn`
+     * @private
+     */
+    #notifyAs(continuation, fn) {
+        const me = this, previous = me.#appendNotification;
+
+        me.#appendNotification = continuation;
+
+        try {
+            return fn()
+        } finally {
+            me.#appendNotification = previous
+        }
+    }
+
+    /**
+     * Identity Provider Hook.
+     * Assigns a stable, globally unique 'internalId' to items (Records or Raw Objects).
+     * This ensures DOM stability and security by decoupling the DOM ID from the data ID.
+     * @param {Object} item
+     */
+    assignInternalId(item) {
+        if (!item[internalId]) {
+            item[internalId] = Neo.getId('record')
+        }
     }
 
     /**
@@ -243,165 +544,951 @@ class Store extends Base {
                 destroy: value + '.destroy',
                 read   : value + '.read',
                 update : value + '.update'
-            };
+            }
         }
 
-        return value;
+        return value
     }
 
     /**
-     * @param value
-     * @param oldValue
+     * api-configured stores load via the remotes-api RPC path inside load(), not via a pipeline.
+     * We therefore never auto-create a default Pipeline for them: otherwise load()'s `if (me.pipeline)`
+     * branch would shadow the `else if (me.api)` branch and an autoLoad store would never fire its RPC.
+     * @param {Object|Neo.data.Pipeline|null} value
+     * @param {Object|Neo.data.Pipeline|null} oldValue
      * @protected
-     * @returns {*}
+     * @returns {Neo.data.Pipeline|null}
      */
-    beforeSetData(value, oldValue) {
+    beforeSetPipeline(value, oldValue) {
         let me = this;
 
-        if (value) {
-            if (!Array.isArray(value)) {
-                value = [value];
-            }
+        // api stores load via remotes-api, never a default pipeline
+        if (me.api) {
+            return null
+        }
 
-            // todo: add a config to make the cloning optional
-            value = Neo.clone(value, true);
+        oldValue?.destroy();
 
-            value.forEach((key, index) => {
-                if (!RecordFactory.isRecord(key)) {
-                    value[index] = RecordFactory.createRecord(me.model, key);
-                }
+        if (!value && me.url) {
+            // We store the promise so that load() can await it to prevent race conditions
+            // e.g., when autoLoad: true triggers immediately after construction
+            me.urlPipelinePromise = import('./connection/Xhr.mjs').then(() => {
+                me.pipeline = {
+                    connection: {
+                        ntype: 'connection-xhr',
+                        url  : me.url
+                    }
+                };
+                delete me.urlPipelinePromise;
             });
+
+            return null
         }
 
-        return value;
+        return ClassSystemUtil.beforeSetInstance(value, Pipeline, {
+            store: me
+        });
     }
 
     /**
-     * @param value
-     * @param oldValue
+     * @param {Object[]|Neo.data.Model[]} value
+     * @param {Object[]|Neo.data.Model[]} oldValue
      * @protected
-     * @returns {*}
+     * @returns {Object[]|Neo.data.Model[]}
      */
-    beforeSetInitialData(value, oldValue) {
-        if (!value && oldValue) {
-            return oldValue;
+    beforeSetData(value, oldValue) {
+        if (value) {
+            this.isLoading = true
         }
 
-        return value;
+        return value
     }
 
     /**
+     * @summary Creates the Model from a class or config and borrows a passed instance; releases only a Model it created.
+     * Records keep reading the Model that created them, so a replaced Model is released, never destroyed.
      * @param {Neo.data.Model|Object} value
      * @param {Neo.data.Model|Object} oldValue
      * @protected
      * @returns {Neo.data.Model}
      */
     beforeSetModel(value, oldValue) {
-        oldValue?.destroy();
+        let me = this;
 
-        return ClassSystemUtil.beforeSetInstance(value, Model);
+        me.#ownsModel && oldValue?.release();
+        me.#ownsModel = Neo.typeOf(value) !== 'NeoInstance';
+
+        return ClassSystemUtil.beforeSetInstance(value, Model)
     }
 
     /**
+     * Overrides collection.Base:doSort() to handle "Turbo Mode" (autoInitRecords: false).
+     * In this mode, items are raw objects which may lack the canonical field names used by Sorters.
+     * This method "soft hydrates" the raw items by resolving and caching the sort values.
+     * @param {Object[]} items
+     * @param {Boolean} silent
+     * @protected
+     */
+    doSort(items=this._items, silent=false) {
+        let me = this;
+
+        if (!me.autoInitRecords && me.model?.hasComplexFields && me.sorters.length > 0) {
+            const
+                sortProperties = me.sorters.map(s => s.property),
+                len            = sortProperties.length;
+
+            items.forEach(item => {
+                // Ensure item is not already a Record (mixed mode safety)
+                if (!RecordFactory.isRecord(item)) {
+                    for (let i = 0; i < len; i++) {
+                        const property = sortProperties[i];
+
+                        // Only resolve if the property is missing on the raw object
+                        if (!Object.hasOwn(item, property)) {
+                            me.resolveField(item, property)
+                        }
+                    }
+                }
+            })
+        }
+
+        super.doSort(items, silent)
+    }
+
+    /**
+     * @summary Detaches the owned unfiltered projection's edit forwarding, retires the Store, then releases a Model it
+     * created. Records can outlive the Store and still read that Model, so it is released, never destroyed; a passed
+     * Model instance stays its owner's.
+     */
+    destroy() {
+        let me    = this,
+            model = me.#ownsModel ? me.model : null;
+
+        me.allItems?.un('recordChange', me.onAllItemsRecordChange, me);
+        me.#streamingReads.clear();
+        me.isStreaming = false;
+        StoreManager.unregister(me);
+
+        super.destroy();
+        model?.release()
+    }
+
+    /**
+     * Resolves the key of a given item, supporting both raw data objects and Record instances.
+     * This handles the edge case where `keyProperty` refers to a mapped source key (e.g. 'l')
+     * which exists on the raw object but not on the Record instance (where it is mapped to e.g. 'login').
+     * @param {Object|Neo.data.Record} item
+     * @returns {String|Number}
+     */
+    getKey(item) {
+        let me          = this,
+            keyProperty = me.getKeyProperty(),
+            value;
+
+        if (RecordFactory.isRecord(item)) {
+            return item.get(keyProperty)
+        }
+
+        if (keyProperty.includes('.')) {
+            value = Neo.ns(keyProperty, false, item)
+        } else {
+            value = item[keyProperty]
+        }
+
+        // If direct access failed, check for mapping (Reverse Lookup)
+        if (value === undefined && me.model) {
+            let field = me.model.getField(keyProperty);
+            if (field?.mapping) {
+                let mapping = field.mapping;
+                if (mapping.includes('.')) {
+                    value = Neo.ns(mapping, false, item)
+                } else {
+                    value = item[mapping]
+                }
+            }
+        }
+
+        return value
+    }
+
+    /**
+     * @summary Creates the unfiltered projection without auto-loading and forwards its lazy record edits.
+     * Overrides collection.Base to prevent the allItems collection from auto-loading
      * @param {Object} config
+     * @returns {Neo.collection.Base}
+     * @protected
+     */
+    createAllItems(config) {
+        config.autoLoad = false;
+        // Membership is copied and mirrored by Collection; replaying initial data here creates a second population.
+        config.data = null;
+        const allItems = super.createAllItems(config);
+        allItems.on('recordChange', this.onAllItemsRecordChange, this);
+        return allItems
+    }
+
+    /**
+     * @summary Converts raw data object(s) into `Neo.data.Record` instance(s) of each row's model (`modelOf()`),
+     * stamping missing keys with `this.keyPropertyIndex--`.
+     * @param {Object|Object[]} config
+     * @returns {Neo.data.Record|Neo.data.Record[]} Array in case an array was passed
      */
     createRecord(config) {
-        RecordFactory.createRecord(config);
+        let isArray = true;
+
+        if (config) {
+            if (!Array.isArray(config)) {
+                isArray = false;
+                config  = [config]
+            }
+
+            let me          = this,
+                keyProperty = me.getKeyProperty(),
+                keyField    = me.model?.getField(keyProperty),
+                hasAutoKey  = Boolean(keyField?.calculate || keyField?.defaultValue != null),
+                hasMapping  = Boolean(keyField?.mapping),
+                i           = 0,
+                len         = config.length,
+                item;
+
+            for (; i < len; i++) {
+                item = config[i];
+
+                if (!RecordFactory.isRecord(item)) {
+                    if (item && !hasAutoKey && me.getKey(item) == null && (!hasMapping || Neo.nsWithArrays(keyField.mapping, false, item) == null)) {
+                        item = {
+                            ...item,
+                            [keyProperty]: me.keyPropertyIndex--
+                        }
+                    }
+
+                    config[i] = RecordFactory.createRecord(me.modelOf(item), item)
+                }
+            }
+        }
+
+        return isArray ? config : config[0]
     }
 
     /**
+     * Overrides collection.Base:filter() to handle "Turbo Mode" (autoInitRecords: false).
+     * In this mode, items are raw objects which may lack the canonical field names used by Filters.
+     * This method "soft hydrates" the raw items by resolving and caching the filter values.
+     * @param {Boolean} [silent=false]
+     * @protected
+     */
+    filter(silent=false) {
+        let me = this;
+
+        if (!me.autoInitRecords && me.model?.hasComplexFields && me.filters.length > 0) {
+            const
+                activeFilters    = me.filters.filter(f => f.effective),
+                filterProperties = activeFilters.flatMap(f => f.fields || (f.property === null ? [] : [f.property])),
+                len              = filterProperties.length;
+
+            if (len > 0) {
+                // We iterate over allItems (unfiltered source) or current items depending on state,
+                // but Collection.filter() uses allItems if it exists. Ideally we hydrate the source.
+                // Since we can't easily know which source Collection.filter will use without duplicating logic,
+                // we will hydrate both if they exist, or just the active one.
+                // Safest bet: Hydrate the source that filter() will use.
+                // Collection.filter uses: items = me.allItems?._items || me._items
+                const itemsToHydrate = me.allItems ? me.allItems._items : me._items;
+
+                itemsToHydrate.forEach(item => {
+                    if (!RecordFactory.isRecord(item)) {
+                        for (let i = 0; i < len; i++) {
+                            const property = filterProperties[i];
+
+                            if (!Object.hasOwn(item, property)) {
+                                me.resolveField(item, property)
+                            }
+                        }
+                    }
+                })
+            }
+        }
+
+        super.filter(silent)
+    }
+
+    /**
+     * Overrides collection.Base:find() to ensure the returned item(s) are Record instances.
+     * @param {Object|String} property
+     * @param {String|Number} [value] Only required in case the first param is a string
+     * @param {Boolean} returnFirstMatch=false
+     * @returns {Object|Object[]|null}
+     */
+    find(property, value, returnFirstMatch=false) {
+        let me     = this,
+            result = super.find(property, value, returnFirstMatch);
+
+        if (returnFirstMatch) {
+            return result ? me.get(me.getKey(result)) : null;
+        } else {
+            return result.map(item => me.get(me.getKey(item)));
+        }
+    }
+
+    /**
+     * Overrides collection.Base:findBy() to ensure the returned item(s) are Record instances.
+     * @param {function} fn The function to run for each item inside the start-end range. Return true for a match.
+     * @param {Object} scope=this The scope in which the passed function gets executed
+     * @param {Number} start=0 The start index
+     * @param {Number} end=this.count The end index (up to, last value excluded)
+     * @returns {Array}
+     */
+    findBy(fn, scope=this, start=0, end=this.count) {
+        const result = super.findBy(fn, scope, start, end);
+        return result.map(item => this.get(this.getKey(item)));
+    }
+
+    /**
+     * Overrides collection.Base:forEach() to ensure the iterated item is a Record instance.
+     * @param {Function} fn The function to execute for each record, called as `fn(record, index, items)`. `items` is a
+     * defensive copy of the store's items, shared by the calls: every entry the loop has reached is its Record, and a
+     * callback that adds or removes store items gets a fresh copy from the next call on. Treat it as read-only.
+     * @param {Object} [scope] Value to use as `this` when executing `fn`.
+     */
+    forEach(fn, scope) {
+        let me    = this,
+            count = me.count,
+            items = me.items, // the getter copies the whole array on every read: copy per change, not per record
+            i     = 0,
+            record;
+
+        for (; i < me.count; i++) {
+            if (me.count !== count) {
+                count = me.count;
+                items = me.items
+            }
+
+            record   = me.getAt(i);
+            items[i] = record; // lazy hydration swapped the raw entry for this Record
+
+            fn.call(scope || me, record, i, items)
+        }
+    }
+
+    /**
+     * Overrides collection.Base:get() to ensure the returned item is a Record instance.
+     * @param {Number|String} key
+     * @returns {Object|null}
+     */
+    get(key) {
+        return this.hydrateRecord(super.get(key));
+    }
+
+    /**
+     * Overrides collection.Base:getAt() to ensure the returned item is a Record instance.
+     * @param {Number} index
+     * @returns {Object|undefined}
+     */
+    getAt(index) {
+        return this.hydrateRecord(super.getAt(index), index);
+    }
+
+    /**
+     * @summary Counts canonical scalar values under every predicate except one exact contribution, without source writes.
+     * The complete flat local population must already expose canonical values. Raw complex fields, incomplete
+     * loads, remote projections and trees are unsupported. Callbacks must be observational; this method never
+     * resolves fields or hydrates records. Date values in the result are detached from the source.
+     * @param {String} property
+     * @param {Neo.collection.Filter|null} excludeFilter=null
+     * Buckets retain first-occurrence population order. Expected refusal returns {refused: true, reason}:
+     * unknown-filter, remote-projection, incomplete-population, unknown-field, raw-complex-fields,
+     * noncanonical-field, unsupported-value, tree-population (TreeStore).
+     * Unexpected callback failures propagate.
+     * @returns {Object[]|Object}
+     */
+    getFilterValues(property, excludeFilter=null) {
+        // A filter's read set is its declared fields, else its property; callbacks without fields read nothing checked.
+        const me       = this, items = me.allItems?._items || me._items,
+            properties = new Set([property, ...me.filters.filter(filter => !filter.disabled && filter !== excludeFilter)
+                .flatMap(filter => filter.fields || (filter.filterBy || filter.property === null ? [] : [filter.property]))]);
+
+        if (excludeFilter !== null && !me.filters.includes(excludeFilter)) {
+            return {refused: true, reason: 'unknown-filter'}
+        }
+        if (me.isPipelinePushProjectionUncertain()) {
+            return {refused: true, reason: 'remote-projection'}
+        }
+        if (me.isLoading || me.isStreaming || (me.pipeline && !me.isLoaded)) {
+            return {refused: true, reason: 'incomplete-population'}
+        }
+        if (!me.model?.getField(property)) return {refused: true, reason: 'unknown-field'};
+
+        for (const item of items) {
+            if (!RecordFactory.isRecord(item)) {
+                if (me.model.hasComplexFields || me.model.hasNestedFields) {
+                    return {refused: true, reason: 'raw-complex-fields'}
+                }
+                for (const name of properties) {
+                    const field = me.model.getField(name), value = item[name], type = field?.type?.toLowerCase();
+                    if (!field || !Object.hasOwn(item, name) || (value === undefined && Object.hasOwn(field, 'defaultValue')) ||
+                        (type === 'date' && value !== null && !(value instanceof Date)) ||
+                        (value && ((type === 'string' || type === 'html') && typeof value !== 'string' ||
+                            (type === 'int' || type === 'integer') && !Number.isInteger(value) ||
+                            type === 'float' && typeof value !== 'number')) ||
+                        (type === 'string' && typeof value === 'string' && /<[^>]+>/.test(value))) {
+                        return {refused: true, reason: 'noncanonical-field'}
+                    }
+                }
+            }
+            const value = item[property];
+            try {
+                Filter.getValueKey(value)
+            } catch (error) {
+                return {refused: true, reason: 'unsupported-value'}
+            }
+        }
+
+        const buckets = new Map();
+        for (const item of me.getFilteredItems(excludeFilter)) {
+            const value = item[property], key = Filter.getValueKey(value), bucket = buckets.get(key);
+            if (bucket) bucket.count++;
+            else buckets.set(key, {key, value: value instanceof Date ? new Date(value) : value, count: 1})
+        }
+        return [...buckets.values()]
+    }
+
+    /**
+     * @summary Checks before writing a SearchFilter whether this Store can search `fields`; null means it can.
+     * Remote or pipeline-pushed populations are not searchable locally. A field needs a Model entry, and without
+     * a `fieldText` hook it must hold plain text: Auto, Boolean, Float, Int, Integer, Number or String.
+     * @param {String[]} fields
+     * @param {Object|null} [fieldText=null] Per-field `(value, item) => String` hooks
+     * @returns {String|null} 'remote-projection', 'unknown-field' or 'unsupported-field'
+     */
+    getSearchRefusal(fields, fieldText=null) {
+        const me = this;
+
+        if (me.remoteFilter || me.isPipelinePushProjectionUncertain()) {
+            return 'remote-projection'
+        }
+
+        for (const name of fields) {
+            const field = me.model?.getField(name);
+
+            if (!field) {
+                return 'unknown-field'
+            }
+
+            if (!SearchFilter.getHook(fieldText, name) && !plainTextFieldTypes.has(field.type?.toLowerCase() ?? 'auto')) {
+                return 'unsupported-field'
+            }
+        }
+
+        return null
+    }
+
+    /**
+     * Retrieves the stable internal ID of an item.
+     * @param {Object|Neo.data.Record} item
+     * @returns {String} e.g. 'neo-record-1'
+     */
+    getInternalId(item) {
+        if (!item[internalId]) {
+            item[internalId] = Neo.getId('record')
+        }
+
+        return item[internalId]
+    }
+
+    /**
+     * Hook to get the internal key of an item.
+     * @param {Object} item
+     * @returns {String|Number|null}
+     */
+    getInternalKey(item) {
+        return item[internalId]
+    }
+
+    /**
+     * @returns {String}
+     */
+    getKeyProperty() {
+        return this.keyProperty || this.model.keyProperty
+    }
+
+    /**
+     * Convenience shortcut to check for int based keyProperties
+     * @returns {String|null} lowercase value of the model field type
+     */
+    getKeyType() {
+        let me       = this,
+            {model}  = me,
+            keyField = model?.getField(me.getKeyProperty());
+
+        return keyField?.type?.toLowerCase() || null
+    }
+
+    /**
+     * @summary What an eager-mode `add` / `insert` hands to the splice: records, created BEFORE the
+     * mutation runs.
+     *
+     * The mutation — and the unfiltered projection (`allItems`) mirrored inside it — then carries
+     * the record instances every listener will see, so no listener can observe a raw/record split:
+     * a filter on a calculated field evaluates records, and a mounted list that renders inside the
+     * store's own `load` holds the same instances the projection does. The caller's array stays
+     * raw (a copy is converted).
+     *
+     * Overridable: a store whose structural layer annotates raw rows before records exist (see
+     * {@link Neo.data.TreeStore#prepareAddedItems}) hands the rows through and hydrates lazily.
+     * @param {Object[]} items The raw rows (or records) passed to `add` / `insert`
+     * @returns {Object[]} The items to splice
+     * @protected
+     */
+    prepareAddedItems(items) {
+        return this.createRecord([...items])
+    }
+
+    /**
+     * @summary Lazily instantiates a raw data object into a `Neo.data.Record` instance of its model (`modelOf()`)
+     * and heals internal maps.
+     * @param {Object} item The raw data object or Record
+     * @param {Number} [index] Optional index in the items array (for performance)
+     * @returns {Neo.data.Record|Object|null} The hydrated Record (or original item if already a record or null)
+     * @protected
+     */
+    hydrateRecord(item, index) {
+        let me = this;
+
+        if (item && !RecordFactory.isRecord(item)) {
+            const
+                rawKey = me.getKey(item),
+                record = RecordFactory.createRecord(me.modelOf(item), item),
+                pk     = me.getKey(record); // Use the actual PK from the record
+
+            // For get(), index is omitted, so we find it. For getAt(), we pass it in.
+            if (index === undefined) {
+                index = me.indexOf(item);
+            }
+
+            // Replace the raw data with the record instance in the current (filtered) collection
+            // ONLY if it was actually in the map. Hidden/filtered items should not bleed into the active map.
+            if (me.map.has(pk)) {
+                me.map.set(pk, record)
+            } else if (me.map.has(rawKey)) {
+                me.map.delete(rawKey);
+                me.map.set(pk, record)
+            }
+
+            if (index !== -1) {
+                me._items[index] = record
+            }
+
+            // If we are tracking internalIds, we need to update the map to point to the new record
+            // instead of the raw object
+            if (me.trackInternalId) {
+                const internalKey = me.getInternalKey(record);
+                if (internalKey && me.internalIdMap.has(internalKey)) {
+                    me.internalIdMap.set(internalKey, record)
+                }
+            }
+
+            // If this collection is filtered, we must also update the master 'allItems' collection
+            if (me.allItems) {
+                const masterIndex = me.allItems.indexOf(item);
+                if (masterIndex !== -1) {
+                    me.allItems._items[masterIndex] = record;
+                }
+                if (me.allItems.map.has(pk)) {
+                    me.allItems.map.set(pk, record)
+                } else if (me.allItems.map.has(rawKey)) {
+                    me.allItems.map.delete(rawKey);
+                    me.allItems.map.set(pk, record)
+                }
+                if (me.allItems.trackInternalId) {
+                    const internalKey = me.getInternalKey(record);
+                    if (internalKey && me.allItems.internalIdMap.has(internalKey)) {
+                        me.allItems.internalIdMap.set(internalKey, record)
+                    }
+                }
+            }
+            return record
+        }
+        return item; // Already a record or null/undefined
+    }
+
+    /**
+     * Converts a data object into a Record instance or returns it if it is already one.
+     * This method is called by add() and insert() when init=true (default).
+     * @param {Object} data The data object or Record instance
+     * @returns {Object} The Record instance
+     */
+    initRecord(data) {
+        if (RecordFactory.isRecord(data)) {
+            return data
+        }
+
+        return this.get(this.getKey(data))
+    }
+
+    /**
+     * Overrides collection.Base: insert() to convert items into records if needed.
+     *
+     * **Eager Mode (`init=true` - Default):**
+     * Immediately converts raw data into `Neo.data.Model` instances.
+     * Returns an `Array` of the created records.
+     *
+     * **Lazy Mode (`init=false`):**
+     * Inserts raw data directly. Instantiates records only on access.
+     * Returns an `Array` of the inserted raw data objects.
+     *
+     * @param {Number} index The index to insert at
+     * @param {Array|Object} item The item(s) to add
+     * @param {Boolean} [init=this.autoInitRecords] True to return the created records
+     * @returns {Object[]|Neo.data.Model[]} The inserted raw items or created records
+     */
+    insert(index, item, init=this.autoInitRecords) {
+        let me    = this,
+            items = super.insert(index, init ? me.prepareAddedItems(Array.isArray(item) ? item : [item]) : item);
+
+        if (init) {
+            return items.map(i => me.get(me.getKey(i)))
+        }
+
+        return items
+    }
+
+    /**
+     * @summary Overrides collection.Base:isFilteredItem() to soft-hydrate raw items before evaluating filters.
+     * In Turbo Mode (or in TreeStore before post-splice record hydration), items are raw objects which may lack
+     * the canonical field names or default values used by Filters.
+     * @param {Object} item
+     * @returns {boolean}
+     * @protected
+     */
+    isFilteredItem(item) {
+        let me = this;
+
+        if (!RecordFactory.isRecord(item) && me.filters.length > 0) {
+            me.filters.forEach(filter => {
+                if (filter.effective) {
+                    for (const property of filter.fields || (filter.property === null ? [] : [filter.property])) {
+                        if (!Object.hasOwn(item, property)) {
+                            me.resolveField(item, property)
+                        }
+                    }
+                }
+            })
+        }
+
+        return super.isFilteredItem(item)
+    }
+
+    /**
+     * @summary Loads records through the configured Pipeline, API, or URL and optionally appends the result.
      * @param {Object} opts={}
+     * @param {Boolean} [opts.append=false] Append loaded items and preserve continuation position.
      * @param {Object} opts.data
      * @param {Object} opts.headers
      * @param {String} opts.method DELETE, GET, POST, PUT
      * @param {Object} opts.params
+     * @param {Number} [opts.params.page] Page to request; the caller owns page selection and Store does not advance it.
      * @param {String} opts.responseType
      * @param {Object} opts.scope
      * @param {String} opts.url
+     * @returns {Promise<Object|Object[]>}
      * @protected
      */
-    load(opts={}) {
-        let me     = this,
-            params = {page: me.currentPage, pageSize: me.pageSize, ...opts.params};
+    async load(opts={}) {
+        const me = this;
 
-        if (me.remoteFilter) {
-            params.filters = me.exportFilters();
-        }
+        ++me.#pendingLoads;
+        me.isLoadPending = true;
 
-        if (me.remoteSort) {
-            params.sorters = me.exportSorters();
-        }
-
-        if (me.api) {
-            let apiArray = me.api.read.split('.'),
-                fn       = apiArray.pop(),
-                service  = Neo.ns(apiArray.join('.'));
-
-            if (!service) {
-                console.log('Api is not defined', this);
-            } else {
-                service[fn](params).then(response => {
-                    response = Neo.ns(me.responseRoot, false, response);
-
-                    if (response.success) {
-                        me.totalCount = response.totalCount;
-                        me.data       = Neo.ns(me.responseRoot, false, response); // fires the load event
-                    }
-                });
+        try {
+            return await me.#loadRecords(opts)
+        } finally {
+            --me.#pendingLoads;
+            if (!me.isDestroyed) {
+                me.isLoadPending = me.#pendingLoads > 0
             }
-        } else {
-            opts.url ??= me.url;
-
-            Neo.Xhr.promiseJson(opts).catch(err => {
-                console.log('Error for Neo.Xhr.request', err, me.id);
-            }).then(data => {
-                me.data = Neo.ns(me.responseRoot, false, data.json) || data.json;
-                // we do not need to fire a load event => onCollectionMutate()
-            })
         }
     }
 
     /**
+     * @summary Executes one transport load and owns its progressive lifetime through settlement.
+     * Pipeline data events use the same receiving-Store state whether parsing runs locally or in the Data Worker.
+     * @param {Object} opts Load options documented by load().
+     * @returns {Promise<Object|Object[]>}
+     * @private
+     */
+    async #loadRecords(opts) {
+        let me     = this,
+            append = !!opts.append,
+            params = {page: me.currentPage, pageSize: me.pageSize, ...opts.params};
+
+        // Ensure the dummy pipeline is fully constructed before proceeding
+        if (me.urlPipelinePromise) {
+            await me.urlPipelinePromise;
+        }
+
+        if (me.remoteFilter) {
+            params.filters = me.exportFilters()
+        }
+
+        if (me.remoteSort) {
+            params.sorters = me.exportSorters()
+        }
+
+        const pipeline = me.pipeline;
+
+        if (pipeline) {
+            if (me.items.length > 0 && !append) {
+                me.clear();
+            }
+
+            me.isLoading = true;
+
+            let receivedData = false;
+
+            const onData = (data) => {
+                if (me.isDestroyed) return;
+
+                if (data != null && (!Array.isArray(data) || data.length > 0)) {
+                    receivedData = true;
+                    me.#streamingReads.add(onData);
+                    me.isStreaming = true
+                }
+
+                me.addLoadedItems(data, append);
+
+                // Progressive Rendering:
+                // As soon as we have data, we want the grid to render.
+                if (me.isLoading) {
+                    me.isLoading = false;
+                }
+            };
+
+            const onProgress = (data) => {
+                if (!me.isDestroyed) me.fire('progress', data);
+            };
+
+            // Subscription ids keep removal local to this read even when concurrent handlers share names.
+            const subscriptions = [
+                      ['data', pipeline.on('data', onData)],
+                      ['progress', pipeline.on('progress', onProgress)]
+                  ],
+                  release = () => {
+                      for (const [event, id] of subscriptions.splice(0)) {
+                          if (!pipeline.isDestroyed) pipeline.un(event, id)
+                      }
+                      me.#streamingReads.delete(onData);
+                      if (!me.isDestroyed) me.isStreaming = me.#streamingReads.size > 0
+                  };
+
+            try {
+                // params.url can override pipeline/connection url
+                if (opts.url) {
+                    params.url = opts.url;
+
+                    if (!pipeline.connection) {
+                        const ConnectionXhr = (await import('./connection/Xhr.mjs')).default;
+                        pipeline.connection = {
+                            module: ConnectionXhr,
+                            url   : opts.url
+                        };
+                    }
+                }
+
+                const response = await pipeline.read(params);
+                release();
+                if (me.isDestroyed) throw Neo.isDestroyed;
+
+                if (response != null) {
+                    // response could be the finalized array or an object depending on normalizer
+                    let items = response.data || response.json || response;
+
+                    if (!Array.isArray(items)) {
+                        items = Neo.ns(me.responseRoot, false, items) || items;
+                    }
+
+                    // Parser data events have already committed progressive rows. Empty data events do not
+                    // suppress the final bulk response, which can still carry the fetched rows.
+                    if (Array.isArray(items) && items.length > 0 && !receivedData) {
+                        me.addLoadedItems(items, append);
+                    }
+
+                    me.totalCount = response.totalCount || (response.json && !Array.isArray(response.json) ? response.json.totalCount : null) || me.count;
+                    me.isLoaded   = true;
+                    me.isLoading  = false; // Ensure it's false at the end
+                    me.fire('load', {
+                        isLoading    : false,
+                        items        : me.items,
+                        postChunkLoad: append || receivedData,
+                        total        : me.totalCount
+                    });
+                    return me.items;
+                } else {
+                    me.isLoading = false;
+                    return null;
+                }
+            } catch (e) {
+                if (!me.isDestroyed) me.isLoading = false;
+                throw e;
+            } finally {
+                release();
+            }
+        } else if (me.api) {
+            let apiArray = me.api.read.split('.'),
+                fn       = apiArray.pop(),
+                service  = Neo.ns(apiArray.join('.'));
+
+            // The remotes-api registers asynchronously (Neo.remotes.Api.initAsync()); if the stub
+            // is not registered yet, wait for it to finish initializing before giving up.
+            if (!service && Neo.config.remotesApiUrl) {
+                await (await import('../remotes/Api.mjs')).default.ready();
+                service = Neo.ns(apiArray.join('.'))
+            }
+
+            if (!service) {
+                console.error('Api is not defined', this)
+            } else {
+                const response = await me.trap(service[fn](params));
+
+                if (response.success) {
+                    me.totalCount = response.totalCount;
+                    const items = Neo.ns(me.responseRoot, false, response);
+
+                    if (append) {
+                        items && me.addLoadedItems(items, true);
+                    } else {
+                        me.data = items; // fires the load event
+                    }
+
+                    me.isLoaded   = true;
+
+                    return append ? me.items : me.data
+                }
+
+                return null
+            }
+        } else {
+            opts.url ??= me.url;
+
+            try {
+                // Fallback for non-browser based envs like nodejs
+                if (globalThis.process?.release) {
+                    const { readFile } = await import(/* webpackIgnore: true */ 'fs/promises');
+                    const content      = await me.trap(readFile(opts.url, 'utf-8'));
+                    let   data         = {json: JSON.parse(content)};
+
+                    if (data) {
+                        me.data = Neo.ns(me.responseRoot, false, data.json) || data.json // fires the load event
+                    }
+
+                    me.isLoaded   = true;
+
+                    return data.json || null
+                } else {
+                    console.warn('Store.load(): No pipeline, api, or url configured.', me.id);
+                    return null
+                }
+            } catch(err) {
+                if (err === Neo.isDestroyed) {
+                    throw err
+                }
+
+                console.error('Error in Store.load() fallback', {id: me.id, error: err, url: opts.url});
+                return null
+            }
+        }
+    }
+
+    /**
+     * @summary The model a raw row derives its fields from and becomes a record of: `this.model`, unless a subclass
+     * holds rows of another shape. A store that projects rows of its own, such as a group whose fields hold
+     * aggregates, answers those with their own model, so the leaf fields' `calculate`, `convert`, `mapping` and
+     * `type` never parse them. `createRecord()`, `hydrateRecord()`, `resolveField()` and `resolveRow()` ask it, for
+     * a raw row only: a record owns its fields, so an override may tell its rows apart by raw data alone. A model
+     * an override answers names this store (`storeId`), as `this.model` does: a record's change reaches the store
+     * its model names, and no other.
+     * @param {Object|null} item A raw row
+     * @returns {Neo.data.Model}
+     * @protected
+     */
+    modelOf(item) {
+        return this.model
+    }
+
+    /**
+     * @summary Re-fires membership changes as synchronous coarse loads, identified for presentation consumers.
+     * The additive origin flag lets a consumer recognize a no-op mutation without suppressing
+     * ordinary load notifications which can request a repaint of the same records.
      * @param {Object} opts
      */
     onCollectionMutate(opts) {
         let me = this;
 
-        if (me.configsApplied) {
-            // console.log('onCollectionMutate', opts);
-            me.fire('load', me.items);
+        if (me.isConstructed && !me.isLoading) {
+            const isFirstChunk = opts.addedItems && me.count === opts.addedItems.length;
+
+            me.fire('load', {
+                isLoading    : !!me.isStreaming,
+                isMutation   : true,
+                items        : me.items,
+                postChunkLoad: me.#appendNotification || (!!me.isStreaming && !isFirstChunk),
+                total        : me.chunkingTotal
+            });
         }
     }
 
     /**
-     * todo: add will fire mutate and sort right after another
+     * @summary Re-fires a sort as a `load`. This is deliberate — do NOT suppress it.
+     *
+     * `load` is the store's **coarse** change-notification and `sort` the **fine-grained** one, so a consumer
+     * binds whichever granularity it needs. Several bind `load` alone and react to a sort *only* because of
+     * this method:
+     *
+     * - `form.field.ComboBox`
+     * - `toolbar.Paging`
+     * - `table.Container` — note its `sort` listener is on a *column*, not on the store
+     * - `table.Body` and `grid.Body` — the row-rendering surfaces of both data grids
+     *
+     * Reading this as a conflation and suppressing the fire stops all five updating on a sort, with no error
+     * and no failing test. The corresponding consumer-side hazard is the mirror image: a component binding
+     * both events runs its `sort` handler *after* the `load` handler has already rebuilt the view, because
+     * this store registers its own collection listener in `construct()` — before any component can bind. That
+     * second handler is therefore looking at already-corrected state.
+     *
+     * The coarse payload carries `isSort: true`, so a consumer of both granularities can leave
+     * presentation to its fine sort handler without delaying ordinary membership loads.
      */
     onCollectionSort() {
         let me = this;
 
-        if (me.configsApplied) {
-            // console.log('onCollectionSort', me.collection.items);
-            // me.fire('load', me.items);
+        if (me.isConstructed) {
+            me.fire('load', {items: me.items, isSort: true})
         }
     }
 
     /**
-     *
+     * @summary Establishes the unfiltered population before initial data can be restricted by declared filters.
      */
     onConstructed() {
         super.onConstructed();
 
         let me = this;
 
+        if (!me.allItems && !me.hasNtype('tree-store') && me.filters.some(filter => !filter.disabled &&
+            (filter.filterBy || !filter.includeEmptyValues || !Neo.isEmpty(filter.value)))) me.filter(true);
+
         if (me.data) {
-            me.afterSetData(me.data);
+            me.afterSetData(me.data)
         }
 
-        if (me.autoLoad) {
-            setTimeout(() => { // todo
-                me.load();
-            }, 100);
-        }
+        // Being constructed does not mean that related afterSetStore() methods got executed
+        // => break the sync flow to ensure potential listeners got applied
+        me.trap(Promise.resolve()).then(() => {
+            if (me.isLoaded) {
+                me.fire('load', {items: me.items})
+            } else if (me.autoLoad) {
+                me.load()
+            }
+        })
     }
 
     /**
@@ -413,25 +1500,540 @@ class Store extends Base {
 
         if (me.remoteFilter) {
             me._currentPage = 1; // silent update
-            me.load();
+            me.load()
         } else {
-            super.onFilterChange(opts);
+            super.onFilterChange(opts)
         }
     }
 
     /**
+     * @summary Returns true when the current visible projection is server-owned or page-bounded.
+     * Unknown pushed records cannot safely prove membership or order in these modes.
+     * @returns {Boolean}
+     * @protected
+     */
+    isPipelinePushProjectionUncertain() {
+        let me = this;
+
+        return me.remoteFilter || me.remoteSort || me.pageSize > 0
+    }
+
+    /**
+     * @summary Handles an unknown keyed pipeline push according to the configured insertion strategy.
+     * Local projections can accept inserted records through the normal Store.add() path, which keeps
+     * existing filter and sorter semantics. Server-owned or page-bounded projections reload instead.
+     * @param {Object} data
+     * @protected
+     */
+    onUnknownPipelinePush(data) {
+        let me       = this,
+            strategy = me.pushInsertStrategy;
+
+        if (!strategy) {
+            return
+        }
+
+        if (!pushInsertStrategies.has(strategy)) {
+            return
+        }
+
+        if (strategy === 'reload') {
+            me.load();
+            return
+        }
+
+        if (me.isPipelinePushProjectionUncertain()) {
+            if (strategy === 'reloadWhenUncertain') {
+                me.load()
+            }
+            return
+        }
+
+        if (strategy === 'insert' || strategy === 'upsert' || strategy === 'reloadWhenUncertain') {
+            me.add(data)
+        }
+    }
+
+    /**
+     * Resolves the canonical key a record insertion would store for a given value, or refuses.
+     *
+     * @summary Puts a key lookup and a key insertion on one Map identity, so neither can hold a
+     * different record under the same key.
+     *
+     * `Collection.get()` is a strict `Map` lookup, while `add()` routes each field through
+     * `RecordFactory.parseRecordValue()` and converts it to its declared type. A value whose type
+     * differs from the stored one is therefore not a near-miss but a miss, and callers which answer
+     * a miss by inserting will append a second record under the same identity.
+     *
+     * ## Supported domain
+     *
+     * A key whose field declares no `convert` and no `calculate`, and which converts to a primitive.
+     * Within it, the conversion is delegated to the parser insertion uses, so the declared-type rules
+     * stay owned by `RecordFactory` rather than being restated here.
+     *
+     * Everything else is **refused** with `undefined`, because a wrong key is worse than no key —
+     * it inserts a second row under an identity that already exists:
+     *
+     * - `calculate` derives the stored key from a record that does not exist at lookup time;
+     * - `convert` receives the Record at insertion, while a lookup can only offer the raw value, so
+     *   a converter which reads the record produces a different key on each path;
+     * - an object result — a `Date` key being the realistic case — is equal-but-distinct on every
+     *   call, and a `Map` compares keys by identity, so it could never match what was stored;
+     * - a value that converts to `NaN`, or which the field's length/nullable rules reject, has no
+     *   addressable identity at all.
+     *
+     * Refusal is not silent at the call site: `onPipelinePush()` drops the push rather than
+     * synthesizing a row for a record the payload never successfully named.
+     *
+     * @param {*} value The key as it was received, e.g. from a server push or a DOM id.
+     * @returns {*|undefined} The canonical key, or `undefined` when the value falls outside the
+     * supported domain above.
+     */
+    getCanonicalKey(value) {
+        let field = this.model?.getField(this.getKeyProperty());
+
+        // An absent value is not an identity, whatever the Model says. This is checked before the
+        // no-field case on purpose: a Store without a declared key field would otherwise pass null
+        // straight through, and a caller which inserts on a miss then adds a row nothing can address.
+        if (value === null || value === undefined) {
+            return undefined
+        }
+
+        // With no declared key field there is nothing to canonicalize against, so a present value
+        // stands as its own identity.
+        if (!field) {
+            return value
+        }
+
+        // Context-dependent keys cannot be resolved from a value alone — see Supported domain.
+        if (field.calculate || field.convert) {
+            return undefined
+        }
+
+        let canonical = RecordFactory.parseRecordValue({record: {}, field, value});
+
+        // `typeof null` is 'object'; a null here means the field's own rules rejected the value.
+        if (canonical === null || canonical === undefined || Number.isNaN(canonical)) {
+            return undefined
+        }
+
+        return typeof canonical === 'object' ? undefined : canonical
+    }
+
+    /**
+     * @param {Object} data
+     * @protected
+     */
+    onPipelinePush(data) {
+        let me          = this,
+            keyProperty = me.getKeyProperty(),
+            id          = me.getCanonicalKey(me.getKey(data)),
+            record;
+
+        if (id !== undefined) {
+            record = me.get(id);
+
+            // The Collection keys itself by the value it is handed, so a received key would be
+            // stored verbatim and then miss every later canonical lookup — the same identity split,
+            // one insert further along. Only a key the payload carries directly is rewritten; a
+            // mapped one stays the Model's to resolve.
+            if (Object.hasOwn(data, keyProperty) && data[keyProperty] !== id) {
+                data = {...data, [keyProperty]: id}
+            }
+
+            if (record) {
+                record.set(data)
+            } else {
+                me.onUnknownPipelinePush(data)
+            }
+        }
+    }
+
+    /**
+     * @summary Reapplies opted-in local filters and sorters before publishing the record's settled index.
      * Gets triggered after changing the value of a record field.
      * E.g. myRecord.foo = 'bar';
+     * The published `index` is an enumerable getter: listeners that never read it pay no scan, and
+     * one that reads after an earlier listener re-sorted the store gets the record's current position.
      * @param {Object} data
      * @param {Object[]} data.fields Each field object contains the keys: name, oldValue, value
      * @param {Neo.data.Model} data.model The model instance of the changed record
      * @param {Object} data.record
      */
     onRecordChange(data) {
-        this.fire('recordChange', {
-            ...data,
-            index: this.indexOf(data.record)
-        });
+        if (this.#keyChanges.has(data.record)) {
+            this.#keyChanges.set(data.record, data);
+            return
+        }
+        const refilter = !this.#sortingRecordChange && this.shouldReapplyFilters(data.record),
+              resort   = this.shouldReapplySorters(data);
+
+        if (refilter) this.filter();
+        if (resort && (!refilter || this.hasNtype('tree-store'))) {
+            this.#sortingRecordChange = true;
+            try {
+                this.doSort()
+            } finally {
+                this.#sortingRecordChange = false
+            }
+        }
+
+        const event = {...data};
+
+        Object.defineProperty(event, 'index', {enumerable: true, get: () => this.indexOf(data.record)});
+        this.fire('recordChange', event)
+    }
+
+    /**
+     * @summary Forwards current projection-owned edits; notification lifetime is independent of filter reapplication.
+     * @param {Object} data
+     * @protected
+     */
+    onAllItemsRecordChange(data) {
+        if (!this.isDestroyed && (this.#keyChanges.has(data.record) ||
+            this.allItems?.map.get(this.getKey(data.record)) === data.record)) {
+            this.onRecordChange(data)
+        }
+    }
+
+    /**
+     * @summary Checks current opt-in and exact population identity, excluding stale retained records.
+     * @param {Object} record
+     * @returns {Boolean}
+     * @protected
+     */
+    shouldReapplyFilters(record) {
+        const population = this.allItems || this;
+        return !this.isDestroyed && !this.isPipelinePushProjectionUncertain() && !this.isLoading && !this.isStreaming &&
+            population.map.get(this.getKey(record)) === record &&
+            this.filters.some(filter => filter.reapplyOnRecordChange && !filter.disabled &&
+                (filter.filterBy || !filter.includeEmptyValues || !Neo.isEmpty(filter.value)))
+    }
+
+    /**
+     * @summary Checks whether an opted-in sorter reads a changed field on a current local record.
+     * Callback and virtual-field dependencies are opaque, so any edit can affect their order.
+     * An omitted fields list checks eligibility before a key transaction knows its calculated changes.
+     * @param {Object} data
+     * @returns {Boolean}
+     * @protected
+     */
+    shouldReapplySorters({fields, model=this.model, record}) {
+        const me = this;
+        if (me.isDestroyed || me.#sortingRecordChange || !me.autoSort || me.isLoading || me.isStreaming ||
+            me.isPipelinePushProjectionUncertain()) return false;
+
+        const affected = me.sorters.some(sorter => sorter.reapplyOnRecordChange &&
+            (!fields || sorter.sortBy || model.getField(sorter.property)?.virtual || fields.some(({name}) =>
+                name === sorter.property || typeof sorter.property === 'string' && sorter.property.startsWith(name + '.'))));
+        if (!affected) return false;
+
+        const key     = me.getKey(record),
+              current = me.hasNtype('tree-store') ? me.get(key) : me.map.get(key);
+        return current === record
+    }
+
+    /**
+     * @summary Commits flat and subclass key maps before opted-in projection changes publish their final index.
+     * Non-opted-in updates retain the existing key writer's behavior.
+     * @param {Object} item
+     * @param {String|Number} newKey
+     */
+    updateKey(item, newKey) {
+        const oldKey = this.getKey(item);
+        if (oldKey === newKey ||
+            !(this.shouldReapplyFilters(item) && !this.hasNtype('tree-store') ||
+              this.shouldReapplySorters({record: item}))) {
+            return this.updateKeyMaps(item, newKey)
+        }
+
+        let change, result;
+        this.#keyChanges.set(item, null);
+        this[updatingIndexSymbol]++;
+        try {
+            result = this.updateKeyMaps(item, newKey);
+            change = this.#keyChanges.get(item)
+        } finally {
+            this[updatingIndexSymbol]--;
+            this.#keyChanges.delete(item)
+        }
+
+        if (change) this.onRecordChange(change);
+        else if (this.shouldReapplyFilters(item)) this.filter();
+        else if (this.shouldReapplySorters({record: item})) this.doSort();
+        if (this[updatingIndexSymbol] === 0) this.fire('updateKey', {item, newKey, oldKey, scope: this});
+        return result
+    }
+
+    /**
+     * @summary Applies a key change inside Store's notification transaction; subclasses extend their own maps here.
+     * @param {Object} item
+     * @param {String|Number} newKey
+     * @protected
+     */
+    updateKeyMaps(item, newKey) {
+        return super.updateKey(item, newKey)
+    }
+
+    /**
+     * @summary Resolves a field of a raw Turbo Mode row, by the row's model (`modelOf()`), to the value the row's
+     * record will hold, and keeps it on the row under the field's name, where sorters and filters read it (Soft
+     * Hydration).
+     *
+     * The value is the field's `calculate`, or its datum in `Neo.data.RecordFactory#deriveRecordData()` passed
+     * through `parseRecordValue()` (convert, type). A field kept on the row answers the kept value, so a second call
+     * answers what the first did. The row remembers its own value under each kept name (`Symbol.for('ownValues')`),
+     * and the record created from the row parses that instead. A record passed in answers its own value.
+     *
+     * **Limitations & "Turbo-Safe" Requirement:**
+     * This method resolves a *single* field. Of the fields it reads, only those named in the field's `depends` are
+     * resolved first.
+     *
+     * If Field A relies on Field B (e.g., via `calculate` or `convert`), and Field B is also a mapped/calculated field:
+     * - **On a Record:** Field B is accessible via its getter.
+     * - **On a Raw Object:** Field B is `undefined`.
+     *
+     * Therefore, Model logic (calculate/convert functions) MUST be written to be "Turbo-Safe" / "Polymorphic".
+     * They must check for both the canonical field name (for Records) AND the raw data key (for Turbo Mode).
+     *
+     * @example
+     * calculate: data => (data.mappedName || data.rawKey) + 1
+     *
+     * @param {Neo.data.Record|Object} item The raw data object, or a record
+     * @param {String} fieldName The canonical field name
+     * @returns {*} The resolved value
+     * @protected
+     */
+    resolveField(item, fieldName) {
+        // a record owns its fields: a name it holds answers itself, any other reads as a path through it
+        if (RecordFactory.isRecord(item)) {
+            return typeof fieldName === 'string' && !(fieldName in item) ? Neo.ns(fieldName, false, item) : item[fieldName]
+        }
+
+        let me    = this,
+            model = me.modelOf(item),
+            field = model.getField(fieldName),
+            entry, map, value;
+
+        if (!field) {
+            if (typeof fieldName === 'string' && fieldName.includes('.')) {
+                let rootField = fieldName.split('.')[0],
+                    root      = model.getField(rootField);
+
+                // a path reads through its root's value, also when the row holds a converted or calculated root
+                if (root && (!Object.hasOwn(item, rootField) || root.convert || root.calculate)) {
+                    me.resolveField(item, rootField)
+                }
+
+                return Neo.ns(fieldName, false, item)
+            }
+
+            return undefined
+        }
+
+        map   = item[ownValuesSymbol];
+        entry = map && Object.hasOwn(map, fieldName) ? map[fieldName] : null;
+
+        // a kept value the caller has replaced since is the row's data again
+        if (entry && Object.is(item[fieldName], entry[1])) {
+            return entry[1]
+        }
+
+        for (const dep of field.depends || []) {
+            if (item[dep] === undefined) {
+                item[dep] = me.resolveField(item, dep)
+            }
+        }
+
+        map = item[ownValuesSymbol]; // `depends` may have written one
+
+        value = field.calculate ? field.calculate(item) :
+            RecordFactory.deriveFieldValue(RecordFactory.deriveRecordData(item, model), field, fieldName);
+
+        if (!fieldName.includes('.') || field.calculate || field.convert || field.mapping || Object.hasOwn(field, 'defaultValue')) {
+            entry = [Object.hasOwn(item, fieldName) ? item[fieldName] : noValueSymbol, value];
+
+            // a new map, never a write into one that a spread copy of the row may share
+            item[ownValuesSymbol] = map ? {...map, [fieldName]: entry} : {[fieldName]: entry};
+            item[fieldName]       = value
+        }
+
+        return value
+    }
+
+    /**
+     * @summary Resolves model fields for a raw row on a copy, by the row's model (`modelOf()`), leaving the store's
+     * row unchanged.
+     * Each name that is a model field, or a dotted path below one (resolved through its root field), gets the value
+     * the row's record holds. Every value derives from the row's own data, so the order of the names never matters.
+     * Nested objects on a written path are copied. A record, a missing row and a row asked for no model field are
+     * returned as they are.
+     * @param {Neo.data.Record|Object|null} item The raw row or Record
+     * @param {String[]} fieldNames The model fields, or dotted paths below them, to resolve
+     * @returns {Neo.data.Record|Object|null} The resolved copy, or the original item when no resolution is needed
+     */
+    resolveRow(item, fieldNames) {
+        let me    = this,
+            model = item && !RecordFactory.isRecord(item) && me.modelOf(item),
+            own, recordData, resolvedItem;
+
+        if (!model) {
+            return item
+        }
+
+        for (let name of new Set(fieldNames)) {
+            let field = typeof name === 'string' && (model.getField(name) || model.getField(name = name.split('.')[0]));
+
+            if (field) {
+                own          ??= RecordFactory.restoreOwnValues({...item});
+                resolvedItem ??= {...own};
+
+                let path   = name.split('.'),
+                    leaf   = path.pop(),
+                    target = resolvedItem;
+
+                path.forEach(key => target = target[key] = {...target[key]});
+
+                if (field.calculate) {
+                    target[leaf] = me.resolveField({...own}, name)
+                } else {
+                    recordData ??= RecordFactory.deriveRecordData(item, model);
+                    target[leaf]   = RecordFactory.deriveFieldValue(recordData, field, name)
+                }
+            }
+        }
+
+        return resolvedItem || item
+    }
+
+    /**
+     * Backend-first create over the remotes-api.
+     *
+     * If `api.create` is configured, the record is persisted to the backend **first** and only inserted
+     * into the store on success — using the server-authoritative response, so backend-assigned fields
+     * (e.g. an `id`) are reflected. `add()` re-sorts when a sorter is present, so position is correct.
+     * Without an `api.create`, falls back to a local {@link #add}.
+     *
+     * Rejects and fires the `mutationFailed` event on a backend error, leaving the store unchanged.
+     * @param {Object} data The new record's field values
+     * @returns {Promise<Neo.data.Record[]>} The added record(s)
+     */
+    async remoteCreate(data) {
+        let me = this;
+
+        if (!Neo.isObject(me.api) || !me.api.create) {
+            return me.add(data)
+        }
+
+        let response = await me.remoteRpc('create', data);
+
+        if (response?.success) {
+            return me.add(Neo.ns(me.responseRoot, false, response) ?? data)
+        }
+
+        me.fire('mutationFailed', {action: 'create', data, response});
+        throw new Error(response?.message || 'Neo.data.Store: remoteCreate() failed')
+    }
+
+    /**
+     * Backend-first destroy over the remotes-api.
+     *
+     * If `api.destroy` is configured, the record is deleted on the backend **first** and only removed
+     * from the store on success. Without an `api.destroy`, falls back to a local remove.
+     *
+     * Rejects and fires the `mutationFailed` event on a backend error, leaving the store unchanged.
+     * @param {Neo.data.Record} record
+     * @returns {Promise<void>}
+     */
+    async remoteDestroy(record) {
+        let me  = this,
+            key = me.getKey(record);
+
+        if (!Neo.isObject(me.api) || !me.api.destroy) {
+            me.remove(key);
+            return
+        }
+
+        let response = await me.remoteRpc('destroy', {[me.getKeyProperty()]: key});
+
+        if (response?.success) {
+            me.remove(key);
+            return
+        }
+
+        me.fire('mutationFailed', {action: 'destroy', record, response});
+        throw new Error(response?.message || 'Neo.data.Store: remoteDestroy() failed')
+    }
+
+    /**
+     * Resolves the `api[verb]` remote stub — awaiting the remotes-api registration if it is still racing
+     * the call, mirroring {@link #load} — and invokes it with the given payload.
+     * @param {String} verb One of 'create', 'update' or 'destroy'
+     * @param {Object} payload
+     * @returns {Promise<Object>} The raw backend response (expected shape: `{success, data}`)
+     * @protected
+     */
+    async remoteRpc(verb, payload) {
+        let me       = this,
+            apiArray = me.api[verb].split('.'),
+            fn       = apiArray.pop(),
+            service  = Neo.ns(apiArray.join('.'));
+
+        if (!service && Neo.config.remotesApiUrl) {
+            await (await import('../remotes/Api.mjs')).default.ready();
+            service = Neo.ns(apiArray.join('.'))
+        }
+
+        if (!service?.[fn]) {
+            throw new Error(`Neo.data.Store: api.${verb} is not defined (${me.api[verb]})`)
+        }
+
+        return me.trap(service[fn](payload))
+    }
+
+    /**
+     * Backend-first update over the remotes-api.
+     *
+     * If `api.update` is configured, the changed `data` (keyed by the record's `keyProperty`) is persisted
+     * to the backend **first** and the server-authoritative result is applied to the record only on success.
+     * Without an `api.update`, falls back to a local `record.set(data)`.
+     *
+     * Rejects and fires the `mutationFailed` event on a backend error, leaving the record unchanged.
+     * @param {Neo.data.Record} record
+     * @param {Object} data The changed field values to persist
+     * @returns {Promise<Neo.data.Record>} The updated record
+     */
+    async remoteUpdate(record, data) {
+        let me = this;
+
+        if (!Neo.isObject(me.api) || !me.api.update) {
+            record.set(data);
+            return record
+        }
+
+        let payload  = {...data, [me.getKeyProperty()]: me.getKey(record)},
+            response = await me.remoteRpc('update', payload);
+
+        if (response?.success) {
+            record.set(Neo.ns(me.responseRoot, false, response) ?? data);
+            return record
+        }
+
+        me.fire('mutationFailed', {action: 'update', record, data, response});
+        throw new Error(response?.message || 'Neo.data.Store: remoteUpdate() failed')
+    }
+
+    /**
+     * @summary Assigns the data config while optionally marking its load notifications as continuation.
+     * Data hooks, records, filtering and sorting retain their normal behavior; this does not append rows.
+     * The notification context is restored after nested calls or errors, so later mutations stay ordinary.
+     * @param {Object[]|Neo.data.Model[]} data The data config's next value.
+     * @param {Object} [options={}]
+     * @param {Boolean} [options.continuation=false] Whether this assignment continues the current data view.
+     * @returns {void}
+     */
+    setData(data, {continuation=false}={}) {
+        this.#notifyAs(continuation === true, () => {this.data = data})
     }
 
     /**
@@ -449,25 +2051,43 @@ class Store extends Base {
                 me.sorters = [{
                     direction: opts.direction,
                     property : opts.property
-                }];
+                }]
             } else {
                 if (!me.remoteSort) {
-                    me.startUpdate();
-                    me.clear();
-                }
-
-                me.sorters = [];
-
-                if (!me.remoteSort) {
-                    me.add([...me.initialData]);
-                    me.endUpdate();
-                    me.fire('sort');
+                    me.sorters = [{
+                        direction: 'ASC',
+                        property : initialIndexSymbol
+                    }]
                 }
             }
         }
     }
+
+    /**
+     * Serializes the instance into a JSON-compatible object for the Neural Link.
+     * @returns {Object}
+     */
+    toJSON() {
+        let me = this;
+
+        return {
+            ...super.toJSON(),
+            autoInitRecords : me.autoInitRecords,
+            autoLoad        : me.autoLoad,
+            currentPage     : me.currentPage,
+            initialChunkSize: me.initialChunkSize,
+            isGrouped       : me.isGrouped,
+            isLoaded        : me.isLoaded,
+            isLoading       : me.isLoading,
+            model           : me.model?.toJSON(),
+            pageSize        : me.pageSize,
+            pipeline        : me.pipeline?.toJSON(),
+            remoteFilter    : me.remoteFilter,
+            remoteSort      : me.remoteSort,
+            totalCount      : me.totalCount,
+            url             : me.url
+        }
+    }
 }
 
-Neo.applyClassConfig(Store);
-
-export default Store;
+export default Neo.setupClass(Store);

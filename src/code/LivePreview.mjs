@@ -1,0 +1,598 @@
+import Container    from '../container/Base.mjs';
+import MonacoEditor from '../component/wrapper/MonacoEditor.mjs'
+import TabContainer from '../tab/Container.mjs';
+
+const configSymbol = Symbol.for('configSymbol');
+
+/**
+ * @summary A split-view component for real-time code editing and execution.
+ *
+ * This class provides a robust environment for editing source code and viewing the results in real-time.
+ * It integrates the **Monaco Editor** for a rich editing experience and supports multiple languages and execution modes.
+ *
+ * Key features:
+ * - **Multi-Language Support**: Supports 'neomjs' (JS execution), 'markdown' and 'mermaid' (rendering).
+ * - **Dynamic Imports**: Utilizes `import()` to lazy-load the Markdown component or Code Executor, optimizing initial load performance.
+ * - **Sandboxed Execution**: Executes Neo.mjs code within a controlled context using `new Function`.
+ * - **Responsive Layout**: collapsible, pop-out support, and configurable views (source vs. preview).
+ *
+ * This component is central to the Neo.mjs learning experience and documentation portal.
+ *
+ * @class Neo.code.LivePreview
+ * @extends Neo.container.Base
+ * @see Neo.code.executor.Neo
+ * @see Neo.component.Markdown
+ * @see Neo.component.wrapper.Mermaid
+ * @see Neo.component.wrapper.MonacoEditor
+ */
+class LivePreview extends Container {
+    /**
+     * Valid values for activeView
+     * @member {String[]} activeViews=['preview','source']
+     * @protected
+     * @static
+     */
+    static activeViews = ['preview', 'source']
+    /**
+     * Valid values for language
+     * @member {String[]} languages=['markdown','mermaid','neomjs']
+     * @protected
+     * @static
+     */
+    static languages = ['markdown', 'mermaid', 'neomjs']
+
+    static config = {
+        /**
+         * @member {String} className='Neo.code.LivePreview'
+         * @protected
+         */
+        className: 'Neo.code.LivePreview',
+        /**
+         * @member {String} ntype='live-preview'
+         * @protected
+         */
+        ntype: 'live-preview',
+        /**
+         * Valid values are 'preview' and 'source'
+         * @member {String} activeView_='source'
+         * @reactive
+         */
+        activeView_: 'source',
+        /**
+         * @member {String[]} baseCls=['neo-code-live-preview']
+         */
+        baseCls: ['neo-code-live-preview'],
+        /**
+         * @member {Boolean} disableRunSource=false
+         */
+        disableRunSource: false,
+        /**
+         * @member {Boolean} enableFullscreen=true
+         */
+        enableFullscreen: true,
+        /**
+         * @member {String} language_='neomjs'
+         * @reactive
+         */
+        language_: 'neomjs',
+        /**
+         * @member {Object|String} layout='fit'
+         * @reactive
+         */
+        layout: 'fit',
+        /**
+         * @member {Object[]} items
+         */
+        items: [{
+            module             : TabContainer,
+            cls                : ['live-preview-container'],
+            reference          : 'tab-container',
+            removeInactiveCards: false,
+
+            items: [{
+                module   : MonacoEditor,
+                header   : {text: 'Source'},
+                hideLabel: true,
+                listeners: {editorChange: 'up.onEditorChange'},
+                style    : {height: '100%'},
+                reference: 'editor'
+            }, {
+                module   : Container,
+                header   : {text: 'Preview'},
+                reference: 'preview'
+            }]
+        }],
+        /**
+         * The code to display inside the Monaco editor
+         * @member {String|null} value_=null
+         * @reactive
+         */
+        value_: null,
+        /**
+         * The url for the child app to use for the popout window
+         * @member {String} windowUrl_='./childapps/preview/index.html'
+         * @reactive
+         */
+        windowUrl_: './childapps/preview/index.html'
+    }
+
+    /**
+     * @member {Number|null} connectedWindowId=null
+     */
+    connectedWindowId = null
+    /**
+     * @member {Neo.component.Markdown|null} markdownComponent=null
+     */
+    markdownComponent = null
+    /**
+     * @member {Class|null} markdownComponentClass=null
+     */
+    markdownComponentClass = null
+    /**
+     * @member {Neo.component.wrapper.Mermaid|null} mermaidComponent=null
+     * @protected
+     */
+    mermaidComponent = null
+    /**
+     * @member {Class|null} mermaidComponentClass=null
+     * @protected
+     */
+    mermaidComponentClass = null
+    /**
+     * @member {Neo.code.executor.Neo|null} neoExecutor=null
+     */
+    neoExecutor = null
+    /**
+     * Link the preview output to different targets
+     * @member {Neo.component.Base} previewContainer=null
+     */
+    previewContainer = null
+    /**
+     * Fences an awaited renderer import against later source, language and owner changes.
+     * @member {Number} runSourceId=0
+     * @protected
+     */
+    runSourceId = 0
+
+    /**
+     * @returns {Neo.component.Base|null}
+     */
+    get tabContainer() {
+        return this.getItem('tab-container')
+    }
+
+    /**
+     * Triggered after the activeView config got changed
+     * @param {String} value
+     * @param {String} oldValue
+     * @protected
+     */
+    afterSetActiveView(value, oldValue) {
+        this.tabContainer.activeIndex = value === 'source' ? 0 : 1
+    }
+
+    /**
+     * @summary Selects the editor language and discards the previous renderer reference before rerunning source.
+     * @param {String} value
+     * @param {String} oldValue
+     * @protected
+     */
+    afterSetLanguage(value, oldValue) {
+        let me = this;
+
+        if (value !== 'markdown') {
+            me.markdownComponent = null
+        }
+
+        if (value !== 'mermaid') {
+            me.mermaidComponent = null
+        }
+
+        me.getItem('editor').language = value === 'neomjs' ? 'javascript' : value;
+
+        // If there is a new pending value for the value config, it will run trigger doRunSource().
+        // This can happen when calling: this.set({language, value})
+        if (oldValue && !Object.hasOwn(me[configSymbol], 'value')) {
+            me.doRunSource()
+        }
+    }
+
+
+    /**
+     * @summary Synchronizes programmatic source changes, including clearing, into the editor model.
+     * @param {String|null} value
+     * @param {String|null} oldValue
+     * @protected
+     */
+    afterSetValue(value, oldValue) {
+        if (value !== null || oldValue !== undefined) {
+            this.getItem('editor').value = value?.trim() ?? ''
+        }
+    }
+
+    /**
+     * Triggered before the activeView config gets changed
+     * @param {String} value
+     * @param {String} oldValue
+     * @returns {String}
+     * @protected
+     */
+    beforeSetActiveView(value, oldValue) {
+        return this.beforeSetEnumValue(value, oldValue, 'activeView')
+    }
+
+    /**
+     * Triggered before the language config gets changed
+     * @param {String} value
+     * @param {String} oldValue
+     * @returns {String}
+     * @protected
+     */
+    beforeSetLanguage(value, oldValue) {
+        return this.beforeSetEnumValue(value, oldValue, 'language')
+    }
+
+    /**
+     * @param {Object} data
+     */
+    async collapseExpand(data) {
+        let me       = this,
+            button   = data.component,
+            collapse = button.iconCls === 'fas fa-compress',
+            {vdom}   = me,
+            rect;
+
+        if (collapse) {
+            button.iconCls = 'fas fa-expand';
+
+            rect = me.collapseRect;
+
+            delete me.collapseRect;
+
+            Object.assign(vdom.style, {
+                height: rect.height + 'px',
+                left  : rect.x      + 'px',
+                top   : rect.y      + 'px',
+                width : rect.width  + 'px'
+            });
+
+            me.update();
+
+            await me.timeout(300);
+
+            Object.assign(vdom.style, {
+                position: null,
+                zIndex  : null
+            })
+        } else {
+            button.iconCls = 'fas fa-compress';
+
+            rect = await me.getDomRect();
+
+            me.collapseRect = rect;
+
+            vdom.style = vdom.style || {};
+
+            Object.assign(vdom.style, {
+                height  : rect.height + 'px',
+                left    : rect.x      + 'px',
+                position: 'fixed',
+                top     : rect.y      + 'px',
+                width   : rect.width  + 'px',
+                zIndex  : 103
+            });
+
+            me.update();
+
+            await me.timeout(50);
+
+            Object.assign(vdom.style, {
+                height: '100%',
+                left  : 0,
+                top   : 0,
+                width : '100%'
+            })
+        }
+
+        me.update()
+    }
+
+    /**
+     *
+     */
+    async createPopupWindow() {
+        let me         = this,
+            {windowId} = me,
+            winData    = await Neo.Main.getWindowData({windowId}),
+            rect       = await me.getDomRect(me.getReference('preview').id);
+
+        let {height, left, top, width} = rect;
+
+        left += winData.screenLeft;
+        top  += (winData.outerHeight - winData.innerHeight + winData.screenTop);
+
+        Neo.Main.windowOpen({
+            url           : `${me.windowUrl}?id=${me.id}`,
+            windowFeatures: `height=${height},left=${left},top=${top},width=${width}`,
+            windowId,
+            windowName    : me.id
+        })
+    }
+
+    /**
+     * @summary Invalidates pending renderer imports and releases the owned executor before child teardown.
+     * @param {...*} args
+     */
+    destroy(...args) {
+        this.runSourceId++;
+
+        if (this.connectedWindowId) {
+            Neo.Main.windowClose({names: [this.id], windowId: this.windowId})
+        }
+
+        this.neoExecutor?.destroy();
+
+        super.destroy(...args)
+    }
+
+    /**
+     * Executes the current source code.
+     *
+     * This method acts as the **execution trigger**. It orchestrates the process by:
+     * 1.  **Validation**: Ensuring source code exists.
+     * 2.  **Execution**:
+     *     - For **Markdown/Mermaid**: Reuses the matching wrapper in the current preview container.
+     *     - For **Neo.mjs**: Delegates execution to the `Neo.code.executor.Neo` instance.
+     *
+     * @summary Runs the current source through its renderer, refusing obsolete imports after a newer run,
+     * mode change or teardown. Empty source removes the previous preview. Mermaid measures text in its
+     * host, so local diagrams wait until Preview is active; a popped-out preview continues to update.
+     * @returns {Promise<void>}
+     */
+    async doRunSource() {
+        if (this.disableRunSource || this.isDestroyed) {
+            return
+        }
+
+        const me        = this,
+              container = me.getPreviewContainer(),
+              source    = me.value,
+              language  = me.language,
+              runId     = ++me.runSourceId,
+              current   = () => !me.isDestroyed && me.runSourceId === runId && me.language === language &&
+                  !container.isDestroyed && me.getPreviewContainer() === container;
+
+        if (language === 'mermaid' && !me.previewContainer && me.tabContainer.activeIndex !== 1) {
+            return
+        }
+
+        if (!source) {
+            container.removeAll();
+            me.markdownComponent = me.mermaidComponent = null;
+            return
+        }
+
+        if (language === 'markdown' || language === 'mermaid') {
+            const componentKey = language === 'markdown' ? 'markdownComponent' : 'mermaidComponent',
+                  classKey     = componentKey + 'Class';
+
+            if (!me[classKey]) {
+                const module = language === 'markdown'
+                    ? await import('../component/Markdown.mjs')
+                    : await import('../component/wrapper/Mermaid.mjs');
+
+                if (!current()) return;
+
+                me[classKey] = module.default
+            }
+
+            if (!current()) return;
+
+            const component = me[componentKey];
+
+            if (component && !component.isDestroyed && container.items.includes(component)) {
+                component.value = source
+            } else {
+                // destroy, silent => merge changes into one update cycle
+                container.removeAll(true, true);
+
+                me[componentKey] = container.add({
+                    module   : me[classKey],
+                    style    : {height: '100%', overflow: 'auto'},
+                    value    : source,
+                    windowUrl: me.windowUrl
+                })
+            }
+        } else {
+            if (!me.neoExecutor) {
+                const module = await import('./executor/Neo.mjs');
+
+                if (!current()) return;
+
+                me.neoExecutor = Neo.create(module.default);
+            }
+
+            await me.neoExecutor.execute({code: source, container})
+        }
+    }
+
+    /**
+     * @returns {Neo.component.Base|null}
+     */
+    getPreviewContainer() {
+        let me = this;
+
+        if (me.previewContainer) {
+            return me.previewContainer
+        }
+
+        return me.getReference('preview')
+    }
+
+    /**
+     * @summary Runs the newly exposed preview or retires local output and pending imports on return to Source.
+     * @param {Object} data
+     * @param {Neo.component.Base} data.item
+     * @param {Number} data.oldValue
+     * @param {String} data.source
+     * @param {Number} data.value
+     */
+    onActiveIndexChange(data) {
+        let me        = this,
+            isPreview = data.value === 1;
+
+        if (data.item.reference === 'preview') {
+            me.doRunSource()
+        }
+        // Navigating to the source view should destroy the app, in case the preview view is not popped out
+        else if (!isPreview && !me.previewContainer) {
+            me.runSourceId++;
+            me.getReference('preview').removeAll()
+        }
+
+        let popoutButton = me.tabContainer.getAction('popout');
+
+        popoutButton && (popoutButton.hidden = !isPreview);
+        me.disableRunSource = false;
+    }
+
+    /**
+     *
+     */
+    onConstructed() {
+        super.onConstructed();
+
+        let me             = this,
+            items          = [],
+            {tabContainer} = me;
+
+        me.editor
+
+        if (me.enableFullscreen) {
+            items.push({
+                action    : 'fullscreen',
+                contextual: false,
+                handler   : me.collapseExpand.bind(me),
+                iconCls   : 'fas fa-expand',
+                ui        : 'ghost',
+                vdom      : {'aria-label': 'Toggle fullscreen preview'}
+            })
+        }
+
+        // Only add the popout window button in case we are using shared workers
+        if (Neo.config.useSharedWorkers) {
+            items.push({
+                action    : 'popout',
+                contextual: false,
+                handler   : me.popoutPreview.bind(me),
+                hidden    : tabContainer.activeIndex !== 1,
+                iconCls   : 'far fa-window-maximize',
+                ui        : 'ghost',
+                vdom      : {'aria-label': 'Open preview in a separate window'}
+            });
+
+            Neo.currentWorker.on({
+                connect   : me.onWindowConnect,
+                disconnect: me.onWindowDisconnect,
+                scope     : me
+            })
+        }
+
+        tabContainer.headerActions = items;
+
+        tabContainer.on('activeIndexChange', me.onActiveIndexChange, me);
+
+        // changing the activeView initially will not trigger our onActiveIndexChange() logic
+        me.activeView === 'preview' && me.doRunSource()
+    }
+
+    /**
+     * @summary Records the editor's current source and updates its active preview through the same dispatch.
+     * @param {Object} data
+     * @param {String} data.value
+     */
+    onEditorChange({value}) {
+        let me = this;
+
+        me._value = value;
+
+        me.fire('editorChange', {value});
+
+        me.doRunSource()
+    }
+
+    /**
+     * @param {Object} data
+     * @param {String} data.appName
+     * @param {Number} data.windowId
+     */
+    async onWindowConnect({windowId}) {
+        let me     = this,
+            url    = await Neo.Main.getByPath({path: 'document.URL', windowId}),
+            params = new URL(url).searchParams,
+            id     = params.get('id');
+
+        if (id === me.id) {
+            me.connectedWindowId = windowId;
+
+            let app              = Neo.apps[windowId],
+                mainView         = app.mainView,
+                previewContainer = me.getReference('preview'),
+                {tabContainer}   = me,
+                previewView      = previewContainer.removeAt(0, false),
+                theme            = me.getTheme?.();
+
+            // We overrule the viewport theme on purpose
+            if (theme) {
+                mainView.theme = theme
+            }
+
+            me.previewContainer = mainView;
+            mainView.add(previewView);
+
+            tabContainer.activeIndex = 0; // switch to the source view
+
+            tabContainer.getTabAtIndex(1).disabled = true
+        }
+    }
+
+    /**
+     * @param {Object} data
+     * @param {String} data.appName
+     * @param {Number} data.windowId
+     */
+    async onWindowDisconnect(data) {
+        let me = this;
+
+        if (data.windowId === me.connectedWindowId) {
+            let app              = Neo.apps[data.windowId],
+                mainView         = app.mainView,
+                previewContainer = me.getReference('preview'),
+                {tabContainer}   = me,
+                previewView      = mainView.removeAt(0, false);
+
+            me.previewContainer = null;
+            previewContainer.add(previewView);
+
+            me.disableRunSource = true; // will get reset after the next activeIndex change (async)
+            tabContainer.activeIndex = 1;        // switch to the source view
+
+            tabContainer.getAction('popout').disabled = false;
+            tabContainer.getTabAtIndex(1).disabled = false;
+
+            me.connectedWindowId = null
+        }
+    }
+
+    /**
+     * @param {Object} data
+     */
+    async popoutPreview(data) {
+        let me = this;
+
+        data.component.disabled = true;
+        await me.createPopupWindow()
+    }
+}
+
+export default Neo.setupClass(LivePreview);

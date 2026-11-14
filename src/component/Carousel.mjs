@@ -65,10 +65,10 @@ class Carousel extends Component {
          *      record = {foo: ... , bar: ...}
          *      data => [{
          *          cls: 'css-foo-class',
-         *          html: data.foo
+         *          text: data.foo
          *      },
          *      {
-         *          html: data.baa
+         *          text: data.bar
          *      }]"
          */
         itemTpl_: null,
@@ -104,7 +104,7 @@ class Carousel extends Component {
         me.addDomListeners([
             {click: me.onCarouselBtnClick, delegate: '.neo-carousel-btn',  scope: me},
             {click: me.onClick,            delegate: '.neo-carousel-item', scope: me}
-        ]);
+        ])
     }
 
     /**
@@ -120,18 +120,21 @@ class Carousel extends Component {
             TaskManager.start({
                 id      : me.id,
                 interval: value,
-                run     : function () {
+
+                run() {
                     me.onCarouselBtnClick('forward');
                 }
             });
 
             me.vdom.cn[0].cn[0].removeDom = true;
-            me.update();
+            me.update()
         }
     }
 
     /**
-     * Triggered after the store config got changed
+     * @summary Subscribes to `store` load events and initializes the carousel track for the assigned store.
+     *
+     * Triggered after the store config got changed.
      * @param {Neo.data.Store|Object|null} value
      * @param {Neo.data.Store|null} oldValue
      * @protected
@@ -140,11 +143,13 @@ class Carousel extends Component {
         let me = this;
 
         value?.on({
-            load : 'onStoreLoad',
+            load : me.onStoreLoad,
             scope: me
         });
 
-        value?.getCount() > 0 && me.onStoreLoad();
+        if (value || oldValue) {
+            me.onStoreLoad()
+        }
     }
 
     /**
@@ -156,24 +161,40 @@ class Carousel extends Component {
      */
     beforeSetStore(value, oldValue) {
         oldValue?.destroy();
-        return ClassSystemUtil.beforeSetInstance(value, Store);
+        return ClassSystemUtil.beforeSetInstance(value, Store)
     }
 
     /**
-     * Create the initial three items and add them to the vdom
+     * @summary Builds the carousel track items for 0, 1, 2, or 3+ store records and toggles navigation buttons.
      */
     createBaseItems() {
         let me       = this,
+            count    = me.store?.getCount() || 0,
             itemRoot = me.#getItemRoot(),
             items    = [],
+            len      = Math.min(count, 3),
             i        = 0;
 
-        for (i; i < 3; i++) {
-            items.push(me.createItem(i, i));
+        me.itemData      = {};
+        me.itemIndex     = count === 1 ? 0 : 1;
+        me.positionArray = ['neo-carousel--translate-x-full', 'neo-carousel-translate-x-0', 'neo-carousel-translate-x-full'];
+
+        if (me.autoRun || count < 2) {
+            me.vdom.cn[0].cn[0].removeDom = true
+        } else {
+            delete me.vdom.cn[0].cn[0].removeDom
+        }
+
+        if (count === 1) {
+            items.push(me.createItem(0, 1))
+        } else {
+            for (; i < len; i++) {
+                items.push(me.createItem(i, i))
+            }
         }
 
         itemRoot.cn = items;
-        me.update();
+        me.update()
     }
 
     /**
@@ -183,12 +204,10 @@ class Carousel extends Component {
      * @returns {Object}
      */
     createItem(recordIndex, positionIndex) {
-        let me            = this,
-            itemCls       = me.itemCls,
-            positionArray = me.positionArray,
-            store         = me.store,
-            data          = store.getAt(recordIndex),
-            cn            = me.itemTpl(data),
+        let me                              = this,
+            {itemCls, positionArray, store} = me,
+            data                            = store.getAt(recordIndex),
+            cn                              = me.itemTpl(data),
 
         newItem = {
             cls: [positionArray[positionIndex], 'neo-carousel-item'],
@@ -198,61 +217,69 @@ class Carousel extends Component {
 
         itemCls && newItem.cls.push(itemCls);
 
-        me.itemData[positionIndex] = data;
+        me.itemData[recordIndex] = data;
 
-        return newItem;
+        return newItem
     }
 
     /**
-     * Rotate the three items and fill in a new record
-     * @param {Object} event
-     * @param {Object} event.target - clicked button
+     * @summary Rotates the active carousel item for 2 or 3+ store records and ignores clicks when fewer than 2 items exist.
+     * @param {Object|String} event
+     * @param {Object} [event.target] - clicked button
      */
     onCarouselBtnClick(event) {
-        let me            = this,
-            action        = (typeof event === 'string') ? event : event.target.data.carouselaction,
-            store         = me.store,
-            countItems    = store.getCount(),
-            index         = me.itemIndex,
-            positionArray = me.positionArray,
-            root          = me.#getItemRoot(),
-            newRecordIndex, positionCls, recordIndex, vdomCls;
+        let me                     = this,
+            action                 = Neo.isString(event) ? event : event.target.data.carouselaction,
+            {positionArray, store} = me,
+            countItems             = store?.getCount() || 0,
+            index                  = me.itemIndex,
+            root                   = me.#getItemRoot(),
+            newRecordIndex, positionCls, vdomCls;
+
+        if (countItems < 2) {
+            return
+        }
+
+        if (countItems === 2) {
+            me.itemIndex = (index + 1) % 2;
+            vdomCls      = action === 'forward' ? 'neo-carousel--translate-x-full' : 'neo-carousel-translate-x-full';
+
+            root.cn.forEach(cn => {
+                cn.cls[0] = cn.recordIndex === me.itemIndex ? 'neo-carousel-translate-x-0' : vdomCls
+            });
+
+            me.update();
+            return
+        }
 
         if (action === 'forward') {
             vdomCls        = 'neo-carousel-translate-x-full';
-            index          = index + 2
-            newRecordIndex = index % countItems;
-
-            me.itemIndex = newRecordIndex - 1;
-            positionArray = me.#arrayRotate(positionArray, -1);
+            me.itemIndex   = (index + 1) % countItems;
+            newRecordIndex = (index + 2) % countItems;
+            positionArray  = me.#arrayRotate(positionArray, -1)
         } else {
             vdomCls        = 'neo-carousel--translate-x-full';
-            index          = index - 2;
-            newRecordIndex = index < 0 ? (countItems + index) : index;
-
-            me.itemIndex = newRecordIndex + 1;
-            positionArray = me.#arrayRotate(positionArray, 1);
+            me.itemIndex   = (index - 1 + countItems) % countItems;
+            newRecordIndex = (index - 2 + countItems) % countItems;
+            positionArray  = me.#arrayRotate(positionArray, 1)
         }
 
         me.positionArray = positionArray;
 
         root.cn = root.cn.map(function(cn, mappingIndex) {
             positionCls = positionArray[mappingIndex];
-            recordIndex = cn.recordIndex;
 
-            cn.cls.shift();
-            cn.cls.unshift(positionCls);
+            cn.cls[0] = positionCls;
 
             // Update new Record
             if (positionCls === vdomCls) {
-                recordIndex = newRecordIndex;
-                cn          = me.createItem(recordIndex, mappingIndex);
+                cn = me.createItem(newRecordIndex, mappingIndex)
             }
 
-            return cn;
+            return cn
         })
 
-        me.update();
+        me.update()
     }
 
     /**
@@ -264,12 +291,12 @@ class Carousel extends Component {
             item;
 
         if (data.path[0].id === me.id) {
-            me.onContainerClick(data);
+            me.onContainerClick(data)
         } else {
             for (item of data.path) {
                 if (item.cls.includes(me.itemCls)) {
                     me.onItemClick(item, data);
-                    break;
+                    break
                 }
             }
         }
@@ -294,7 +321,7 @@ class Carousel extends Component {
          * @param {String} id the record matching the list item
          * @returns {Object}
          */
-        me.fire('itemClick', me.itemData[me.itemIndex]);
+        me.fire('itemClick', me.itemData[me.itemIndex])
     }
 
     /**
@@ -303,21 +330,19 @@ class Carousel extends Component {
      * - fill the first three records
      */
     onStoreLoad() {
-        this.createBaseItems();
+        this.createBaseItems()
     }
 
     /**
      * HELPERS
      */
     #getItemRoot() {
-        return this.vdom.cn[0].cn[1];
+        return this.vdom.cn[0].cn[1]
     }
 
     #arrayRotate(arr, n) {
-        return n ? [...arr.slice(n, arr.length), ...arr.slice(0, n)] : arr;
+        return n ? [...arr.slice(n, arr.length), ...arr.slice(0, n)] : arr
     }
 }
 
-Neo.applyClassConfig(Carousel);
-
-export default Carousel;
+export default Neo.setupClass(Carousel);

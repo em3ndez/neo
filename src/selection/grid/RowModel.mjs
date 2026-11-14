@@ -1,11 +1,12 @@
-import Model    from '../Model.mjs';
-import VDomUtil from '../../util/VDom.mjs';
+import BaseModel from './BaseModel.mjs';
 
 /**
+ * Row selection model for `Neo.grid.View`. When {@link #modifierClickEvents} is `true`, modifier clicks fire
+ * `altSelect` > `ctrlSelect` > `metaSelect` > `shiftSelect` on `view` with `{data, record}` instead of toggling.
  * @class Neo.selection.grid.RowModel
- * @extends Neo.selection.Model
+ * @extends Neo.selection.grid.BaseModel
  */
-class RowModel extends Model {
+class RowModel extends BaseModel {
     static config = {
         /**
          * @member {String} className='Neo.selection.grid.RowModel'
@@ -18,124 +19,160 @@ class RowModel extends Model {
          */
         ntype: 'selection-grid-rowmodel',
         /**
-         * @member {String} cls='selection-rowmodel'
+         * @member {String} cls='neo-selection-rowmodel'
          * @protected
          */
-        cls: 'neo-selection-rowmodel'
+        cls: 'neo-selection-rowmodel',
+        /**
+         * @member {Boolean} modifierClickEvents=false
+         */
+        modifierClickEvents: false,
+        /**
+         * @member {Boolean} selectsRows=true
+         * @protected
+         */
+        selectsRows: true
     }
 
     /**
      *
      */
     addDomListener() {
-        let me   = this,
-            view = me.view;
+        let me     = this,
+            target = me.view.gridContainer || me.view.parent;
 
-        view.addDomListeners({
-            click   : me.onRowClick,
-            delegate: '.neo-grid-row',
-            scope   : me
-        });
+        target.on('rowClick', me.onRowClick, me)
     }
 
     /**
-     * Finds the matching table row for a given row index
-     * @param {Number} index row index
-     * @returns {String|null} The table row node id
+     * @param args
      */
-    getRowId(index) {
-        if (index < 0 || this.view.store.getCount() < index) {
-            return null;
-        }
+    destroy(...args) {
+        let me     = this,
+            target = me.view?.gridContainer || me.view?.parent;
 
-        return this.view.vdom.cn[0].cn[1].cn[index].id;
-    }
+        target?.un('rowClick', me.onRowClick, me);
 
-    /**
-     * Finds the matching table row for a given event path
-     * @param {Object} path The event path
-     * @returns {Object|null} The node containing the table row class or null
-     * @protected
-     */
-    static getRowNode(path) {
-        let i    = 0,
-            len  = path.length,
-            node = null;
-
-        for (; i < len; i++) {
-            if (path[i].cls.includes('neo-grid-row')) {
-                node = path[i];
-            }
-        }
-
-        return node;
+        super.destroy(...args)
     }
 
     /**
      * @param {Object} data
      */
     onKeyDownDown(data) {
-        this.onNavKeyRow(data, 1);
+        this.canNavigate(data) && this.onNavKeyRow(1)
+    }
+
+    /**
+     * WAI-ARIA treegrid: `Left` collapses the selected, expanded parent row
+     * @param {Object} data
+     */
+    onKeyDownLeft(data) {
+        this.canNavigate(data) && this.toggleSelectedTreeNode(false)
+    }
+
+    /**
+     * WAI-ARIA treegrid: `Right` expands the selected, collapsed parent row
+     * @param {Object} data
+     */
+    onKeyDownRight(data) {
+        this.canNavigate(data) && this.toggleSelectedTreeNode(true)
     }
 
     /**
      * @param {Object} data
      */
     onKeyDownUp(data) {
-        this.onNavKeyRow(data, -1);
+        this.canNavigate(data) && this.onNavKeyRow(-1)
     }
 
     /**
-     * @param {Object} data
+     * Hands the single selected row of a tree grid to {@link Neo.grid.Container#toggleTreeNode}.
+     * Nothing happens outside a tree grid, with no or more than one selected row, on a leaf, or when the row
+     * already is in the requested state. The selection stays as it is in every case.
+     * @param {Boolean} expand `true` to expand, `false` to collapse
+     * @returns {Boolean} `true` if the row changed its expansion state
+     * @protected
+     */
+    toggleSelectedTreeNode(expand) {
+        let me            = this,
+            gridContainer = me.view?.gridContainer,
+            {selectedRows} = me;
+
+        if (!gridContainer?.isTreeGrid || selectedRows.length !== 1) {
+            return false
+        }
+
+        return gridContainer.toggleTreeNode(me.getRowRecord(selectedRows[0]), expand)
+    }
+
+    /**
      * @param {Number} step
      */
-    onNavKeyRow(data, step) {
-        let me         = this,
-            node       = RowModel.getRowNode(data.path),
-            view       = me.view,
-            store      = view.store,
-            vdomNode   = VDomUtil.findVdomChild(view.vdom, node.id),
-            newIndex   = (vdomNode.index + step) % store.getCount(),
-            parentNode = vdomNode.parentNode,
-            id;
+    onNavKeyRow(step) {
+        let me           = this,
+            {view}       = me,
+            {store}      = view,
+            countRecords = store.getCount(),
+            recordId     = me.selectedRows[0] || view.getRecordId(store.getAt(0)),
+            record       = me.getRowRecord(recordId),
+            index        = store.indexOf(record),
+            newIndex     = (index + step) % countRecords;
 
         while (newIndex < 0) {
-            newIndex += store.getCount();
+            newIndex += countRecords
         }
 
-        id = parentNode.cn[newIndex].id;
+        record = store.getAt(newIndex);
 
-        if (id) {
-            me.select(id);
-            view.focus(id);
+        if (me.hasAnnotations(record)) {
+            me.updateAnnotations(record)
+        } else {
+            recordId = view.getRecordId(record);
 
-            view.fire('select', {
-                record: store.getAt(newIndex)
-            });
+            if (recordId) {
+                me.selectRow(recordId);
+
+                view.scrollByRows(index, step);
+                view.fire('select', {record});
+                me.fireRowSelectionChange()
+            }
         }
     }
 
     /**
-     * @param {Object} data
+     * @summary Fires modifier-key select events when `modifierClickEvents` is enabled, or toggles row selection.
+     * @param {Object} event
      */
-    onRowClick(data) {
-        let me   = this,
-            node = RowModel.getRowNode(data.path),
-            id   = node?.id,
-            view = me.view,
-            isSelected, record;
+    onRowClick(event) {
+        let me     = this,
+            {view} = me,
+            {data} = event,
+            record = event.record || me.getRecord(data.path),
+            recordId;
 
-        if (id) {
-            me.toggleSelection(id);
+        // The single View-owned model listens once on the gridContainer, so each row click is
+        // processed exactly once regardless of which body fired it.
 
-            isSelected = me.isSelected(id);
-            record     = view.store.getAt(VDomUtil.findVdomChild(view.vdom, id).index);
+        if (record) {
+            if (me.modifierClickEvents && data.altKey) {
+                view.fire('altSelect', {data, record})
+            } else if (me.modifierClickEvents && data.ctrlKey) {
+                view.fire('ctrlSelect', {data, record})
+            } else if (me.modifierClickEvents && data.metaKey) {
+                view.fire('metaSelect', {data, record})
+            } else if (me.modifierClickEvents && data.shiftKey) {
+                view.fire('shiftSelect', {data, record})
+            } else if (me.hasAnnotations(record)) {
+                me.updateAnnotations(record)
+            } else {
+                recordId = view.getRecordId(record);
 
-            !isSelected && view.onDeselect?.(record);
+                me.toggleRowSelection(recordId);
 
-            view.fire(isSelected ? 'select' : 'deselect', {
-                record
-            });
+                view.fire(me.isSelectedRow(recordId) ? 'select' : 'deselect', {record});
+                me.fireRowSelectionChange()
+            }
         }
     }
 
@@ -145,41 +182,31 @@ class RowModel extends Model {
     register(component) {
         super.register(component);
 
-        let id   = this.id,
-            view = this.view;
+        let {id, view} = this;
 
-        view.keys?._keys.push({
-            fn   : 'onKeyDownDown',
-            key  : 'Down',
-            scope: id
-        }, {
-            fn   : 'onKeyDownUp',
-            key  : 'Up',
-            scope: id
-        });
+        view.keys?._keys.push(
+            {fn: 'onKeyDownDown',  key: 'Down',  scope: id},
+            {fn: 'onKeyDownLeft',  key: 'Left',  scope: id},
+            {fn: 'onKeyDownRight', key: 'Right', scope: id},
+            {fn: 'onKeyDownUp',    key: 'Up',    scope: id}
+        )
     }
 
     /**
      *
      */
     unregister() {
-        let id   = this.id,
-            view = this.view;
+        let {id, view} = this;
 
-        view.keys?.removeKeys([{
-            fn   : 'onKeyDownDown',
-            key  : 'Down',
-            scope: id
-        }, {
-            fn   : 'onKeyDownUp',
-            key  : 'Up',
-            scope: id
-        }]);
+        view.keys?.removeKeys([
+            {fn: 'onKeyDownDown',  key: 'Down',  scope: id},
+            {fn: 'onKeyDownLeft',  key: 'Left',  scope: id},
+            {fn: 'onKeyDownRight', key: 'Right', scope: id},
+            {fn: 'onKeyDownUp',    key: 'Up',    scope: id}
+        ]);
 
-        super.unregister();
+        super.unregister()
     }
 }
 
-Neo.applyClassConfig(RowModel);
-
-export default RowModel;
+export default Neo.setupClass(RowModel);

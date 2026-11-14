@@ -1,4 +1,5 @@
-import Base from '../core/Base.mjs';
+import Base             from '../core/Base.mjs';
+import ComponentManager from '../manager/Component.mjs';
 
 /**
  * @class Neo.util.VNode
@@ -14,6 +15,67 @@ class VNode extends Base {
     }
 
     /**
+     * Creates a flat map of the vnode tree, containing ids as keys and vnodes as values.
+     * This is highly optimized for performance to eliminate O(N²) lookups during tree syncing.
+     * @param {Object} vnode
+     * @param {Map}    [map=new Map()]
+     * @returns {Map}
+     */
+    static createMap(vnode, map = new Map()) {
+        vnode = VNode.getVnode(vnode);
+
+        if (vnode) {
+            // Strict ID matching: VNodeUtil.find(opts) specifically checks Object.hasOwn(vnode, 'id')
+            // It does not match raw placeholders that only have componentId.
+            let id = vnode.id;
+
+            // First-match wins: VNodeUtil.find is a top-down pre-order traversal that returns the first match.
+            // We must not overwrite an existing ID if we encounter duplicates or stale wrappers deeper in the tree.
+            if (id && !map.has(id)) {
+                map.set(id, vnode);
+            }
+
+            let childNodes = vnode.childNodes;
+            if (childNodes) {
+                for (let i = 0, len = childNodes.length; i < len; i++) {
+                    VNode.createMap(childNodes[i], map);
+                }
+            }
+        }
+
+        return map;
+    }
+
+    /**
+     * Unlinks, in place, every `{componentId}` reference whose component has left the registry. The DOM node such a
+     * component rendered stays until an update diffs it away, so the tree mirroring that DOM keeps it: as the vnode
+     * the component last rendered when `retired` holds it, otherwise as a bare node with its id. The strict walkers
+     * then never resolve a name the registry no longer knows, and the next update removes the node, or diffs a new
+     * component with the same id against it. Only the tree's own inline nodes are walked: a live reference is kept,
+     * never followed, since the stored vnode behind it is that component's own to keep clean.
+     * @param {Object} vnode
+     * @param {Object} [retired={}] The vnode a retiring component last rendered, keyed by its id
+     * @returns {Number} The number of references unlinked
+     */
+    static unlinkRetiredReferences(vnode, retired={}) {
+        let childNodes = vnode?.childNodes,
+            unlinked   = 0;
+
+        childNodes?.forEach((child, index) => {
+            if (child?.componentId && !ComponentManager.get(child.componentId)) {
+                child = childNodes[index] = retired[child.componentId] || {id: child.id || child.componentId};
+                unlinked++
+            }
+
+            if (!child?.componentId) {
+                unlinked += VNode.unlinkRetiredReferences(child, retired)
+            }
+        });
+
+        return unlinked
+    }
+
+    /**
      * Search vnode child nodes by id or opts object for a given vdom tree
      * @param {Object} vnode
      * @param {Object|String} opts Either an object containing vdom node attributes or a string based id
@@ -24,7 +86,9 @@ class VNode extends Base {
      *     {String} parentId
      *     {Object} vnode
      */
-    static findChildVnode(vnode, opts, index, parentNode) {
+    static find(vnode, opts, index, parentNode) {
+        vnode = VNode.getVnode(vnode);
+
         index = index || 0;
         opts  = typeof opts !== 'string' ? opts : {id: opts};
 
@@ -39,70 +103,70 @@ class VNode extends Base {
         optsLength = optsArray.length;
 
         optsArray.forEach(([key, value]) => {
-            if (vnode.hasOwnProperty(key)) {
-                switch(key) {
+            if (Object.hasOwn(vnode, key)) {
+                switch (key) {
                     case 'attributes':
                         if (Neo.isObject(value) && Neo.isObject(vnode[key])) {
                             Object.entries(value).forEach(([attrKey, attrValue]) => {
-                                if (!(vnode[key].hasOwnProperty(attrKey) && vnode[key][attrKey] === attrValue)) {
-                                    attrMatch = false;
+                                if (!(Object.hasOwn(vnode[key], attrKey) && vnode[key][attrKey] === attrValue)) {
+                                    attrMatch = false
                                 }
                             });
 
                             if (attrMatch) {
-                                matchArray.push(true);
+                                matchArray.push(true)
                             }
                         }
-                        break;
+                        break
                     case 'className':
                         if (typeof value === 'string' && Neo.isArray(vnode[key])) {
                             if (vnode[key].includes(value)) {
-                                matchArray.push(true);
+                                matchArray.push(true)
                             }
                         } else if (typeof value === 'string' && typeof vnode[key] === 'string') {
                             if (vnode[key] === value) {
-                                matchArray.push(true);
+                                matchArray.push(true)
                             }
                         } else if (Neo.isArray(value) && Neo.isArray(vnode[key])) {
                             // todo: either search the vnode array for all keys or compare if the arrays are equal.
-                            throw new Error('findChildVnode: cls matching not supported for target & source types of Arrays');
+                            throw new Error('find: cls matching not supported for target & source types of Arrays')
                         }
-                        break;
+                        break
                     case 'style':
                         if (Neo.isObject(value) && Neo.isObject(vnode[key])) {
                             Object.entries(value).forEach(([styleKey, styleValue]) => {
-                                if (!(vnode[key].hasOwnProperty(styleKey) && vnode[key][styleKey] === styleValue)) {
-                                    styleMatch = false;
+                                if (!(Object.hasOwn(vnode[key], styleKey) && vnode[key][styleKey] === styleValue)) {
+                                    styleMatch = false
                                 }
                             });
 
                             if (styleMatch) {
-                                matchArray.push(true);
+                                matchArray.push(true)
                             }
                         }
-                        break;
+                        break
                     default:
                         if (vnode[key] === value) {
-                            matchArray.push(true);
+                            matchArray.push(true)
                         }
-                        break;
+                        break
                 }
             }
         });
 
         if (matchArray.length === optsLength) {
-            return {index, parentNode, vnode};
+            return {index, parentNode, vnode}
         }
 
         for (; i < len; i++) {
-            subChild = VNode.findChildVnode(vnode.childNodes[i], opts, i, vnode);
+            subChild = VNode.find(vnode.childNodes[i], opts, i, vnode);
 
             if (subChild) {
-                return subChild;
+                return subChild
             }
         }
 
-        return null;
+        return null
     }
 
     /**
@@ -111,51 +175,76 @@ class VNode extends Base {
      * @param {String|null} id
      * @returns {Object|null} child vnode or null
      */
-    static findChildVnodeById(vnode, id) {
+    static getById(vnode, id) {
+        vnode = VNode.getVnode(vnode);
+
+        if (!vnode) {
+            return null
+        }
+
         let childNodes = vnode.childNodes || [],
             i          = 0,
             len        = childNodes.length,
             childNode;
 
         if (vnode.id === id) {
-            return vnode;
+            return vnode
         }
 
         for (; i < len; i++) {
-            childNode = childNodes[i];
-
-            if (childNode.id === id) {
-                return childNode
-            }
-
-            childNode = VNode.findChildVnodeById(childNode, id);
+            childNode = VNode.getVnode(childNodes[i]);
 
             if (childNode) {
-                return childNode;
+                if (childNode.id === id) {
+                    return childNode
+                }
+
+                childNode = VNode.getById(childNode, id);
+
+                if (childNode) {
+                    return childNode
+                }
             }
         }
 
-        return null;
+        return null
     }
 
     /**
-     * Get the ids of all child nodes of the given vnode
-     * @param vnode
-     * @param [childIds=[]]
-     * @returns {Array} childIds
+     * Get the ids of all child nodes of the given vnode, excluding component references
+     * @param {Object} vnode
+     * @param {String[]} childIds=[]
+     * @returns {String[]} childIds
      */
     static getChildIds(vnode, childIds=[]) {
-        let childNodes = vnode && vnode.childNodes || [];
-
-        childNodes.forEach(childNode => {
-            if (childNode.id) {
-                childIds.push(childNode.id);
+        vnode?.childNodes?.forEach(childNode => {
+            if (childNode.id && !childNode.componentId) {
+                childIds.push(childNode.id)
             }
 
-            childIds = VNode.getChildIds(childNode, childIds);
+            VNode.getChildIds(childNode, childIds)
         });
 
-        return childIds;
+        return childIds
+    }
+
+    /**
+     * Convenience shortcut using manager.Component to replace vnode references if needed
+     * @param {Object} vnode
+     * @returns {Object}
+     */
+    static getVnode(vnode) {
+        if (vnode?.componentId) {
+            const component = ComponentManager.get(vnode.componentId);
+
+            if (!component) {
+                throw new Error(`util.VNode.getVnode: Component not found for id: ${vnode.componentId}`)
+            }
+
+            vnode = component.vnode
+        }
+
+        return vnode
     }
 
     /**
@@ -165,29 +254,31 @@ class VNode extends Base {
      * @returns {Boolean} true in case the node was found and removed
      */
     static removeChildVnode(vnode, id) {
+        vnode = VNode.getVnode(vnode);
+
         let childNodes = vnode.childNodes || [],
             i          = 0,
             len        = childNodes.length,
             childNode;
 
         if (vnode.id === id) {
-            throw new Error('removeChildVnode: target id matches the root vnode id: ' + id);
+            throw new Error('removeChildVnode: target id matches the root vnode id: ' + id)
         }
 
         for (; i < len; i++) {
-            childNode = childNodes[i];
+            childNode = VNode.getVnode(childNodes[i]);
 
             if (childNode.id === id) {
                 childNodes.splice(i, 1);
-                return true;
+                return true
             }
 
             if (VNode.removeChildVnode(childNode, id)) {
-                return true;
+                return true
             }
         }
 
-        return false;
+        return false
     }
 
     /**
@@ -198,32 +289,32 @@ class VNode extends Base {
      * @returns {Boolean} true in case the node was found and replaced
      */
     static replaceChildVnode(vnode, id, newChildVnode) {
+        vnode = VNode.getVnode(vnode);
+
         let childNodes = vnode.childNodes || [],
             i          = 0,
             len        = childNodes.length,
             childNode;
 
         if (vnode.id === id) {
-            throw new Error('replaceChildVnode: target id matches the root vnode id: ' + id);
+            throw new Error('replaceChildVnode: target id matches the root vnode id: ' + id)
         }
 
         for (; i < len; i++) {
-            childNode = childNodes[i];
+            childNode = VNode.getVnode(childNodes[i]);
 
             if (childNode.id === id) {
                 childNodes[i] = newChildVnode;
-                return true;
+                return true
             }
 
             if (VNode.replaceChildVnode(childNode, id, newChildVnode)) {
-                return true;
+                return true
             }
         }
 
-        return false;
+        return false
     }
 }
 
-Neo.applyClassConfig(VNode);
-
-export default VNode;
+export default Neo.setupClass(VNode);

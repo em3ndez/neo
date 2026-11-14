@@ -1,23 +1,27 @@
-import CoreBase   from '../core/Base.mjs';
-import Filter     from './Filter.mjs';
-import Logger     from '../util/Logger.mjs';
-import Sorter     from './Sorter.mjs';
-import Observable from '../core/Observable.mjs';
-import Util       from '../core/Util.mjs';
+import {isDescriptor} from '../core/ConfigSymbols.mjs';
+import Base           from '../core/Base.mjs';
+import Filter         from './Filter.mjs';
+import Logger         from '../util/Logger.mjs';
+import Observable     from '../core/Observable.mjs';
+import Sorter         from './Sorter.mjs';
 
-const countMutations   = Symbol('countMutations'),
-      isFiltered       = Symbol('isFiltered'),
-      isSorted         = Symbol('isSorted'),
-      silentUpdateMode = Symbol('silentUpdateMode'),
-      toAddArray       = Symbol('toAddArray'),
-      toRemoveArray    = Symbol('toRemoveArray'),
-      updatingIndex    = Symbol('updatingIndex');
+const
+    countMutations     = Symbol.for('countMutations'),
+    initialIndexSymbol = Symbol.for('initialIndex'),
+    isFiltered         = Symbol.for('isFiltered'),
+    isSorted           = Symbol.for('isSorted'),
+    silentUpdateMode   = Symbol.for('silentUpdateMode'),
+    sortPosition       = Symbol.for('sortPosition'),
+    toAddArray         = Symbol.for('toAddArray'),
+    toRemoveArray      = Symbol.for('toRemoveArray'),
+    updatingIndex      = Symbol.for('updatingIndex');
 
 /**
  * @class Neo.collection.Base
  * @extends Neo.core.Base
+ * @mixes Neo.core.Observable
  */
-class Base extends CoreBase {
+class Collection extends Base {
     /**
      * True automatically applies the core.Observable mixin
      * @member {Boolean} observable=true
@@ -49,6 +53,12 @@ class Base extends CoreBase {
          */
         autoSort: true,
         /**
+         * Stores the items.length of the items array in use
+         * @member {Number} count_=0
+         * @reactive
+         */
+        count_: 0,
+        /**
          * Use 'primitive' for default filters, use 'advanced' for filters using a filterBy method
          * which need to iterate over other collection items
          * @member {String} filterMode='primitive'
@@ -57,12 +67,26 @@ class Base extends CoreBase {
         /**
          * An Array containing Neo.util.Filter config objects or instances
          * @member {Array} filters_=[]
+         * @reactive
          */
         filters_: [],
         /**
-         * @member {Object[]|null} items_=null
+         * A map containing the internalId & reference of each collection item for faster access.
+         * Only populated if trackInternalId is true.
+         * @member {Map} internalIdMap_=null
+         * @protected
+         * @reactive
          */
-        items_: null,
+        internalIdMap_: null,
+        /**
+         * @member {Object[]|null} items_=null
+         * @reactive
+         */
+        items_: {
+            [isDescriptor]: true,
+            clone         : 'shallow',
+            value         : null
+        },
         /**
          * The unique(!) key property of each collection item
          * @member {String} keyProperty='id'
@@ -77,6 +101,8 @@ class Base extends CoreBase {
         /**
          * A map containing the key & reference of each collection item for faster access
          * @member {Map} map_=null
+         * @protected
+         * @reactive
          */
         map_: null,
         /**
@@ -94,25 +120,39 @@ class Base extends CoreBase {
         /**
          * An Array containing Neo.util.Sorter config objects or instances
          * @member {Array} sorters_=[]
+         * @reactive
          */
         sorters_: [],
         /**
          * The id of another collection instance to use as this data source
          * @member {String|null} sourceId_=null
+         * @reactive
          */
-        sourceId_: null
+        sourceId_: null,
+        /**
+         * True to track internalIds in a separate map for O(1) lookup
+         * @member {Boolean} trackInternalId=false
+         */
+        trackInternalId: false,
+        /**
+         * Array of strings for fields that should use value banding (consecutive identical values toggle a boolean flag).
+         * @member {String[]|null} valueBandingFields_=null
+         * @reactive
+         */
+        valueBandingFields_: null
     }
+
+    /**
+     * @member {Number} initialIndexCounter=0
+     */
+    initialIndexCounter = 0
 
     /**
      * @param config
      */
     construct(config) {
-        super.construct(config);
-
         let me           = this,
             symbolConfig = {enumerable: false, writable: true};
-
-        me.items = me.items || [];
 
         Object.defineProperties(me, {
             [countMutations]  : {...symbolConfig, value: false},
@@ -124,21 +164,26 @@ class Base extends CoreBase {
             [updatingIndex]   : {...symbolConfig, value: 0}
         });
 
+        super.construct(config);
+
+        me.items = me.items || [];
+
         if (me.autoSort && me._sorters.length > 0) {
-            me.doSort();
+            me.doSort()
         }
     }
 
     /**
-     * Adds one or more items to the end of the collection and returns the new length of the collection.
+     * Adds one or more items to the end of the collection
      * @param {Array|Object} item The item(s) to add
      * @returns {Object[]} an array containing all added items
      */
     add(item) {
-        return this.splice(0, null, item).addedItems;
+        return this.splice(null, null, item).addedItems
     }
 
     /**
+     * Triggered after the filters config got changed
      * @param {Array} value
      * @param {Array} oldValue
      * @protected
@@ -149,34 +194,50 @@ class Base extends CoreBase {
         value.forEach(filter => {
             if (filter.listenerApplied === false) {
                 filter.on('change', me.onFilterChange, me);
-                filter.listenerApplied = true;
+                filter.listenerApplied = true
             }
         });
 
-        oldValue && me.filter();
+        oldValue && me.filter()
     }
 
     /**
+     * Triggered after the items config got changed
      * @param {Array} value
      * @param {Array} oldValue
      * @protected
      */
     afterSetItems(value, oldValue) {
         if (value) {
-            let me          = this,
-                keyProperty = me.keyProperty,
-                i           = 0,
-                len         = value.length,
-                item;
+            let me = this,
+                i  = 0,
+                len = value.length,
+                internalId, item;
 
             for (; i < len; i++) {
                 item = value[i];
-                me.map.set(item[keyProperty], item);
+
+                me.itemFactory?.(item);
+
+                if (item) {
+                    me.map.set(me.getKey(item), item);
+
+                    if (me.trackInternalId) {
+                        internalId = me.getInternalKey(item);
+
+                        if (internalId) {
+                            me.internalIdMap.set(internalId, item)
+                        }
+                    }
+                }
             }
+
+            me.count = len
         }
     }
 
     /**
+     * Triggered after the sorters config got changed
      * @param {Array} value
      * @param {Array} oldValue
      * @protected
@@ -189,25 +250,46 @@ class Base extends CoreBase {
         value.forEach(sorter => {
             if (sorter.listenerApplied === false) {
                 sorter.on('change', me.onSorterChange, me);
-                sorter.listenerApplied = true;
+                sorter.listenerApplied = true
             }
         });
 
-        oldValue && me.autoSort && me.doSort();
+        oldValue && me.autoSort && me.doSort()
     }
 
     /**
+     * Triggered after the valueBandingFields config got changed
+     * @param {String[]|null} value
+     * @param {String[]|null} oldValue
+     * @protected
+     */
+    afterSetValueBandingFields(value, oldValue) {
+        if (value) {
+            this.calcValueBands()
+        }
+    }
+
+    /**
+     * @summary Moves the borrowed mutation subscription when the source changes, including clearing it.
      * @param {Number|String} value
      * @param {Number|String} oldValue
      * @protected
      */
     afterSetSourceId(value, oldValue) {
-        if (value) {
-            let me     = this,
-                source = Neo.get(value);
+        const me = this;
 
-            me._items = [...source._items];
+        oldValue && Neo.get(oldValue)?.un('mutate', me.onMutate, me);
+
+        if (value) {
+            const source = Neo.get(value);
+
+            me._items = source._items.slice();
             me.map    = new Map(source.map); // creates a clone of the original map
+            me.count  = me._items.length;
+
+            if (me.trackInternalId && source.trackInternalId) {
+                me.internalIdMap = new Map(source.internalIdMap)
+            }
 
             const listenersConfig = {
                 mutate: me.onMutate,
@@ -215,13 +297,6 @@ class Base extends CoreBase {
             };
 
             source.on(listenersConfig);
-
-            // console.log('afterSetSourceId', source);
-
-            if (oldValue) {
-                source = Neo.get(oldValue);
-                source.un(listenersConfig);
-            }
         }
     }
 
@@ -235,67 +310,105 @@ class Base extends CoreBase {
         me.sortDirections = [];
         me.sortProperties = [];
 
-        me.sorters.forEach(sorter => {//console.log('forEach', sorter);
+        me.sorters.forEach(sorter => {
             me.sortDirections.push(sorter.directionMultiplier);
-            me.sortProperties.push(sorter.property);
-        });
+            me.sortProperties.push(sorter.property)
+        })
     }
 
     /**
+     * @summary Reconciles complete predicate configurations without exchanging logical contribution identities.
      * @param {Array} value
      * @param {Array} oldValue
      * @protected
      */
     beforeSetFilters(value, oldValue) {
         if (!Array.isArray(value)) {
-            value = value ? [value] : [];
+            value = value ? [value] : []
         }
 
-        let len = oldValue && oldValue.length || 0,
-            hasMatch, i;
-
-        value.forEach((key, index) => {
-            if (oldValue) {
-                hasMatch = false;
-                i        = 0;
-
-                for (; i < len; i++) {
-                    if (oldValue[i] === key) {
-                        oldValue[i].set({
-                            operator: key.operator,
-                            property: key.property,
-                            value   : key.value
-                        });
-
-                        hasMatch = true;
-                        break;
-                    } else if (
-                        oldValue[i].operator === (key.operator || '===') &&
-                        oldValue[i].property === key.property &&
-                        oldValue[i].value    === key.value
-                    ) {
-                        hasMatch = true;
-                        break;
-                    }
+        const tuples       = new Map(), previous = oldValue?.slice() || [], created = [],
+            // `module` selects the class at creation; matching compares the constructor instead.
+            runtimeConfigs = new Set(['id', 'isConstructed', 'isDestroying', 'isReady', 'listenerApplied', 'listeners', 'module']),
+            matchesConfig  = (filter, name, expected) => {
+                const current = filter[name];
+                // Array getters copy values; include-set equality still keeps each entry's strict identity.
+                if (name === 'value' && !filter.filterBy && ['included', 'excluded', 'typedIncluded'].includes(filter.operator) &&
+                    Array.isArray(current) && Array.isArray(expected)) {
+                    return current.length === expected.length && current.every((item, index) => item === expected[index] ||
+                        filter.operator === 'typedIncluded' && item instanceof Date && expected[index] instanceof Date &&
+                        item.valueOf() === expected[index].valueOf())
                 }
-            }
+                if (name === 'fields' && Array.isArray(current) && Array.isArray(expected)) {
+                    return current.length === expected.length && current.every((item, index) => item === expected[index])
+                }
+                return current === expected
+            };
 
-            if (!hasMatch) {
-                value[index] = Neo.create(Filter, key);
-            } else {
-                value[index] = oldValue[i];
-                oldValue.splice(i, 1);
-                len--;
-            }
-        });
-
-        if (Array.isArray(oldValue)) {
-            oldValue.forEach(key => {
-                key.destroy();
+        try {
+            const instances = new Set();
+            value = value.slice();
+            value.forEach(key => {
+                // An instance joins once, and only if it is live and either unattached or already this collection's.
+                if (key instanceof Filter) {
+                    if (key.isDestroyed || instances.has(key) || key.listenerApplied && !previous.includes(key)) {
+                        throw new TypeError('A Filter instance must be live, listed once, and unattached or already in this collection')
+                    }
+                    instances.add(key)
+                }
+                if (key.module && !(key.module === Filter || Filter.isPrototypeOf(key.module))) {
+                    throw new TypeError('Filter module must be Neo.collection.Filter or a subclass')
+                }
+                // The key resolves the property its Filter will expose: an explicit null stays null (a columnless
+                // contribution), and an absent or undefined property takes the class default.
+                const role     = key.ownerRole ?? null,
+                      property = key.property !== undefined ? key.property : (key.module || Filter).config.property;
+                if (role !== null) {
+                    if (typeof role !== 'string' || !role.length) throw new TypeError('Filter ownerRole must be a nonempty string or null');
+                    const fields = tuples.get(role) || new Set();
+                    if (fields.has(property)) throw new Error('Duplicate owned filter contribution: ' + role + '/' + property);
+                    fields.add(property);
+                    tuples.set(role, fields)
+                }
             });
+
+            value = value.map(key => {
+                // Instances keep their identity; only configs are matched by value.
+                if (key instanceof Filter) {
+                    const index = previous.indexOf(key);
+                    return index === -1 ? key : previous.splice(index, 1)[0]
+                }
+                // A config may name a Filter subclass as `module`; its merged config defines what matches.
+                const {module, ...config} = key,
+                      cls                 = module || Filter;
+                if (config.property === undefined) delete config.property;
+                const index = previous.findIndex(filter => filter.constructor === cls &&
+                    Object.entries(cls.config).every(([name, fallback]) => runtimeConfigs.has(name) ||
+                        matchesConfig(filter, name, name in config ? config[name] : fallback)) &&
+                    Object.keys(config).every(name => matchesConfig(filter, name, config[name])));
+                if (index !== -1) return previous.splice(index, 1)[0];
+                const filter = Neo.create(cls, config);
+                created.push(filter);
+                return filter
+            })
+        } catch (error) {
+            // The reactive setter stages the input before this hook; refusal restores its backing value.
+            this._filters = oldValue;
+            created.forEach(filter => filter.destroy());
+            throw error
         }
 
-        return value;
+        previous.forEach(filter => filter.destroy());
+        return value
+    }
+
+    /**
+     * @param {Map|null} value
+     * @param {Map|null} oldValue
+     * @protected
+     */
+    beforeSetInternalIdMap(value, oldValue) {
+        return !value && this.trackInternalId ? new Map() : value
     }
 
     /**
@@ -304,7 +417,7 @@ class Base extends CoreBase {
      * @protected
      */
     beforeSetMap(value, oldValue) {
-        return !value ? new Map() : value;
+        return !value ? new Map() : value
     }
 
     /**
@@ -314,7 +427,7 @@ class Base extends CoreBase {
      */
     beforeSetSorters(value, oldValue) {
         if (!Array.isArray(value)) {
-            value = value ? [value] : [];
+            value = value ? [value] : []
         }
 
         let len = oldValue?.length || 0,
@@ -325,36 +438,35 @@ class Base extends CoreBase {
                 hasMatch = false;
                 i        = 0;
 
+                let {direction, property} = key;
+
                 for (; i < len; i++) {
                     if (oldValue[i] === key) {
-                        oldValue[i].set({
-                            direction: key.direction,
-                            property : key.property
-                        });
+                        oldValue[i].set({direction, property});
 
                         hasMatch = true;
-                        break;
-                    } else if (oldValue[i].property === key.property && oldValue[i].direction === key.direction) {
+                        break
+                    } else if (oldValue[i].property === property && oldValue[i].direction === direction) {
                         hasMatch = true;
-                        break;
+                        break
                     }
                 }
             }
 
             if (!hasMatch) {
-                value[index] = Neo.create(Sorter, key);
+                value[index] = Neo.create(Sorter, key)
             } else {
                 value[index] = oldValue[i];
                 oldValue.splice(i, 1);
-                len--;
+                len--
             }
         });
 
         oldValue?.forEach(key => {
-            key.destroy();
+            key.destroy()
         });
 
-        return value;
+        return value
     }
 
     /**
@@ -362,11 +474,12 @@ class Base extends CoreBase {
      * @protected
      */
     cacheUpdate(opts) {
-        console.log('cacheUpdate', opts, this[toAddArray]);
+        // disabled for now
+        // console.log('cacheUpdate', opts, this[toAddArray]);
         return;
 
-        let me          = this,
-            keyProperty = me.keyProperty,
+        let me            = this,
+            {keyProperty} = me,
             index, toAddMap, toRemoveMap;
 
         if (!me[silentUpdateMode]) {
@@ -375,27 +488,125 @@ class Base extends CoreBase {
 
             opts.addedItems.forEach(item => {
                 if (index = toRemoveMap.indexOf(item[keyProperty]) > - 1) {
-                    me[toRemoveArray].splice(index, 1);
+                    me[toRemoveArray].splice(index, 1)
                 } else if (toAddMap.indexOf(item[keyProperty]) < 0) {
-                    me[toAddArray].push(item);
+                    me[toAddArray].push(item)
                 }
             });
 
             opts.removedItems.forEach(item => {
                 if (index = toAddMap.indexOf(item[keyProperty]) > - 1) {
-                    me[toAddArray].splice(index, 1);
+                    me[toAddArray].splice(index, 1)
                 } else if (toRemoveMap.indexOf(item[keyProperty]) < 0) {
-                    me[toRemoveArray].push(item);
+                    me[toRemoveArray].push(item)
                 }
-            });
+            })
+        }
+    }
+
+    /**
+     * Calculates the valueBands object for each item.
+     * This is useful for UI grids to alternating highlight cells with the same value.
+     * @param {Number} [startIndex=0] Optimization to only recalculate from a specific index downwards
+     * @protected
+     */
+    calcValueBands(startIndex=0) {
+        let me     = this,
+            fields = me.valueBandingFields;
+
+        if (!fields || fields.length === 0) {
+            me.valueBandsMap?.clear();
+            return;
+        }
+
+        let items = me._items;
+
+        if (!me.valueBandsMap) {
+            me.valueBandsMap = new Map()
+        }
+
+        if (startIndex === 0) {
+            me.valueBandsMap.clear()
+        }
+
+        if (items) {
+            let i    = startIndex,
+                len  = items.length,
+                bands = {},
+                prev  = {},
+                item, isRecord, key, val;
+
+            if (startIndex > 0 && startIndex <= len) {
+                let prevItem = items[startIndex - 1];
+
+                if (prevItem) {
+                    let prevKey  = me.getKey(prevItem),
+                        prevMap  = me.valueBandsMap.get(prevKey),
+                        prevIsRecord = Neo.isRecord(prevItem);
+
+                    if (prevMap) {
+                        fields.forEach(f => {
+                            bands[f] = prevMap[f];
+                            prev[f]  = prevIsRecord ? prevItem.get(f) : prevItem[f]
+                        })
+                    } else {
+                        startIndex = 0; // Fallback if previous state is missing
+                        i = 0;
+                        me.valueBandsMap.clear()
+                    }
+                } else {
+                    startIndex = 0;
+                    i = 0;
+                    me.valueBandsMap.clear()
+                }
+            }
+
+            for (; i < len; i++) {
+                item = items[i];
+
+                if (!item) {
+                    continue
+                }
+
+                key      = me.getKey(item);
+                isRecord = Neo.isRecord(item);
+
+                if (i === 0 || Object.keys(prev).length === 0) {
+                    fields.forEach(f => {
+                        bands[f] = true;
+                        prev[f]  = isRecord ? item.get(f) : item[f]
+                    })
+                } else {
+                    fields.forEach(f => {
+                        val = isRecord ? item.get(f) : item[f];
+                        if (val !== prev[f]) {
+                            bands[f] = !bands[f];
+                            prev[f]  = val
+                        }
+                    })
+                }
+
+                me.valueBandsMap.set(key, {...bands})
+            }
         }
     }
 
     /**
      * Removes all items and clears the map
+     * @param {Boolean} [reset=true] True to also clear the allItems collection.
+     * This is useful for filtering: You can clear the filtered state (the collection items),
+     * but keep the unfiltered source (allItems) intact.
+     * This enables re-filtering the dataset.
      */
-    clear() {
-        this.splice(0, this.getCount());
+    clear(reset=true) {
+        let me = this;
+
+        if (reset) {
+            me.allItems?.clear();
+        }
+
+        me.splice(0, me.count);
+        me.initialIndexCounter = 0
     }
 
     /**
@@ -403,17 +614,28 @@ class Base extends CoreBase {
      * @param {boolean} [restoreOriginalFilters=false]
      */
     clearFilters(restoreOriginalFilters) {
-        this.filters = restoreOriginalFilters ? Neo.clone(this.originalConfig.filters, true, true) : null;
+        this.filters = restoreOriginalFilters ? Neo.clone(this.originalConfig.filters, true, true) : null
     }
 
     /**
      * Removes all items and clears the map, without firing a mutate event
+     * @param {Boolean} [reset=true] True to also clear the allItems collection.
+     * This is useful for filtering: You can clear the filtered state (the collection items),
+     * but keep the unfiltered source (allItems) intact.
+     * This enables re-filtering the dataset.
      */
-    clearSilent() {
+    clearSilent(reset=true) {
         let me = this;
 
-        me._items.splice(0, me.getCount());
+        if (reset) {
+            me.allItems?.clearSilent();
+        }
+
+        me._items.splice(0, me.count);
         me.map.clear();
+        me.internalIdMap?.clear();
+        me._count = 0;
+        me.initialIndexCounter = 0
     }
 
     /**
@@ -422,7 +644,7 @@ class Base extends CoreBase {
      * @param {boolean} [restoreOriginalSorters=false]
      */
     clearSorters(restoreOriginalSorters) {
-        this.sorters = restoreOriginalSorters ? Neo.clone(this.originalConfig.sorters, true, true) : null;
+        this.sorters = restoreOriginalSorters ? Neo.clone(this.originalConfig.sorters, true, true) : null
     }
 
     /**
@@ -434,13 +656,17 @@ class Base extends CoreBase {
             filters = me._filters || [],
             sorters = me._sorters || [];
 
+        // Ensure the keyProperty does not get lost.
+        config.keyProperty = me.keyProperty;
+
         delete config.id;
         delete config.filters;
         delete config.items;
         delete config.sorters;
 
         if (me._items.length > 0) {
-            config.items = [...me._items];
+            config.items  = me._items.slice();
+            config.count = config.items.length;
         }
 
         config.filters = [];
@@ -449,126 +675,80 @@ class Base extends CoreBase {
         // todo: filters & sorters should push their current state and not the original one
 
         filters.forEach(function(filter) {
-            config.filters.push(filter.originalConfig);
+            config.filters.push(filter.originalConfig)
         });
 
         sorters.forEach(function(sorter) {
-            config.sorters.push(sorter.originalConfig);
+            config.sorters.push(sorter.originalConfig)
         });
 
-        return Neo.create(Base, config);
+        return Neo.create(Collection, config)
     }
 
     /**
-     * Clears the map & items array before the super call
+     * @summary Creates an unconstrained unfiltered projection, overriding subclass filter defaults.
+     * Creates the allItems collection used for filtering.
+     * Can be overridden by subclasses.
+     * @param {Object} config
+     * @returns {Neo.collection.Base}
+     * @protected
+     */
+    createAllItems(config) {
+        return Neo.create(this.constructor, {...config, filters: []})
+    }
+
+    /**
+     * @summary Detaches the borrowed source and clears owned maps and items before retirement.
      */
     destroy() {
         let me = this;
 
+        me.getSource()?.un('mutate', me.onMutate, me);
+        me.allItems?.destroy();
+
+        me.filters?.forEach(item => item?.destroy());
+        me.sorters?.forEach(item => item?.destroy());
+
         me._items.splice(0, me._items.length);
         me.map.clear();
+        me.internalIdMap?.clear();
 
-        super.destroy();
+        super.destroy()
     }
 
     /**
+     * @summary Applies the collection's sorters to `items` in place, then fires `sort` unless silenced.
+     *
+     * Two paths, one ordering rule: with a custom `sortBy` in play this delegates per pair to
+     * {@link Neo.collection.Sorter#defaultSortBy}, otherwise it compares the mapped values itself. Both read
+     * {@link Neo.collection.Sorter#compareValues}, which owns the rule so the paths cannot drift: `null` /
+     * `undefined` sink on ASC and DESC alike, and values that convert to a number lead text on ASC and trail
+     * it on DESC.
      *
      * @param {Object[]} items=this._items
      * @param {Boolean} silent=false
      * @protected
      */
     doSort(items=this._items, silent=false) {
-        let me                = this,
-            previousItems     = [...items],
-            sorters           = me.sorters,
-            sortDirections    = me.sortDirections,
-            sortProperties    = me.sortProperties,
-            countSorters      = sortProperties.length || 0,
-            hasSortByMethod   = false,
-            hasTransformValue = false,
-            i, mappedItems, obj, sorter, sortProperty, sortValue;
+        let me            = this,
+            previousItems = items.slice(),
+            countSorters  = me.sortProperties.length || 0;
 
         if (countSorters > 0) {
-            sorters.forEach(key => {
-                if (key.sortBy) {
-                    hasSortByMethod = true;
-                }
-
-                if (key.useTransformValue) {
-                    hasTransformValue = true;
-                }
-            });
-
-            if (hasSortByMethod) {
-                me._items.sort((a, b) => {
-                    i = 0;
-
-                    for (; i < countSorters; i++) {
-                        sorter    = sorters[i];
-                        sortValue = sorter[sorter.sortBy ? 'sortBy' : 'defaultSortBy'](a, b);
-
-                        if (sortValue !== 0) {
-                            return sortValue;
-                        }
-                    }
-
-                    return 0;
-                });
-            } else {
-                if (hasTransformValue) {
-                    // https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Array/sort#Sorting_with_map
-                    mappedItems = items.map((item, index) => {
-                        obj = {index};
-                        i   = 0;
-
-                        for (; i < countSorters; i++) {
-                            if (sorters[i].useTransformValue) {
-                                obj[sortProperties[i]] = sorters[i].transformValue(item[sortProperties[i]]);
-                            } else {
-                                obj[sortProperties[i]] = item[sortProperties[i]];
-                            }
-                        }
-
-                        return obj;
-                    });
-                } else {
-                    mappedItems = items;
-                }
-
-                mappedItems.sort((a, b) => {
-                    i = 0;
-
-                    for (; i < countSorters; i++) {
-                        sortProperty = sortProperties[i];
-
-                        if (a[sortProperty] > b[sortProperty]) {
-                            return 1 * sortDirections[i];
-                        }
-
-                        if (a[sortProperty] < b[sortProperty]) {
-                            return -1 * sortDirections[i];
-                        }
-                    }
-
-                    return 0;
-                });
-
-                if (hasTransformValue) {
-                    me._items = mappedItems.map(el => {
-                        return items[el.index];
-                    });
-                }
-            }
+            me.sortArray(items);
+            me._items = items
         }
 
         me[isSorted] = countSorters > 0;
+
+        me.calcValueBands();
 
         if (!silent && me[updatingIndex] === 0) {
             me.fire('sort', {
                 items: me._items,
                 previousItems,
                 scope: me
-            });
+            })
         }
     }
 
@@ -584,19 +764,28 @@ class Base extends CoreBase {
         const me = this;
 
         if (me[updatingIndex] > 0) {
-            me[updatingIndex]--;
+            me[updatingIndex]--
+        }
+
+        // `splice()` assigns `count` only when no bracket is open, so the outermost close owns the
+        // assignment: the bracket defers events, never the `count_` cache that the class documents as
+        // `items.length`. Silent batches included — silence suppresses events, not the item count.
+        if (me[updatingIndex] === 0) {
+            me.count = me._items.length
         }
 
         if (endSilentUpdateMode) {
-            me[silentUpdateMode] = false;
+            me[silentUpdateMode] = false
         } else {
+            me.calcValueBands();
+
             me.fire('mutate', {
                 addedItems  : me[toAddArray],
                 removedItems: me[toRemoveArray]
             });
 
             me[toAddArray]   .splice(0, me[toAddArray]   .length);
-            me[toRemoveArray].splice(0, me[toRemoveArray].length);
+            me[toRemoveArray].splice(0, me[toRemoveArray].length)
         }
     }
 
@@ -612,10 +801,10 @@ class Base extends CoreBase {
         me.filters?.forEach(key => {
             filter = key.export();
 
-            filter && filters.push(filter);
+            filter && filters.push(filter)
         });
 
-        return filters;
+        return filters
     }
 
     /**
@@ -630,42 +819,43 @@ class Base extends CoreBase {
         me.sorters?.forEach(key => {
             sorter = key.export();
 
-            sorter && sorters.push(sorter);
+            sorter && sorters.push(sorter)
         });
 
-        return sorters;
+        return sorters
     }
 
     /**
+     * @summary Applies the same predicate evaluation as getFilteredItems, re-applies the sorters, then commits membership
+     * and events.
+     * @param {Boolean} [silent=false]
      * @protected
      */
-    filter() {
+    filter(silent=false) {
         let me              = this,
             filters         = me._filters,
             countAllFilters = filters.length,
             countFilters    = 0,
-            items           = me.allItems?._items || me._items,
             i               = 0,
-            countItems      = items.length,
-            filteredItems   = [],
-            needsSorting    = false,
-            oldItems        = [...me._items],
-            config, isIncluded, item, j, tmpItems;
+            // `allItems` keeps the order it had when it was created, so either branch re-applies the sorters
+            needsSorting    = me.sorters.length > 0,
+            oldItems        = me._items.slice(),
+            config;
 
         for (; i < countAllFilters; i++) {
             if (!filters[i].disabled) {
-                countFilters++;
+                countFilters++
             }
         }
 
         if (countFilters === 0 && me.allItems) {
-            if (me.sorters.length > 0) {
-                needsSorting = true;
-            }
+            // We cannot use clearSilent() here, since it would clear allItems as well
+            me._items.splice(0, me.count);
+            me.map.clear();
+            me.internalIdMap?.clear();
+            me.initialIndexCounter = 0;
 
-            me.clearSilent();
-
-            me.items = [...me.allItems._items];
+            me.items = me.allItems._items.slice()
         } else {
             if (!me.allItems) {
                 config = {...me.originalConfig};
@@ -673,75 +863,59 @@ class Base extends CoreBase {
                 delete config.filters;
                 delete config.items;
                 delete config.sorters;
+                delete config.sourceId;
 
-                me.allItems = Neo.create(Base, {
+                // When a collection is filtered, it clones itself to create an `allItems` collection
+                // which stores the unfiltered data. It is crucial to use `me.constructor` here.
+                // If we hardcode `Collection`, subclasses like `data.Store` would lose their specific
+                // functionalities (e.g., lazy record instantiation on `get()`) for the `allItems` collection.
+                // Not a `sourceId` collection: that would subscribe it to `mutate` as one listener
+                // among others, ordered by registration. `splice` writes into it inline instead —
+                // see `mirrorMutation` — so the projection needs neither a subscription nor a source.
+                me.allItems = me.createAllItems({
                     ...Neo.clone(config, true, true),
-                    keyProperty: me.keyProperty,
-                    sourceId   : me.id
+                    id         : me.id + '-all',
+                    keyProperty: me.keyProperty
                 });
 
-                // console.log('child collection', me.allItems);
+                me.allItems.items = me._items.slice();
             }
 
             me.map.clear();
+            me.internalIdMap?.clear();
 
-            if (me.filterMode === 'primitive') {
-                // using for loops on purpose -> performance
-                for (i = 0; i < countItems; i++) {
-                    isIncluded = true;
-                    item       = items[i];
-                    j          = 0;
-
-                    for (; j < countAllFilters; j++) {
-                        if (filters[j].isFiltered(item, items, items)) {
-                            isIncluded = false;
-                            break;
-                        }
-                    }
-
-                    if (isIncluded) {
-                        filteredItems.push(item);
-                        me.map.set(item[me.keyProperty], item);
-                    }
+            const filteredItems = me.evaluateFilters(null, item => {
+                me.map.set(me.getKey(item), item);
+                if (me.trackInternalId) {
+                    const internalId = me.getInternalKey(item);
+                    if (internalId) me.internalIdMap.set(internalId, item)
                 }
-
-                me._items = filteredItems; // silent update, the map is already in place
-            } else {
-                filteredItems = [...items];
-
-                for (j=0; j < countAllFilters; j++) {
-                    tmpItems = [];
-
-                    for (i = 0; i < countItems; i++) {
-                        if (!filters[j].isFiltered(filteredItems[i], filteredItems, items)) {
-                            tmpItems.push(filteredItems[i]);
-                        }
-                    }
-
-                    filteredItems = [...tmpItems];
-                    countItems    = filteredItems.length;
-                }
-
-                me.items = filteredItems; // update the map
-            }
+            });
+            if (me.filterMode === 'primitive') me._items = filteredItems;
+            else me.items = filteredItems;
         }
 
         me[isFiltered] = countFilters !== 0;
 
         if (needsSorting) {
-            me.doSort(me.items, true);
+            me.doSort(me.items, true)
         }
 
-        me.fire('filter', {
-            isFiltered: me[isFiltered],
-            items     : me.items,
-            oldItems,
-            scope     : me
-        });
+        me.count = me.items.length;
+
+        if (!silent) {
+            me.fire('filter', {
+                isFiltered: me[isFiltered],
+                items     : me.items,
+                oldItems,
+                scope     : me
+            })
+        }
     }
 
     /**
-     * Returns items which match the property and value
+     * Returns items which match the property and value.
+     * Properties can contain dots for namespaces => find('vdom.id', 'neo-vnode-1')
      * @param {Object|String} property
      * @param {String|Number} [value] Only required in case the first param is a string
      * @param {Boolean} returnFirstMatch=false
@@ -752,7 +926,7 @@ class Base extends CoreBase {
     find(property, value, returnFirstMatch=false) {
         let me               = this,
             items            = [],
-            isObjectProperty = Neo.isObject(property),
+            isObjectProperty = me.isItem(property),
             item, matchArray, propertiesArray, propertiesLength;
 
         if (isObjectProperty) {
@@ -765,24 +939,28 @@ class Base extends CoreBase {
                 matchArray = [];
 
                 propertiesArray.forEach(([key, value]) => {
-                    if (item[key] === value) {
-                        matchArray.push(true);
+                    if (Neo.ns(key, false, item) === value) {
+                        matchArray.push(true)
                     }
                 });
 
                 if (matchArray.length === propertiesLength) {
                     if (returnFirstMatch) {
-                        return item;
+                        return item
                     }
 
-                    items.push(item);
+                    items.push(item)
                 }
-            } else if (item[property] === value) {
-                items.push(item);
+            } else if (Neo.ns(property, false, item) === value) {
+                if (returnFirstMatch) {
+                    return item
+                }
+
+                items.push(item)
             }
         }
 
-        return returnFirstMatch ? null : items;
+        return returnFirstMatch ? null : items
     }
 
     /**
@@ -791,31 +969,32 @@ class Base extends CoreBase {
      * @param {Object} fn.item The current collection item
      * @param {Object} scope=this The scope in which the passed function gets executed
      * @param {Number} start=0 The start index
-     * @param {Number} end=this.getCount() The end index (up to, last value excluded)
+     * @param {Number} end=this.count The end index (up to, last value excluded)
      * @returns {Array} Returns an empty Array in case no items are found
      */
-    findBy(fn, scope=this, start=0, end=this.getCount()) {
+    findBy(fn, scope=this, start=0, end=this.count) {
         let me    = this,
             items = [],
             i     = start;
 
+        // `_items`, not `items`: the getter returns a copy of the whole array on every read
         for (; i < end; i++) {
-            if (fn.call(scope, me.items[i])) {
-                items.push(me.items[i]);
+            if (fn.call(scope, me._items[i])) {
+                items.push(me._items[i])
             }
         }
 
-        return items;
+        return items
     }
 
     /**
      * Returns the first item which matches the property and value
      * @param {Object|String} property
-     * @param {String|Number} [value] Only required in case the first param is a string
+     * @param {Number|String} [value] Only required in case the first param is a string
      * @returns {Object} Returns the first found item or null
      */
     findFirst(property, value) {
-        return this.find(property, value, true);
+        return this.find(property, value, true)
     }
 
     /**
@@ -823,16 +1002,16 @@ class Base extends CoreBase {
      * @returns {Object}
      */
     first() {
-        return this._items[0];
+        return this.getAt(0)
     }
 
     /**
-     * Returns the object associated to the key, or undefined if there is none.
-     * @param key
-     * @returns {Object|undefined}
+     * Returns the object associated to the key, or null if there is none.
+     * @param {Number|String} key
+     * @returns {Object|null}
      */
     get(key) {
-        return this.map.get(key);
+        return this.map.get(key) || (this.trackInternalId && this.internalIdMap?.get(key)) || null
     }
 
     /**
@@ -841,41 +1020,127 @@ class Base extends CoreBase {
      * @returns {Object|undefined}
      */
     getAt(index) {
-        return this._items[index];
+        return this._items[index]
     }
 
     /**
-     * Returns the length of the internal items array
+     * Returns the object associated to the internalId, or null if there is none.
+     * @param {String} internalId
+     * @returns {Object|null}
+     */
+    getByInternalId(internalId) {
+        return this.internalIdMap?.get(internalId) || null
+    }
+
+    /**
+     * Returns the config value of this.count
      * @returns {Number}
+     * @deprecated Use `this.count` directly instead.
      */
     getCount() {
-        return this._items.length;
+        return this._count || 0 // skipping beforeGetCount() on purpose
     }
 
     /**
      * @returns {Number}
      */
     getCountMutations() {
-        return this[countMutations];
+        return this[countMutations]
     }
 
     /**
-     * Returns the first matching filter for the given property config
+     * @summary Finds a contribution by property and optional collection-local role.
+     * Omit ownerRole for legacy first-match lookup; null explicitly selects an unowned filter.
      * @param {String} property
+     * @param {String|null} [ownerRole]
      * @returns {Neo.collection.Filter|null}
      */
-    getFilter(property) {
+    getFilter(property, ownerRole) {
         let filters = this.filters || [],
             i       = 0,
             len     = filters.length;
 
         for (; i < len; i++) {
-            if (filters[i].property === property) {
-                return filters[i];
+            if (filters[i].property === property && (ownerRole === undefined || (filters[i].ownerRole ?? null) === ownerRole)) {
+                return filters[i]
             }
         }
 
-        return null;
+        return null
+    }
+
+    /**
+     * @summary Evaluates the complete population without changing membership, emitting events or hydrating items.
+     * Primitive callbacks see the full population; advanced callbacks see the preceding predicate's cohort.
+     * Callbacks must be observational. Exclusion uses exact Filter identity, not property or role.
+     * @param {Neo.collection.Filter|null} excludeFilter=null
+     * @throws {Error} A non-null exclusion must belong to this collection's current filters.
+     * @returns {Array}
+     */
+    getFilteredItems(excludeFilter=null) {
+        if (excludeFilter !== null && !this.filters.includes(excludeFilter)) throw new Error('Unknown filter exclusion');
+        return this.evaluateFilters(excludeFilter)
+    }
+
+    /**
+     * @summary Shares predicate cohorts between observational queries and the filtering writer.
+     * Only the writer supplies onInclude, preserving its progressive primitive-map publication.
+     * @param {Neo.collection.Filter|null} excludeFilter
+     * @param {Function|null} onInclude=null
+     * @returns {Array}
+     * @protected
+     */
+    evaluateFilters(excludeFilter, onInclude=null) {
+        const items    = this.allItems?._items || this._items,
+            evaluators = this.filters.filter(filter => filter !== excludeFilter).map(filter => filter.createEvaluator());
+        let filtered;
+
+        if (this.filterMode === 'primitive') {
+            filtered = [];
+            for (let i = 0; i < items.length; i++) {
+                let included = true;
+                for (let j = 0; j < evaluators.length; j++) {
+                    if (evaluators[j](items[i], items, items)) {
+                        included = false;
+                        break
+                    }
+                }
+                if (included) {
+                    filtered.push(items[i]);
+                    onInclude?.(items[i])
+                }
+            }
+        } else {
+            filtered = items.slice();
+            for (const evaluate of evaluators) {
+                const next = [];
+                for (let i = 0; i < filtered.length; i++) {
+                    if (!evaluate(filtered[i], filtered, items)) next.push(filtered[i])
+                }
+                filtered = next
+            }
+            onInclude && filtered.forEach(onInclude)
+        }
+
+        return filtered
+    }
+
+    /**
+     * Hook to get the internal key of an item.
+     * To be overridden by subclasses (e.g. Store).
+     * @param {Object} item
+     * @returns {String|Number|null}
+     */
+    getInternalKey(item) {
+        return null
+    }
+
+    /**
+     * @param {Object} item
+     * @returns {String|Number}
+     */
+    getKey(item) {
+        return item[this.keyProperty]
     }
 
     /**
@@ -885,7 +1150,7 @@ class Base extends CoreBase {
      */
     getKeyAt(index) {
         let item = this._items[index];
-        return item?.[this.keyProperty];
+        return item && this.getKey(item)
     }
 
     /**
@@ -896,7 +1161,7 @@ class Base extends CoreBase {
      * @link https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Array/slice
      */
     getRange(start, end) {
-        return this._items.slice(start, end);
+        return this._items.slice(start, end)
     }
 
     /**
@@ -904,7 +1169,7 @@ class Base extends CoreBase {
      * @returns {Neo.collection.Base|undefined}
      */
     getSource() {
-        return this.sourceId && Neo.get(this.sourceId);
+        return this.sourceId && Neo.get(this.sourceId)
     }
 
     /**
@@ -913,7 +1178,7 @@ class Base extends CoreBase {
      * @returns {Boolean}
      */
     has(key) {
-        return this.map.has(key);
+        return this.map.has(key)
     }
 
     /**
@@ -922,7 +1187,7 @@ class Base extends CoreBase {
      * @returns {Boolean}
      */
     hasItem(item) {
-        return this.map.has(item[this.keyProperty]);
+        return this.map.has(this.getKey(item))
     }
 
     /**
@@ -931,7 +1196,8 @@ class Base extends CoreBase {
      * @returns {Number} index (-1 in case no match is found)
      */
     indexOf(key) {
-        return this._items.indexOf(Util.isObject(key) ? key : this.map.get(key));
+        let me = this;
+        return me._items.indexOf(me.isItem(key) ? key : me.get(key));
     }
 
     /**
@@ -940,7 +1206,24 @@ class Base extends CoreBase {
      * @returns {Number} index (-1 in case no match is found)
      */
     indexOfItem(item) {
-        return this._items.indexOf(item);
+        return this._items.indexOf(item)
+    }
+
+    /**
+     * Tries to determine the type of the keyProperty by looking at the first item in the collection.
+     * Note that this differs from `data.Store` where this info can be pulled from a `data.Model`.
+     * @returns {String|null} 'int', 'string', etc.
+     */
+    getKeyType() {
+        let me    = this,
+            first = me._items[0];
+
+        if (first) {
+            let key = first[me.keyProperty];
+            return typeof key === 'number' ? 'int' : typeof key
+        }
+
+        return null
     }
 
     /**
@@ -949,7 +1232,7 @@ class Base extends CoreBase {
      * @returns {Number} index (-1 in case no match is found)
      */
     indexOfKey(key) {
-        return this._items.indexOf(this.map.get(key));
+        return this._items.indexOf(this.get(key));
     }
 
     /**
@@ -959,14 +1242,14 @@ class Base extends CoreBase {
      * @returns {Object[]} an array containing all added items
      */
     insert(index, item) {
-        return this.splice(index, 0, item).addedItems;
+        return this.splice(index, 0, item).addedItems
     }
 
     /**
      * @returns {Boolean} true in case the collection is filtered
      */
     isFiltered() {
-        return this[isFiltered];
+        return this[isFiltered]
     }
 
     /**
@@ -984,18 +1267,28 @@ class Base extends CoreBase {
         for (; i < len; i++) {
             if (filters[i].isFiltered(item)) {
                 isFiltered = true;
-                break;
+                break
             }
         }
 
-        return isFiltered;
+        return isFiltered
+    }
+
+    /**
+     * Helper method to check if a given input is either object-like or a key
+     * @param {*} value
+     * @returns {Boolean} returns true for object-like values
+     */
+    isItem(value) {
+        // We can not use Neo.isObject() || Neo.isRecord(), since collections can store neo instances too.
+        return value !== null && typeof value === 'object'
     }
 
     /**
      * @returns {Boolean} true in case the collection is sorted
      */
     isSorted() {
-        return this[isSorted];
+        return this[isSorted]
     }
 
     /**
@@ -1003,7 +1296,31 @@ class Base extends CoreBase {
      * @returns {Object}
      */
     last() {
-        return this._items[this.getCount() -1];
+        return this.getAt(this.count -1)
+    }
+
+    /**
+     * Moves an item from fromIndex to toIndex
+     * @param {Number} fromIndex
+     * @param {Number} toIndex
+     */
+    move(fromIndex, toIndex) {
+        if (fromIndex === toIndex) {
+            return;
+        }
+
+        let items = this._items;
+
+        if (fromIndex >= items.length) {
+            fromIndex = items.length - 1
+        }
+
+        // The splice operations are intentionally separated.
+        // Using the common one-liner `items.splice(toIndex, 0, items.splice(fromIndex, 1)[0])`
+        // can lead to unpredictable side effects, as the inner splice can alter the array
+        // before the outer splice's index is resolved. This two-step approach is safer.
+        const item = items.splice(fromIndex, 1)[0];
+        items.splice(toIndex, 0, item)
     }
 
     /**
@@ -1011,21 +1328,44 @@ class Base extends CoreBase {
      * @protected
      */
     onFilterChange(opts) {
-        this.filter();
+        this.filter()
     }
 
     /**
+     * @summary Mirrors a source mutation unless this consumer retired during the same event broadcast.
      * @param {Object} opts
      * @protected
      */
     onMutate(opts) {
         let me = this;
 
-        if (opts.preventBubbleUp) {
-            me.preventBubbleUp = true;
-        }
+        if (me.isDestroying || me.isDestroyed) return;
 
-        me.splice(null, opts.removedItems, opts.addedItems);
+        // todo: inspect the bubbling chain
+        /*if (opts.preventBubbleUp) {
+            me.preventBubbleUp = true
+        }*/
+
+        me.preventBubbleUp = true;
+
+        me.splice(null, opts.removedItems, opts.addedItems)
+    }
+
+    /**
+     * @summary The unfiltered projection's write: the rows its collection's `splice` just applied,
+     * applied here without an event. The projection holds what the collection holds before any
+     * listener runs, and fires nothing of its own — it is part of the mutation, not an observer of it.
+     *
+     * Removals arrive as the caller's input, keys included, because `splice` resolves keys and items alike and
+     * only the input names a row the filter hid. The `mutate` payload normalises to objects for its listeners;
+     * this write has none.
+     * @param {Object}                      opts
+     * @param {Object[]}                    [opts.addedItems]
+     * @param {Array<Object|Number|String>} [opts.removedItems]
+     * @protected
+     */
+    mirrorMutation({addedItems, removedItems}) {
+        this.splice(null, removedItems, addedItems, true)
     }
 
     /**
@@ -1034,7 +1374,7 @@ class Base extends CoreBase {
      */
     onSorterChange(opts) {
         this.applySorterConfigs();
-        this.doSort();
+        this.doSort()
     }
 
     /**
@@ -1042,8 +1382,8 @@ class Base extends CoreBase {
      * @returns {Object} The removed element from the collection; undefined if the collection is empty.
      */
     pop() {
-        let mutation = this.splice(this.getCount() -1, 1);
-        return mutation.removedItems[0];
+        let mutation = this.splice(this.count -1, 1);
+        return mutation.removedItems[0]
     }
 
     /**
@@ -1052,7 +1392,7 @@ class Base extends CoreBase {
      * @returns {Number} the collection count
      */
     push(item) {
-        return this.add(item);
+        return this.add(item)
     }
 
     /**
@@ -1062,7 +1402,7 @@ class Base extends CoreBase {
      */
     remove(key) {
         this.splice(0, Array.isArray(key) ? key : [key]);
-        return this.getCount();
+        return this.count
     }
 
     /**
@@ -1072,7 +1412,7 @@ class Base extends CoreBase {
      */
     removeAt(index) {
         this.splice(index, 1);
-        return this.getCount();
+        return this.count
     }
 
     /**
@@ -1081,7 +1421,7 @@ class Base extends CoreBase {
      * @returns {Array} items
      */
     reverse() {
-        return this._items.reverse();
+        return this._items.reverse()
     }
 
     /**
@@ -1090,7 +1430,7 @@ class Base extends CoreBase {
      */
     shift() {
         let mutation = this.splice(0, 1);
-        return mutation.addedItems[0];
+        return mutation.addedItems[0]
     }
 
     /**
@@ -1103,7 +1443,109 @@ class Base extends CoreBase {
      * @returns {boolean} true if the callback function returns a truthy value for any collection item, otherwise false
      */
     some(...args) {
-        return this._items.some(...args);
+        return this._items.some(...args)
+    }
+
+    /**
+     * Executes a provided function once for each array element.
+     * @param {Function} fn The function to execute for each element.
+     * @param {Object} [scope] Value to use as `this` when executing `fn`.
+     */
+    forEach(fn, scope) {
+        this._items.forEach(fn, scope);
+    }
+
+    /**
+     * @summary Sorts an array of items or records in place using the collection's active sorters.
+     *
+     * Shared by {@link #doSort} (for flat collections and stores) and `Neo.data.TreeStore` (for localized
+     * `#childrenMap` arrays). Both paths read {@link Neo.collection.Sorter.getValue} (so dotted property
+     * paths resolve on `Record` instances and plain objects alike) and {@link Neo.collection.Sorter.compareValues}
+     * (so `null` / `undefined` sink and numeric convertibility stays transitive).
+     *
+     * @param {Object[]} arr The array to sort in place.
+     * @protected
+     */
+    sortArray(arr) {
+        let me                                        = this,
+            {sorters, sortDirections, sortProperties} = me,
+            countSorters                              = sortProperties.length || 0,
+            hasSortByMethod                           = false,
+            hasTransformValue                         = false,
+            i, mappedItems, obj, rawValue, sorted, sorter, sortProperty, sortValue, val1, val2;
+
+        if (countSorters < 1 || arr.length < 2) {
+            return
+        }
+
+        sorters.forEach(key => {
+            if (key.sortBy) {
+                hasSortByMethod = true
+            }
+
+            if (key.useTransformValue) {
+                hasTransformValue = true
+            }
+        });
+
+        if (hasSortByMethod) {
+            arr.sort((a, b) => {
+                for (i = 0; i < countSorters; i++) {
+                    sorter    = sorters[i];
+                    sortValue = sorter[sorter.sortBy ? 'sortBy' : 'defaultSortBy'](a, b);
+
+                    if (sortValue !== 0) {
+                        return sortValue
+                    }
+                }
+
+                return 0
+            })
+        } else {
+            if (hasTransformValue) {
+                // https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Array/sort#Sorting_with_map
+                // The position lives under a Symbol, so a sort property of any name (e.g. `index`) cannot overwrite it
+                mappedItems = arr.map((item, index) => {
+                    obj = {[sortPosition]: index};
+
+                    for (i = 0; i < countSorters; i++) {
+                        sortProperty = sortProperties[i];
+                        rawValue     = Sorter.getValue(item, sortProperty);
+
+                        obj[sortProperty] = sorters[i].useTransformValue
+                            ? sorters[i].transformValue(rawValue)
+                            : rawValue
+                    }
+
+                    return obj
+                })
+            } else {
+                mappedItems = arr
+            }
+
+            mappedItems.sort((a, b) => {
+                for (i = 0; i < countSorters; i++) {
+                    sortProperty = sortProperties[i];
+                    val1         = hasTransformValue ? a[sortProperty] : Sorter.getValue(a, sortProperty);
+                    val2         = hasTransformValue ? b[sortProperty] : Sorter.getValue(b, sortProperty);
+                    sortValue    = Sorter.compareValues(val1, val2, sortDirections[i]);
+
+                    if (sortValue !== 0) {
+                        return sortValue
+                    }
+                }
+
+                return 0
+            });
+
+            if (hasTransformValue) {
+                sorted = mappedItems.map(el => arr[el[sortPosition]]);
+
+                for (i = 0; i < arr.length; i++) {
+                    arr[i] = sorted[i]
+                }
+            }
+        }
     }
 
     /**
@@ -1113,115 +1555,212 @@ class Base extends CoreBase {
      * @param {Number|null} index
      * @param {Number|Object[]} [removeCountOrToRemoveArray]
      * @param {Object|Object[]} [toAddArray]
+     * @param {Boolean} [silent=false] Applies the mutation without firing `mutate` — the write path of
+     *     the unfiltered projection, which is part of its collection's mutation, never an observer of it
      * @returns {Object} An object containing the addedItems & removedItems arrays
      */
-    splice(index, removeCountOrToRemoveArray, toAddArray) {
+    splice(index, removeCountOrToRemoveArray, toAddArray, silent=false) {
         let me                 = this,
+            {keyProperty, map} = me,
             source             = me.getSource(),
             addedItems         = [],
             items              = me._items,
-            keyProperty        = me.keyProperty,
-            map                = me.map,
             removedItems       = [],
-            removeCountAtIndex = Util.isNumber(removeCountOrToRemoveArray) ? removeCountOrToRemoveArray : null,
+            removeCountAtIndex = Neo.isNumber(removeCountOrToRemoveArray) ? removeCountOrToRemoveArray : null,
             toRemoveArray      = Array.isArray(removeCountOrToRemoveArray) ? removeCountOrToRemoveArray : null,
-            i, item, key, len, toAddMap;
+            internalId, i, item, key, len, toAddMap;
 
-        if (!Util.isNumber(index) && removeCountAtIndex) {
-            Logger.error(me.id + ': If index is not passed, removeCountAtIndex cannot be used');
+        if (!Neo.isNumber(index) && removeCountAtIndex) {
+            Logger.error(me.id + ': If index is not passed, removeCountAtIndex cannot be used')
         }
 
         toAddArray = toAddArray && !Array.isArray(toAddArray) ? [toAddArray] : toAddArray;
 
         if (toRemoveArray && (len = toRemoveArray.length) > 0) {
             if (toAddArray && toAddArray.length > 0) {
-                toAddMap = toAddArray.map(e => e[keyProperty]);
+                toAddMap = toAddArray.map(e => me.getKey(e))
             }
 
             for (i=0; i < len; i++) {
                 item = toRemoveArray[i];
-                key  = Util.isObject(item) ? item[keyProperty] : item;
+                key  = me.isItem(item) ? me.getKey(item) : item;
 
                 if (map.has(key)) {
                     if (!toAddMap || (toAddMap && toAddMap.indexOf(key) < 0)) {
-                        removedItems.push(items.splice(me.indexOfKey(key), 1)[0]);
+                        const removedItem = items.splice(me.indexOfKey(key), 1)[0];
+                        removedItems.push(removedItem);
                         map.delete(key);
+
+                        if (me.trackInternalId) {
+                            internalId = me.getInternalKey(removedItem);
+
+                            if (internalId) {
+                                me.internalIdMap.delete(internalId)
+                            }
+                        }
                     }
                 }
             }
         } else if (removeCountAtIndex && removeCountAtIndex > 0) {
-            removedItems.push(...items.splice(index, removeCountAtIndex));
-            removedItems.forEach(e => {
-                map.delete(e[keyProperty]);
-            });
+            // Optimization: If this is a full clear operation, use map.clear()
+            if (index === 0 && removeCountAtIndex === me.count) {
+                removedItems = items;
+                // The add path below reads `items`: left on the removed array, it would add there
+                items = me._items = [];
+                map.clear();
+                me.internalIdMap?.clear()
+            } else {
+                removedItems = items.splice(index, removeCountAtIndex);
+
+                // For partial removals, iterate and delete individual items from the map
+                removedItems.forEach(e => {
+                    map.delete(me.getKey(e));
+
+                    if (me.trackInternalId) {
+                        internalId = me.getInternalKey(e);
+
+                        if (internalId) {
+                            me.internalIdMap.delete(internalId)
+                        }
+                    }
+                })
+            }
         }
 
         if (toAddArray && (len = toAddArray.length) > 0) {
+            const hasEffectiveFilters = me._filters.some(filter => filter.effective);
+
             for (i=0; i < len; i++) {
                 item = toAddArray[i];
-                key  = item[keyProperty];
 
-                if (!key) {
+                me.itemFactory?.(item);
+
+                key  = me.getKey(item);
+
+                if (key == null) {
                     item[keyProperty] = key = me.keyPropertyIndex;
-                    me.keyPropertyIndex--;
+                    me.keyPropertyIndex--
                 }
 
-                if (!map.has(key) && !me.isFilteredItem(item)) {
+                // Check if the item has the symbol defined (e.g., initialized to null via RecordFactory).
+                // We only want to assign the counter to items that opt-in to this feature to support
+                // restoring the original insertion order (e.g., Store.sort() with no args).
+                // This prevents polluting plain objects in standard Collections.
+                if (Object.hasOwn(item, initialIndexSymbol)) {
+                    item[initialIndexSymbol] = me.initialIndexCounter++
+                }
+
+                if (!map.has(key) && (!hasEffectiveFilters || !me.isFilteredItem(item))) {
                     addedItems.push(item);
                     map.set(key, item);
+
+                    if (me.trackInternalId) {
+                        internalId = me.getInternalKey(item);
+
+                        if (internalId) {
+                            me.internalIdMap.set(internalId, item)
+                        }
+                    }
                 }
             }
 
             if (addedItems.length > 0) {
-                items.splice(Util.isNumber(index) ? index : items.length, 0, ...addedItems);
+                if (!items || items.length === 0) {
+                    // Performance improvement for Safari, see: https://github.com/neomjs/neo/issues/6228
+                    me._items = addedItems
+                } else {
+                    const finalIndex = Neo.isNumber(index) ? index : items.length;
+
+                    if (addedItems.length > 5000) {
+                        // Manually splice for large arrays to avoid a stack overflow
+                        const beginning = items.slice(0, finalIndex);
+                        const end       = items.slice(finalIndex);
+                        me._items       = beginning.concat(addedItems, end);
+                    } else {
+                        items.splice(finalIndex, 0, ...addedItems)
+                    }
+                }
 
                 if (me.autoSort && me._sorters.length > 0) {
-                    me.doSort();
+                    me.doSort(undefined, true)
                 }
             }
         }
 
         if (source) {
             if (!source.getSource()) {
-                source.preventBubbleUp = true;
+                source.preventBubbleUp = true
             }
 
             if (!me.preventBubbleUp) {
                 // console.log('source splice', source.id, 'added:', ...toAddArray, 'removed:', ...removedItems);
                 me.startUpdate(true);
                 source.splice(null, toRemoveArray || removedItems, toAddArray);
-                me.endUpdate(true);
+                me.endUpdate(true)
             }
 
-            delete source.preventBubbleUp;
+            delete source.preventBubbleUp
         }
 
         if (addedItems.length > 0 || removedItems.length > 0) {
-            me[countMutations]++;
+            me[countMutations]++
         }
 
+        // The unfiltered projection is PART of the mutation, never a subscriber racing the other
+        // subscribers for it and never an event consumer: it is written here, on every splice —
+        // batched and silent ones included — before anything can observe the mutation, so a listener
+        // (the store's own synchronous `load` included) sees `allItems` holding the batch, and a
+        // record hydrated inside a listener lands in both collections. The payload is the input
+        // rows, because the projection filters nothing itself.
+        me.allItems?.mirrorMutation({addedItems: toAddArray, removedItems: toRemoveArray || removedItems});
+
         if (me[updatingIndex] === 0) {
-            me.fire('mutate', {
+            me.count = me._items.length;
+
+            me.calcValueBands(index || 0);
+
+            !silent && me.fire('mutate', {
                 addedItems     : toAddArray,
                 preventBubbleUp: me.preventBubbleUp,
-                removedItems   : toRemoveArray || removedItems
-            });
-
+                // Always emit actual removed objects, not input keys. `removedItems` (local) is built
+                // at line 1487-1488 from `items.splice(indexOfKey(key), 1)[0]` — always object-shaped.
+                // The legacy `toRemoveArray || removedItems` fallback emitted the INPUT array, which
+                // contained STRING IDs when remove-by-key was used. Rollback at Database.mjs:451
+                // (`store.add(mutation.removedItems)`) then attempted Symbol-assignment on primitive
+                // strings → TypeError (the transaction-rollback surface failure).
+                //
+                // Consumer-impact V-B-A 2026-05-18 (scope corrected in cross-family review, using
+                // `rg -n "mutate:|on(['\"]mutate" src ai`):
+                //   1. `Database.onNodesMutate` (ai/graph/Database.mjs:378) — consumes via
+                //      `storage.removeNodes` → SQLite.mjs:280 `node.id` extraction. REQUIRES object.
+                //   2. `Database.onEdgesMutate` (ai/graph/Database.mjs:358) — symmetric edge path.
+                //      REQUIRES object.
+                //   3. `Collection.Base.onMutate` (this file L1350) — source-bubble: calls
+                //      `me.splice(null, opts.removedItems, opts.addedItems)`. `splice` handles BOTH
+                //      shapes (L1483: `key = me.isItem(item) ? me.getKey(item) : item`). SHAPE-NEUTRAL.
+                //   4. `Data.Store.onCollectionMutate` (src/data/Store.mjs:1048) — uses
+                //      `opts.addedItems` only; does not touch `removedItems`. PAYLOAD-NEUTRAL.
+                //   5. `Grid.Container.onColumnsMutate` (src/grid/Container.mjs:997) — uses
+                //      `me._columns.items` directly; ignores mutation payload. PAYLOAD-NEUTRAL.
+                //
+                // Net: 2 consumers strictly require object-shape (and previously silently broke or
+                // loudly broke when fed strings); 3 are payload-compatible with either shape. Fix
+                // is structurally narrow-blast — no consumer breaks, 2 previously-silent bugs also
+                // fixed.
+                removedItems   : removedItems
+            })
         } else if (!me[silentUpdateMode]) {
             me.cacheUpdate({
                 addedItems,
                 removedItems
-            });
+            })
         }
 
         if (me[updatingIndex] === 0) {
-            delete me.preventBubbleUp;
+            delete me.preventBubbleUp
         }
 
-        return {
-            addedItems,
-            removedItems
-        };
+        return {addedItems, removedItems}
     }
 
     /**
@@ -1235,10 +1774,27 @@ class Base extends CoreBase {
      */
     startUpdate(startSilentUpdateMode) {
         if (startSilentUpdateMode) {
-            this[silentUpdateMode] = true;
+            this[silentUpdateMode] = true
         }
 
-        this[updatingIndex]++;
+        this[updatingIndex]++
+    }
+
+    /**
+     * Serializes the instance into a JSON-compatible object for the Neural Link.
+     * @returns {Object}
+     */
+    toJSON() {
+        let me = this;
+
+        return {
+            ...super.toJSON(),
+            count      : me.count,
+            filters    : me.filters.map(filter => filter.toJSON()),
+            keyProperty: me.keyProperty,
+            sorters    : me.sorters.map(sorter => sorter.toJSON()),
+            sourceId   : me.sourceId
+        }
     }
 
     /**
@@ -1248,7 +1804,33 @@ class Base extends CoreBase {
      */
     unshift(item) {
         this.splice(0, 0, item);
-        return this.getCount();
+        return this.count
+    }
+
+    /**
+     * Updates the key property of an item and keeps the map in sync.
+     * Preserves the item's index in the items array (Zero Array Mutation).
+     * @param {Object} item
+     * @param {String|Number} newKey
+     */
+    updateKey(item, newKey) {
+        let me     = this,
+            oldKey = me.getKey(item);
+
+        if (oldKey !== newKey) {
+            me.map.delete(oldKey);
+            item[me.keyProperty] = newKey;
+            me.map.set(newKey, item);
+
+            if (me.allItems) {
+                me.allItems.map.delete(oldKey);
+                me.allItems.map.set(newKey, item);
+            }
+
+            if (me[updatingIndex] === 0) {
+                me.fire('updateKey', {item, newKey, oldKey, scope: me})
+            }
+        }
     }
 }
 
@@ -1261,6 +1843,4 @@ class Base extends CoreBase {
  * @returns {Object}
  */
 
-Neo.applyClassConfig(Base);
-
-export default Base;
+export default Neo.setupClass(Collection);

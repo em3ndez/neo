@@ -19,6 +19,7 @@ class PreviewList extends List {
         displayField: 'title',
         /**
          * @member {Neo.data.Store} store=ArticlePreviews
+         * @reactive
          */
         store: ArticlePreviews
     }
@@ -32,7 +33,7 @@ class PreviewList extends List {
 
         me.vdom.cn = [];
 
-        me.store.items.forEach(item => {
+        me.store.forEach(item => {
             listItem = Neo.create({
                 module  : PreviewComponent,
                 parentId: me.id,
@@ -46,12 +47,10 @@ class PreviewList extends List {
 
         if (!silent) {
             me.promiseUpdate().then(() => {
-                me.fire('createItems');
-            });
+                me.fire('createItems')
+            })
         }
     }
 }
 
-Neo.applyClassConfig(PreviewList);
-
-export default PreviewList;
+export default Neo.setupClass(PreviewList);

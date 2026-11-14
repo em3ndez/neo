@@ -1,7 +1,6 @@
-import CellModel from './CellModel.mjs';
-import NeoArray  from '../../util/Array.mjs';
-import RowModel  from './RowModel.mjs';
-import VDomUtil  from '../../util/VDom.mjs';
+import {isDescriptor} from '../../core/ConfigSymbols.mjs';
+import CellModel      from './CellModel.mjs';
+import NeoArray       from '../../util/Array.mjs';
 
 /**
  * @class Neo.selection.table.CellRowModel
@@ -25,19 +24,18 @@ class CellRowModel extends CellModel {
          */
         cls: 'neo-selection-cellrowmodel',
         /**
-         * @member {Array|null} selectedRowIds=null
+         * The row ids this model holds selected — a descriptor, so the default is per instance and the
+         * in-place writes land ({@link Neo.selection.grid.BaseModel#selectedRows_} says why).
+         * @member {String[]} selectedRowIds_=[]
          * @protected
+         * @reactive
          */
-        selectedRowIds: null
-    }
-
-    /**
-     * @param {Object} config
-     */
-    construct(config) {
-        super.construct(config);
-
-        this.selectedRowIds = [];
+        selectedRowIds_: {
+            [isDescriptor]: true,
+            clone         : 'shallow',
+            cloneOnGet    : 'none',
+            value         : []
+        }
     }
 
     /**
@@ -46,13 +44,13 @@ class CellRowModel extends CellModel {
     deselectAllRows(silent) {
         let me     = this,
             rowIds = [...me.selectedRowIds],
-            view   = me.view;
+            {view} = me;
 
         rowIds.forEach(rowId => {
-            me.deselectRow(rowId, true);
+            me.deselectRow(rowId, true)
         });
 
-        !silent && view.update();
+        !silent && view.update()
     }
 
     /**
@@ -60,63 +58,63 @@ class CellRowModel extends CellModel {
      * @param {Boolean} [silent] true to prevent a vdom update
      */
     deselectRow(rowId, silent) {
-        let me   = this,
-            view = me.view,
-            node = view.getVdomChild(rowId),
+        let me     = this,
+            {view} = me,
+            node   = view.getVdomChild(rowId),
             cls;
 
         if (node) {
             cls = node.cls || [];
             NeoArray.remove(cls, me.selectedCls);
-            node.cls = cls;
+            node.cls = cls
         }
 
         NeoArray.remove(me.selectedRowIds, rowId);
 
-        !silent && view.update();
+        !silent && view.update()
     }
 
     /**
      * @param {Object} data
      */
     onCellClick(data) {
-        let me   = this,
-            node = RowModel.getRowNode(data.path), // we could add a separate export for this method
-            id   = node?.id;
+        let me     = this,
+            record = me.view.getRecord(data.data.currentTarget),
+            rowId  = me.view.getRowId(record);
 
-        if (id) {
+        if (rowId) {
             me.deselectAllRows(true);
-            me.selectRow(id);
+            me.selectRow(rowId)
         }
 
-        super.onCellClick(data);
+        super.onCellClick(data)
     }
 
     /**
-     * @param {Object} data
      * @param {Number} step
      */
-    onNavKeyRow(data, step) {
-        super.onNavKeyRow(data, step);
+    onNavKeyRow(step) {
+        super.onNavKeyRow(step);
 
-        let me         = this,
-            node       = RowModel.getRowNode(data.path),
-            view       = me.view,
-            store      = view.store,
-            vdomNode   = VDomUtil.findVdomChild(view.vdom, node.id),
-            newIndex   = (vdomNode.index + step) % store.getCount(),
-            parentNode = vdomNode.parentNode,
+        let me           = this,
+            {view}       = me,
+            {store}      = view,
+            countRecords = store.getCount(),
+            rowId        = me.selectedRowIds[0] || view.getRowId(store.getAt(0)),
+            record       = view.getRecord(rowId),
+            index        = store.indexOf(record),
+            newIndex     = (index + step) % countRecords,
             id;
 
         while (newIndex < 0) {
-            newIndex += store.getCount();
+            newIndex += countRecords
         }
 
-        id = parentNode.cn[newIndex].id;
+        id = view.getRowId(store.getAt(newIndex));
 
         if (id) {
             me.deselectAllRows(true);
-            me.selectRow(id);
+            me.selectRow(id)
         }
     }
 
@@ -126,7 +124,7 @@ class CellRowModel extends CellModel {
      */
     selectRow(id, silent) {
         let me       = this,
-            view     = me.view,
+            {view}   = me,
             vdomNode = id && view.getVdomChild(id),
             cls;
 
@@ -135,10 +133,20 @@ class CellRowModel extends CellModel {
             NeoArray.add(cls, me.selectedCls);
             vdomNode.cls = cls;
 
-            me.selectedRowIds.push(id);
+            me.selectedRowIds.push(id)
         }
 
-        !silent && view.update();
+        !silent && view.update()
+    }
+
+    /**
+     * @returns {Object}
+     */
+    toJSON() {
+        return {
+            ...super.toJSON(),
+            selectedRowIds: this.selectedRowIds
+        }
     }
 
     /**
@@ -146,10 +154,8 @@ class CellRowModel extends CellModel {
      */
     unregister() {
         this.deselectAllRows();
-        super.unregister();
+        super.unregister()
     }
 }
 
-Neo.applyClassConfig(CellRowModel);
-
-export default CellRowModel;
+export default Neo.setupClass(CellRowModel);

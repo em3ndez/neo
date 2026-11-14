@@ -32,20 +32,20 @@ class MainContainer2 extends Container {
             },
 
             items: [{
-                tabButtonConfig: {
+                header: {
                     iconCls: 'fa fa-home',
                     text   : 'Tab 1'
                 },
                 vdom: {
-                    innerHTML: 'Tab Content 1'
+                    html: 'Tab Content 1'
                 }
             }, {
-                tabButtonConfig: {
+                header: {
                     iconCls: 'fa fa-play-circle',
                     text   : 'Tab 2'
                 },
                 vdom: {
-                    innerHTML: 'Tab Content 2'
+                    html: 'Tab Content 2'
                 }
             }, {
                 ntype : 'container',
@@ -88,7 +88,7 @@ class MainContainer2 extends Container {
                     }]
                 }],
 
-                tabButtonConfig: {
+                header: {
                     iconCls: 'fa fa-user',
                     text   : 'Tab 3'
                 }
@@ -128,12 +128,12 @@ class MainContainer2 extends Container {
                     this.tabCount++;
 
                     tabContainer.insert(3, {
-                        tabButtonConfig: {
+                        header: {
                             iconCls: 'fa fa-user',
                             text   : 'Dynamic Tab ' + this.tabCount
                         },
                         vdom: {
-                            innerHTML: 'Dynamic Tab ' + this.tabCount
+                            html: 'Dynamic Tab ' + this.tabCount
                         }
                     });
                 }
@@ -155,6 +155,4 @@ class MainContainer2 extends Container {
     }
 }
 
-Neo.applyClassConfig(MainContainer2);
-
-export default MainContainer2;
+export default Neo.setupClass(MainContainer2);

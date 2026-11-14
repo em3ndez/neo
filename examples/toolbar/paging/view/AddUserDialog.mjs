@@ -46,14 +46,17 @@ class AddUserDialog extends Dialog {
         }],
         /**
          * @member {Boolean} resizable=false
+         * @reactive
          */
         resizable: false,
         /**
          * @member {String} title='Edit User'
+         * @reactive
          */
         title: 'Add User',
         /**
          * @member {Object} wrapperStyle={height:'300px',width:'400px'}
+         * @reactive
          */
         wrapperStyle: {
             height: '300px',
@@ -62,6 +65,4 @@ class AddUserDialog extends Dialog {
     }
 }
 
-Neo.applyClassConfig(AddUserDialog);
-
-export default AddUserDialog;
+export default Neo.setupClass(AddUserDialog);

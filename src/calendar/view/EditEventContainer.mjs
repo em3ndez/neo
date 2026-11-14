@@ -26,7 +26,7 @@ class EditEventContainer extends FormContainer {
          */
         bind: {
             endTime             : data => data.endTime,
-            intlFormat_time     : data => data.intlFormat_time,
+            intlFormat_time     : data => data.timeFormatter,
             minimumEventDuration: data => data.minimumEventDuration,
             startTime           : data => data.startTime
         },
@@ -38,6 +38,7 @@ class EditEventContainer extends FormContainer {
          * Only full hours are valid for now
          * format: 'hh:mm'
          * @member {String} endTime_='24:00'
+         * @reactive
          */
         endTime_: '24:00',
         /**
@@ -45,7 +46,7 @@ class EditEventContainer extends FormContainer {
          */
         endTimeFieldConfig: null,
         /**
-         * Bound to the view model.
+         * Bound to the state provider.
          * @member {Intl.DateTimeFormat|null} intlFormat_time=null
          * @protected
          */
@@ -56,12 +57,14 @@ class EditEventContainer extends FormContainer {
         owner: null,
         /**
          * @member {Neo.calendar.model.Event|null} record_=null
+         * @reactive
          */
         record_: null,
         /**
          * Only full hours are valid for now
          * format: 'hh:mm'
          * @member {String} startTime_='00:00'
+         * @reactive
          */
         startTime_: '00:00',
         /**
@@ -103,17 +106,18 @@ class EditEventContainer extends FormContainer {
      */
     afterSetRecord(value, oldValue) {
         if (value && oldValue) {
-            let me         = this,
-                timeFormat = me.intlFormat_time;
+            let me                  = this,
+                timeFormat          = me.intlFormat_time,
+                {calendarId, title} = value;
 
             me.getField('endTime')  .then(field => field.minValue = me.getEndTimeMinValue(value));
             me.getField('startTime').then(field => field.maxValue = me.getStartTimeMaxValue(value));
 
             me.reset({
-                calendarId: value.calendarId,
-                endTime   : timeFormat.format(value.endDate),
-                startTime : timeFormat.format(value.startDate),
-                title     : value.title
+                calendarId,
+                endTime  : timeFormat.format(value.endDate),
+                startTime: timeFormat.format(value.startDate),
+                title
             })
         } else if (value) {
             this.createItems()
@@ -125,7 +129,7 @@ class EditEventContainer extends FormContainer {
      */
     createItems() {
         let me         = this,
-            record     = me.record,
+            {record}   = me,
             timeFormat = me.intlFormat_time,
             timeFieldDefaults = {
                 module              : TimeField,
@@ -171,12 +175,12 @@ class EditEventContainer extends FormContainer {
                         return 'var(--event-yellow-border-color)';
                     }
 
-                    return `var(--event-${value}-color)`;
+                    return `var(--event-${value}-color)`
                 },
 
                 store: {
                     module  : CalendarStore,
-                    sourceId: me.model.getStore('calendars').id
+                    sourceId: me.stateProvider.getStore('calendars').id
                 },
 
                 ...me.calendarFieldConfig
@@ -230,7 +234,7 @@ class EditEventContainer extends FormContainer {
 
         date.setMinutes(date.getMinutes() - this.minimumEventDuration);
 
-        return this.intlFormat_time.format(date);
+        return this.intlFormat_time.format(date)
     }
 
     /**
@@ -238,7 +242,7 @@ class EditEventContainer extends FormContainer {
      */
     onCalendarFieldChange(data) {
         if (!Neo.isEmpty(data.value)) {
-            this.record.calendarId = data.record[data.component.store.keyProperty];
+            this.record.calendarId = data.value[data.component.store.keyProperty]
         }
     }
 
@@ -249,8 +253,8 @@ class EditEventContainer extends FormContainer {
     onDeleteButtonClick(data) {
         let me = this;
 
-        me.getModel().getStore('events').remove(me.record);
-        me.unmount();
+        me.getStateProvider().getStore('events').remove(me.record);
+        me.unmount()
     }
 
     /**
@@ -293,11 +297,9 @@ class EditEventContainer extends FormContainer {
      */
     onTitleFieldChange(data) {
         if (!Neo.isEmpty(data.value)) {
-            this.record.title = data.value;
+            this.record.title = data.value
         }
     }
 }
 
-Neo.applyClassConfig(EditEventContainer);
-
-export default EditEventContainer;
+export default Neo.setupClass(EditEventContainer);

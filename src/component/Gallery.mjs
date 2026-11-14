@@ -3,14 +3,22 @@ import Component       from './Base.mjs';
 import GalleryModel    from '../selection/GalleryModel.mjs';
 import NeoArray        from '../util/Array.mjs';
 import Store           from '../data/Store.mjs';
+import StoreLoading    from '../mixin/StoreLoading.mjs';
 
 const itemsMounted = Symbol.for('itemsMounted');
 
 /**
+ * @summary Displays selectable image records in a projected gallery with automatic Store loading feedback.
  * @class Neo.component.Gallery
  * @extends Neo.component.Base
+ * @mixes Neo.mixin.StoreLoading
  */
 class Gallery extends Component {
+    /** @summary Invalidates measurements from an older mount or render window. */
+    #mountGeneration = 0
+    /** @summary One mount's initial selection waits for a visible record, then retires. */
+    #pendingInitialSelection = false
+
     static config = {
         /**
          * @member {String} className='Neo.component.Gallery'
@@ -23,13 +31,20 @@ class Gallery extends Component {
          */
         ntype: 'gallery',
         /**
+         * @member {Neo.core.Base[]} mixins=[StoreLoading]
+         * @protected
+         */
+        mixins: [StoreLoading],
+        /**
          * The amount of visible rows inside the gallery
          * @member {Number} amountRows_=3
+         * @reactive
          */
         amountRows_: 3,
         /**
          * The background color of the gallery container
          * @member {String} backgroundColor_='#000000'
+         * @reactive
          */
         backgroundColor_: '#000000',
         /**
@@ -53,6 +68,7 @@ class Gallery extends Component {
         itemHeight: 160,
         /**
          * @member {Object} itemTpl_
+         * @reactive
          */
         itemTpl_:
         {cls: ['neo-gallery-item', 'image-wrap', 'view', 'neo-transition-1000'], tabIndex: '-1', cn: [
@@ -78,6 +94,7 @@ class Gallery extends Component {
         /**
          * The max amount of store items to show
          * @member {Number} maxItems_=300
+         * @reactive
          */
         maxItems_: 300,
         /**
@@ -93,6 +110,7 @@ class Gallery extends Component {
         /**
          * Specifies whether the mouse wheel should change the translateZ value for zooming
          * @member {Boolean} mouseWheelEnabled_=true
+         * @reactive
          */
         mouseWheelEnabled_: true,
         /**
@@ -112,6 +130,7 @@ class Gallery extends Component {
         /**
          * Set this one to true to order the items by row instead of by column
          * @member {Boolean} orderByRow_=false
+         * @reactive
          */
         orderByRow_: false,
         /**
@@ -122,6 +141,7 @@ class Gallery extends Component {
         /**
          * Uses the selection.GalleryModel by default
          * @member {Neo.selection.GalleryModel|null} selectionModel_=null
+         * @reactive
          */
         selectionModel_: null,
         /**
@@ -132,6 +152,7 @@ class Gallery extends Component {
         /**
          * The store instance or class containing the data for the gallery items
          * @member {Neo.data.Store|null} store_=null
+         * @reactive
          */
         store_: null,
         /**
@@ -143,18 +164,25 @@ class Gallery extends Component {
         /**
          * The translateX value of the view origin
          * @member {Number} translateX_=0
+         * @reactive
          */
         translateX_: 0,
         /**
          * The translateX value of the view origin
          * @member {Number} translateY_=0
+         * @reactive
          */
         translateY_: 0,
         /**
          * The translateX value of the view origin
          * @member {Number} translateZ_=0
+         * @reactive
          */
         translateZ_: 0,
+        /**
+         * @member {Boolean} useInternalId=true
+         */
+        useInternalId: true,
         /**
          * @member {Object} _vdom
          */
@@ -182,9 +210,14 @@ class Gallery extends Component {
 
         me.addDomListeners({
             click: me.onClick,
-            wheel: me.onMouseWheel,
-            scope: me
-        });
+            scope: me,
+            wheel: {
+                bubble : false,
+                fn     : me.onMouseWheel,
+                local  : true,
+                passive: false
+            }
+        })
     }
 
     /**
@@ -197,18 +230,15 @@ class Gallery extends Component {
         if (Neo.isNumber(oldValue)) {
             let me = this;
 
-            me.afterSetOrderByRow(me.orderByRow, !me.orderByRow);
+            me.afterSetOrderByRow(me.orderByRow, !me.orderByRow)
         }
     }
 
     /**
-     * Triggered after the id config got changed
-     * @param {String} value
-     * @param {String} oldValue
      * @protected
      */
-    afterSetId(value, oldValue) {
-        super.afterSetId(value, oldValue);
+    ensureStableIds() {
+        super.ensureStableIds();
 
         let me     = this,
             origin = me.vdom.cn[0],
@@ -220,9 +250,7 @@ class Gallery extends Component {
         camera.id = prefix + 'camera';
         dolly .id = prefix + 'dolly';
         origin.id = prefix + 'origin';
-        view  .id = prefix + 'view';
-
-        me.update();
+        view  .id = prefix + 'view'
     }
 
     /**
@@ -234,55 +262,91 @@ class Gallery extends Component {
     afterSetMaxItems(value, oldValue) {
         let me = this;
 
-        if (value && me.rendered) {
+        if (value && me.vnodeInitialized) {
             if (oldValue > value) {
-                me.destroyItems(value, oldValue - value);
+                me.destroyItems(value, oldValue - value)
             } else {
-                me.createItems(oldValue);
+                me.createItems(oldValue)
             }
         }
     }
 
     /**
-     * Triggered after the mounted config got changed
+     * @summary Measures the current mount and keeps its initial selection pending until data exists.
      * @param {Boolean} value
      * @param {Boolean} oldValue
+     * @returns {Promise<void>}
      * @protected
      */
-    afterSetMounted(value, oldValue) {
-        let me             = this,
-            selectionModel = me.selectionModel;
+    async afterSetMounted(value, oldValue) {
+        const me         = this,
+              worker     = Neo.currentWorker,
+              windowId   = me.windowId,
+              generation = ++me.#mountGeneration,
+              current    = () => !me.isDestroying && !me.isDestroyed && me.mounted &&
+                  me.windowId === windowId && me.#mountGeneration === generation;
 
-        if (value) {
-            me.focusOnMount && me.focus(me.id);
-
-            setTimeout(() => {
-                Neo.currentWorker.promiseMessage('main', {
-                    action    : 'readDom',
-                    appName   : me.appName,
-                    attributes: ['offsetHeight', 'offsetWidth'],
-                    vnodeId   : me.id
-                }).then(data => {
-                    me.offsetHeight = data.attributes.offsetHeight;
-                    me.offsetWidth  = data.attributes.offsetWidth;
-
-                    if (me.selectOnMount || selectionModel.hasSelection()) {
-                        let selection = selectionModel.getSelection(),
-                            key       = selection.length > 0 && selection[0];
-
-                        if (!key) {
-                            let index = parseInt(Math.min(me.maxItems, me.store.getCount()) / me.amountRows);
-
-                            key = me.store.getKeyAt(index);
-                        }
-
-                        selectionModel.select(key);
-                    }
-                });
-            }, 300);
-        } else {
-            selectionModel.items = [];
+        me.#pendingInitialSelection = false;
+        if (!value) {
+            me.selectionModel.items = [];
+            return
         }
+
+        me.focusOnMount && me.focus(me.id);
+        try {
+            await me.timeout(300);
+            if (!current()) {
+                return
+            }
+
+            const data = await worker.promiseMessage(windowId, {
+                action    : 'readDom',
+                appName   : me.appName,
+                attributes: ['offsetHeight', 'offsetWidth'],
+                vnodeId   : me.id,
+                windowId
+            });
+            if (!current()) {
+                return
+            }
+
+            me.offsetHeight             = data.attributes.offsetHeight;
+            me.offsetWidth              = data.attributes.offsetWidth;
+            me.#pendingInitialSelection = true;
+            me.#selectInitialItem()
+        } catch (error) {
+            if (error !== Neo.isDestroyed && !worker.isDeparture(error, windowId)) {
+                console.error('Unable to initialize Gallery selection', error)
+            }
+        }
+    }
+
+    /**
+     * @summary Consumes one mount's selection intent using current visible records, preserving key zero.
+     * A requested key stays pending until its record arrives; a load finishing without it never substitutes a default.
+     */
+    #selectInitialItem() {
+        const me = this,
+              sm = me.selectionModel;
+
+        if (!me.#pendingInitialSelection || !me.mounted) {
+            return
+        }
+
+        const selection = sm.getSelection(),
+              count     = Math.min(me.maxItems, me.store.getCount());
+        if (!selection.length && !me.selectOnMount) {
+            me.#pendingInitialSelection = false;
+            return
+        }
+        if (count < 1 || (selection.length && !me.store.get(selection[0]))) {
+            return
+        }
+
+        const index = Math.max(0, Math.min(count - 1, Math.floor(count / me.amountRows))),
+              key   = selection.length ? selection[0] : me.getRecordId(me.store.getAt(index));
+        me.#pendingInitialSelection = false;
+        sm.select(key)
     }
 
     /**
@@ -295,25 +359,25 @@ class Gallery extends Component {
         if (Neo.isBoolean(oldValue)) {
             let me   = this,
                 i    = 0,
-                len  = Math.min(me.maxItems, me.store.items.length),
+                len  = Math.min(me.maxItems, me.store.count),
                 view = me.getItemsRoot();
 
-            if (me.rendered) {
+            if (me.vnodeInitialized) {
                 me.refreshImageReflection();
 
-                setTimeout(() => {
+                me.timeout(50).then(() => {
                     for (; i < len; i++) {
-                        view.cn[i].style.transform = me.getItemTransform(i);
+                        view.cn[i].style.transform = me.getItemTransform(i)
                     }
 
                     me.update();
 
-                    setTimeout(() => {
+                    me.timeout(500).then(() => {
                         let sm = me.selectionModel;
 
-                        sm.hasSelection() && me.onSelectionChange(sm.items);
-                    }, 500);
-                }, 50);
+                        sm.hasSelection() && me.onSelectionChange(sm.items)
+                    })
+                })
             }
         }
     }
@@ -326,12 +390,24 @@ class Gallery extends Component {
      */
     afterSetSelectionModel(value, oldValue) {
         oldValue?.destroy();
-        this.rendered && value.register(this);
+        this.vnodeInitialized && value.register(this)
     }
 
     afterSetTranslateX() {this.moveOrigin()}
     afterSetTranslateY() {this.moveOrigin()}
     afterSetTranslateZ() {this.moveOrigin()}
+
+    /**
+     * @summary Retires the old window's measurement and selection intent before forwarding the new realm.
+     * @param {Number|String|null} value
+     * @param {Number|String|null} oldValue
+     * @protected
+     */
+    afterSetWindowId(value, oldValue) {
+        this.#mountGeneration++;
+        this.#pendingInitialSelection = false;
+        super.afterSetWindowId(value, oldValue)
+    }
 
     /**
      * Triggered before the store config gets changed.
@@ -345,20 +421,21 @@ class Gallery extends Component {
 
         oldValue?.destroy();
 
+        // No `sort` listener: `Store.onCollectionSort` re-fires a sort as a `load`, and `onStoreLoad`
+        // rebuilds the items in the new order. A second handler could only ever see the corrected order.
         return ClassSystemUtil.beforeSetInstance(value, Store, {
             listeners  : {
                 load : me.onStoreLoad,
-                sort : me.onSort,
                 scope: me
             }
-        });
+        })
     }
 
     /**
      * @returns {Object}
      */
     beforeGetItemTpl() {
-        return Neo.clone(this._itemTpl, true);
+        return Neo.clone(this._itemTpl, true)
     }
 
     /**
@@ -375,7 +452,7 @@ class Gallery extends Component {
                 selectionChange: this.onSelectionChange,
                 scope          : this
             }
-        });
+        })
     }
 
     /**
@@ -389,17 +466,19 @@ class Gallery extends Component {
         let me        = this,
             imageVdom = vdomItem.cn[0].cn[0];
 
-        vdomItem.id = me.getItemVnodeId(record[me.keyProperty]);
+        vdomItem.id = me.getItemVnodeId(me.getRecordId(record));
 
-        imageVdom.src = Neo.config.resourcesPath + 'examples/' + record.image;
+        let appConfig = Neo.windowConfigs?.[me.windowId] || Neo.config;
+        imageVdom.src = appConfig.resourcesPath + 'examples/' + record.image;
 
         imageVdom.style.height = me.itemHeight + 'px';
         imageVdom.style.width  = me.itemWidth  + 'px';
 
-        return vdomItem;
+        return vdomItem
     }
 
     /**
+     * @summary Projects records and refreshes loading feedback after the rendered population changes.
      * @param {Number} [startIndex] the start index for creating items,
      * e.g. increasing maxItems only needs to create the new ones
      * @protected
@@ -412,15 +491,15 @@ class Gallery extends Component {
             vdom             = me.vdom,
             itemsRoot        = me.getItemsRoot(),
             i                = startIndex || 0,
-            len              = Math.min(me.maxItems, me.store.items.length),
+            len              = Math.min(me.maxItems, me.store.count),
             amountColumns, item, vdomItem;
 
         if (orderByRow) {
-            amountColumns = Math.ceil(me.store.getCount() / amountRows);
+            amountColumns = Math.ceil(me.store.getCount() / amountRows)
         }
 
         for (; i < len; i++) {
-            item      = me.store.items[i];
+            item      = me.store.getAt(i);
             vdomItem  = me.createItem(me.itemTpl, item, i);
 
             vdomItem. style = vdomItem.style || {};
@@ -429,23 +508,25 @@ class Gallery extends Component {
 
             if (orderByRow) {
                 if (i >= secondLastColumn * amountColumns) {
-                    NeoArray.add(vdomItem.cls, 'neo-reflection');
+                    NeoArray.add(vdomItem.cls, 'neo-reflection')
                 }
             } else {
                 if (i % amountRows === secondLastColumn) {
-                    NeoArray.add(vdomItem.cls, 'neo-reflection');
+                    NeoArray.add(vdomItem.cls, 'neo-reflection')
                 }
             }
 
-            itemsRoot.cn.push(vdomItem);
+            itemsRoot.cn.push(vdomItem)
         }
 
-        me.promiseUpdate(vdom).then(() => {
-            me[itemsMounted] = true;
-        });
+        me.syncStoreLoading();
+        me.promiseUpdate().then(() => {
+            me[itemsMounted] = true
+        })
     }
 
     /**
+     * @summary Removes projected items and restores the empty-view indicator while loading remains pending.
      * @param {Number} [startIndex]
      * @param {Number} [amountItems]
      */
@@ -455,10 +536,11 @@ class Gallery extends Component {
             selectedItem = me.selectionModel.items[0];
 
         me.getItemsRoot().cn.splice(startIndex || 0, countItems);
+        me.syncStoreLoading();
         me.update();
 
         if (me.selectionModel.hasSelection() && selectedItem > startIndex && selectedItem < startIndex + countItems) {
-            me.afterSetMounted(true, false);
+            me.afterSetMounted(true, false)
         }
     }
 
@@ -467,26 +549,25 @@ class Gallery extends Component {
      * @returns {Number[]}
      */
     getCameraTransformForCell(index) {
-        let me          = this,
-            amountRows  = me.amountRows,
-            itemWidth   = me.itemWidth,
-            gap         = 10,
-            height      = me.offsetHeight / (amountRows + 2),
-            spacing     = height + gap,
-            x           = Math.floor(index / amountRows),
-            y           = index - x * amountRows;
+        let me                      = this,
+            {amountRows, itemWidth} = me,
+            gap                     = 10,
+            height                  = me.offsetHeight / (amountRows + 2),
+            spacing                 = height + gap,
+            x                       = Math.floor(index / amountRows),
+            y                       = index - x * amountRows;
 
         if (me.orderByRow) {
             let amountColumns = Math.ceil(Math.min(me.maxItems, me.store.getCount()) / amountRows);
 
             x = index % amountColumns;
-            y = Math.floor(index / amountColumns);
+            y = Math.floor(index / amountColumns)
         }
 
         let cx = x * (itemWidth + 10),
             cy = (y + 0.5) * spacing * 1.1 + 50;
 
-        return [-cx, -cy, 0];
+        return [-cx, -cy, 0]
     }
 
     /**
@@ -494,7 +575,21 @@ class Gallery extends Component {
      * @returns {Number} itemId
      */
     getItemId(vnodeId) {
-        return parseInt(vnodeId.split('__')[1]);
+        let itemId = vnodeId.split('__')[1];
+
+        if (!this.useInternalId) {
+            itemId = this.store.getCanonicalKey(itemId)
+        }
+
+        return itemId
+    }
+
+    /**
+     * @param {Object} record
+     * @returns {String|Number}
+     */
+    getRecordId(record) {
+        return this.useInternalId ? this.store.getInternalId(record) : this.store.getKey(record)
     }
 
     /**
@@ -502,7 +597,7 @@ class Gallery extends Component {
      * @returns {Object} vdom
      */
     getItemsRoot() {
-        return this.vdom.cn[0].cn[0].cn[0].cn[0];
+        return this.vdom.cn[0].cn[0].cn[0].cn[0]
     }
 
     /**
@@ -510,25 +605,25 @@ class Gallery extends Component {
      * @returns {String}
      */
     getItemTransform(index) {
-        let me         = this,
-            amountRows = me.amountRows,
+        let me           = this,
+            {amountRows} = me,
             x, y;
 
         if (me.orderByRow) {
             amountRows = Math.ceil(Math.min(me.maxItems, me.store.getCount()) / amountRows);
 
             x = index % amountRows;
-            y = Math.floor(index / amountRows);
+            y = Math.floor(index / amountRows)
         } else {
             x = Math.floor(index / amountRows);
-            y = index % amountRows;
+            y = index % amountRows
         }
 
         return this.translate3d(
             x * (me.itemWidth  + 10),
             y * (me.itemHeight + 10) + 100,
             0
-        );
+        )
     }
 
     /**
@@ -536,7 +631,7 @@ class Gallery extends Component {
      * @returns {String}
      */
     getItemVnodeId(id) {
-        return this.id + '__' + id;
+        return this.id + '__' + id
     }
 
     /**
@@ -546,14 +641,14 @@ class Gallery extends Component {
         let me = this;
 
         me.vdom.cn[0].style.transform = me.translate3d(me.translateX, me.translateY, me.translateZ);
-        me.update();
+        me.update()
     }
 
     /**
      * @param {Object} data
      */
     onClick(data) {
-        this.fire(data.id === this.id ? 'containerClick' : 'itemClick', data);
+        this.fire(data.id === this.id ? 'containerClick' : 'itemClick', data)
     }
 
     /**
@@ -577,7 +672,7 @@ class Gallery extends Component {
             me.moveOrigin();
 
             me.fire('changeTranslateX', me._translateX);
-            me.fire('changeTranslateZ', me._translateZ);
+            me.fire('changeTranslateZ', me._translateZ)
         }
     }
 
@@ -585,41 +680,45 @@ class Gallery extends Component {
      * @param {Array} value
      */
     onSelectionChange(value) {
-        let me             = this,
-            index          = me.store.indexOf(value?.[0] || 0),
-            itemHeight     = me.itemHeight,
-            itemWidth      = me.itemWidth,
-            camera         = me.vdom.cn[0].cn[0],
-            cameraStyle    = camera.style,
-            dollyTransform = me.getCameraTransformForCell(index),
-            height         = me.offsetHeight / (me.amountRows + 2),
-            width          = Math.round(height * itemWidth / itemHeight),
-            spacing        = width + 10,
+        let me       = this,
+            selected = value?.[0] || 0,
+            record   = me.store.get(selected),
+            index    = me.store.indexOf(record);
+
+        if (index === -1) {
+            index = 0
+        }
+
+        let {appName, id, itemHeight, itemWidth, windowId} = me,
+            camera                                         = me.vdom.cn[0].cn[0],
+            cameraStyle                                    = camera.style,
+            dollyTransform                                 = me.getCameraTransformForCell(index),
+            height                                         = me.offsetHeight / (me.amountRows + 2),
+            width                                          = Math.round(height * itemWidth / itemHeight),
+            spacing                                        = width + 10,
             timeoutId;
 
         me.transitionTimeouts.forEach(item => {
-            clearTimeout(item);
+            clearTimeout(item)
         });
 
         me.transitionTimeouts.splice(0, me.transitionTimeouts.length);
 
-        Neo.currentWorker.promiseMessage('main', {
-            action : 'updateDom',
-            appName: me.appName,
-            deltas : {
-                id   : me.id + '__dolly',
-                style: {
-                    transform: me.translate3d(...dollyTransform)
-                }
+        Neo.applyDeltas(windowId, {
+            id   : id + '__dolly',
+            style: {
+                transform: me.translate3d(...dollyTransform)
             }
         }).then(() => {
-            Neo.currentWorker.promiseMessage('main', {
-                action   : 'readDom',
-                appName  : me.appName,
-                vnodeId  : me.id,
+            Neo.currentWorker.promiseMessage(windowId, {
+                action : 'readDom',
+                appName,
+                vnodeId: id,
+                windowId,
+
                 functions: [{
                     fn            : 'getComputedStyle',
-                    params        : [me.id + '__dolly', null],
+                    params        : [id + '__dolly', null],
                     paramIsDomNode: [true, false],
                     scope         : 'defaultView',
                     returnFnName  : 'transform',
@@ -632,11 +731,11 @@ class Gallery extends Component {
                 if (transform.indexOf('matrix3d') === 0) {
                     transform  = transform.substring(9, transform.length - 1); // remove matrix3d( ... )
                     transform  = transform.split(',').map(e => parseFloat(e));
-                    translateX = transform[12]; // bottom left element of the 4x4 matrix
+                    translateX = transform[12] // bottom left element of the 4x4 matrix
                 } else {
                     transform  = transform.substring(7, transform.length - 1); // remove matrix( ... )
                     transform  = transform.split(',').map(e => parseFloat(e));
-                    translateX = transform[4]; // bottom left element of the 2x3 matrix
+                    translateX = transform[4] // bottom left element of the 2x3 matrix
                 }
 
                 translateX = translateX - dollyTransform[0];
@@ -653,85 +752,71 @@ class Gallery extends Component {
                     cameraStyle.transform          = 'rotateY(0deg)';
                     cameraStyle.transitionDuration = '5000ms';
 
-                    me.update();
+                    me.update()
                 }, 330);
 
-                me.transitionTimeouts.push(timeoutId);
-            });
-        });
+                me.transitionTimeouts.push(timeoutId)
+            })
+        })
     }
 
     /**
+     * @summary Rebuilds every item vdom, then restores the state the rebuild destroys.
      *
-     */
-    onSort() {
-        if (this[itemsMounted] === true) {
-            let me        = this,
-                hasChange = false,
-                items     = [...me.store.items || []],
-                newCn     = [],
-                view      = me.getItemsRoot(),
-                vdomMap   = view.cn.map(e => e.id),
-                fromIndex, vdomId;
-
-            items.length = Math.min(me.maxItems, me.store.getCount());
-
-            if (items.length > 0) {
-                items.forEach((item, index) => {
-                    vdomId    = me.getItemVnodeId(item[me.keyProperty]);
-                    fromIndex = vdomMap.indexOf(vdomId);
-
-                    newCn.push(view.cn[fromIndex]);
-
-                    if (index !== fromIndex) {
-                        hasChange = true;
-                    }
-                });
-
-                if (hasChange) {
-                    view.cn = newCn;
-                    me.update();
-
-                    setTimeout(() => {
-                        me.afterSetOrderByRow(me.orderByRow, !me.orderByRow);
-                    }, 50);
-                }
-            }
-        }
-    }
-
-    /**
+     * `data.Store` re-fires a sort as a `load` ({@link Neo.data.Store#onCollectionSort}), so this is the
+     * sort path too. It replaces every child of the items root with fresh {@link Neo.component.Gallery#createItem}
+     * output built from `itemTpl`, which carries no selection state — while `selection.Model` tracks *ids* and
+     * annotates the vdom *nodes* it resolves. The rebuilt nodes are new objects, so `neo-selected` and
+     * `aria-selected` go with the old ones while `hasSelection()` still reports a selection, and the camera is
+     * left pointing at the selected item's pre-sort cell.
+     *
+     * The repair is bound here, to the rebuild, rather than to a sort handler: every full rebuild destroys the
+     * annotation, not only a sort-driven one.
+     *
+     * Reordering is NOT done here in the sense Helix means it — the rebuild emits items in the new store order
+     * and the differ owns the DOM moves, exactly once. `onSort` used to run a second pass afterwards; it could
+     * never observe stale order, so it was removed rather than fixed.
+     *
      * @param {Object[]} items
      */
     onStoreLoad(items) {
-        this.getItemsRoot().cn = []; // silent update
-        this.createItems();
+        let me = this,
+            sm = me.selectionModel;
+
+        me.getItemsRoot().cn = []; // silent update
+        me.createItems();
+
+        if (sm?.hasSelection()) {
+            sm.restoreSelection(true);
+            me.onSelectionChange(sm.items)
+        }
+
+        me.#selectInitialItem()
     }
 
     /**
      *
      */
     refreshImageReflection() {
-        let me               = this,
-            amountRows       = me.amountRows,
-            orderByRow       = me.orderByRow,
-            secondLastColumn = amountRows - 1,
-            view             = me.getItemsRoot(),
+        let me                       = this,
+            {amountRows, orderByRow} = me,
+            secondLastColumn         = amountRows - 1,
+            view                     = me.getItemsRoot(),
             amountColumns;
 
         if (orderByRow) {
-            amountColumns = Math.ceil(Math.min(me.maxItems, me.store.getCount()) / amountRows);
+            amountColumns = Math.ceil(Math.min(me.maxItems, me.store.getCount()) / amountRows)
         }
 
         view.cn.forEach((item, index) => {
             if (orderByRow) {
-                NeoArray[index >= secondLastColumn * amountColumns ? 'add' : 'remove'](item.cls, 'neo-reflection');
+                NeoArray[index >= secondLastColumn * amountColumns ? 'add' : 'remove'](item.cls, 'neo-reflection')
             } else {
-                NeoArray[index % amountRows === secondLastColumn   ? 'add' : 'remove'](item.cls, 'neo-reflection');
+                NeoArray[index % amountRows === secondLastColumn   ? 'add' : 'remove'](item.cls, 'neo-reflection')
             }
         });
 
-        me.update();
+        me.update()
     }
 
     /**
@@ -741,10 +826,8 @@ class Gallery extends Component {
      * @returns {String}
      */
     translate3d(x, y, z) {
-        return `translate3d(${x}px, ${y}px, ${z}px)`;
+        return `translate3d(${x}px, ${y}px, ${z}px)`
     }
 }
 
-Neo.applyClassConfig(Gallery);
-
-export default Gallery;
+export default Neo.setupClass(Gallery);

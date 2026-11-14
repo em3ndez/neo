@@ -1,7 +1,12 @@
 .neo-grid-header-toolbar {
-    border-bottom: 2px solid var(--grid-container-border-color);
-    border-top   : 1px solid var(--grid-container-border-color);
+    border-bottom: 1px solid var(--grid-container-border-color);
+    min-width    : 0;
+    overflow     : hidden;
     padding      : 0;
-    position     : sticky;
-    top          : 0;
+
+    &.neo-is-resizing {
+        .neo-grid-header-button {
+            opacity: 0.3;
+        }
+    }
 }

@@ -1,169 +1,49 @@
 import CheckBox              from '../../../../src/form/field/CheckBox.mjs';
 import ConfigurationViewport from '../../../ConfigurationViewport.mjs';
-import MainStore             from './MainStore.mjs';
-import NumberField           from '../../../../src/form/field/Number.mjs';
-import SelectField           from '../../../../src/form/field/Select.mjs';
-import Radio                 from '../../../../src/form/field/Radio.mjs';
+import FruitSelect           from './FruitSelect.mjs';
 import TextField             from '../../../../src/form/field/Text.mjs';
 
 /**
+ * @summary A native Select with rich options and live presentation/validation controls.
  * @class Neo.examples.form.field.select.MainContainer
  * @extends Neo.examples.ConfigurationViewport
  */
 class MainContainer extends ConfigurationViewport {
     static config = {
-        className             : 'Neo.examples.form.field.select.MainContainer',
-        autoMount             : true,
-        configItemLabelWidth  : 160,
-        exampleContainerConfig: {style: {position: 'relative'}},
-        layout                : {ntype: 'hbox', align: 'stretch'}
+        className           : 'Neo.examples.form.field.select.MainContainer',
+        autoMount           : true,
+        configItemLabelWidth: 160,
+        layout              : {ntype: 'hbox', align: 'stretch'}
     }
 
+    /**
+     * @summary Exposes native enhancement, required state and label without replacing the field.
+     * @returns {Object[]}
+     */
     createConfigurationComponents() {
-        let me = this;
-
+        const me = this;
         return [{
-            module   : CheckBox,
-            checked  : me.exampleComponent.clearable,
-            labelText: 'clearable',
-            listeners: {change: me.onConfigChange.bind(me, 'clearable')}
+            module   : CheckBox, checked: true, labelText: 'customizable',
+            listeners: {change: me.onConfigChange.bind(me, 'customizable')}
         }, {
-            module   : CheckBox,
-            checked  : me.exampleComponent.clearToOriginalValue,
-            labelText: 'clearToOriginalValue',
-            listeners: {change: me.onConfigChange.bind(me, 'clearToOriginalValue')},
-            style    : {marginTop: '10px'}
+            module   : CheckBox, checked: false, labelText: 'required',
+            listeners: {change: me.onConfigChange.bind(me, 'required')}
         }, {
-            module   : CheckBox,
-            checked  : me.exampleComponent.editable,
-            labelText: 'editable',
-            listeners: {change: me.onConfigChange.bind(me, 'editable')},
-            style    : {marginTop: '10px'}
+            module   : CheckBox, checked: false, labelText: 'disabled',
+            listeners: {change: me.onConfigChange.bind(me, 'disabled')}
         }, {
-            module   : CheckBox,
-            checked  : me.exampleComponent.hideLabel,
-            labelText: 'hideLabel',
-            listeners: {change: me.onConfigChange.bind(me, 'hideLabel')},
-            style    : {marginTop: '10px'}
-        }, {
-            module   : CheckBox,
-            checked  : me.exampleComponent.hidePickerOnSelect,
-            labelText: 'hidePickerOnSelect',
-            listeners: {change: me.onConfigChange.bind(me, 'hidePickerOnSelect')},
-            style    : {marginTop: '10px'}
-        }, {
-            module        : Radio,
-            checked       : me.exampleComponent.labelPosition === 'top',
-            hideValueLabel: false,
-            labelText     : 'labelPosition',
-            listeners     : {change: me.onRadioChange.bind(me, 'labelPosition', 'top')},
-            name          : 'labelPosition',
-            style         : {marginTop: '10px'},
-            valueLabelText: 'top'
-        }, {
-            module        : Radio,
-            checked       : me.exampleComponent.labelPosition === 'right',
-            hideValueLabel: false,
-            labelText     : '',
-            listeners     : {change: me.onRadioChange.bind(me, 'labelPosition', 'right')},
-            name          : 'labelPosition',
-            valueLabelText: 'right'
-        }, {
-            module        : Radio,
-            checked       : me.exampleComponent.labelPosition === 'bottom',
-            hideValueLabel: false,
-            labelText     : '',
-            listeners     : {change: me.onRadioChange.bind(me, 'labelPosition', 'bottom')},
-            name          : 'labelPosition',
-            valueLabelText: 'bottom'
-        }, {
-            module        : Radio,
-            checked       : me.exampleComponent.labelPosition === 'left',
-            hideValueLabel: false,
-            labelText     : '',
-            listeners     : {change: me.onRadioChange.bind(me, 'labelPosition', 'left')},
-            name          : 'labelPosition',
-            valueLabelText: 'left'
-        }, {
-            module        : Radio,
-            checked       : me.exampleComponent.labelPosition === 'inline',
-            hideValueLabel: false,
-            labelText     : '',
-            listeners     : {change: me.onRadioChange.bind(me, 'labelPosition', 'inline')},
-            name          : 'labelPosition',
-            valueLabelText: 'inline'
-        }, {
-            module   : TextField,
-            labelText: 'labelText',
-            style    : {marginTop: '10px'},
-            listeners: {change: me.onConfigChange.bind(me, 'labelText')},
-            value    : me.exampleComponent.labelText
-        }, {
-            module   : NumberField,
-            labelText: 'labelWidth',
-            listeners: {change: me.onConfigChange.bind(me, 'labelWidth')},
-            maxValue : 200,
-            minValue : 50,
-            stepSize : 5,
-            value    : me.exampleComponent.labelWidth
-        }, {
-            module   : TextField,
-            labelText: 'placeholderText',
-            listeners: {change: me.onConfigChange.bind(me, 'placeholderText')},
-            value    : me.exampleComponent.placeholderText
-        }, {
-            module   : CheckBox,
-            checked  : me.exampleComponent.typeAhead,
-            labelText: 'typeAhead',
-            listeners: {change: me.onConfigChange.bind(me, 'typeAhead')},
-            style    : {marginTop: '10px'}
-        }, {
-            module   : TextField,
-            labelText: 'width',
-            listeners: {change: me.onConfigChange.bind(me, 'width')},
-            maxValue : 300,
-            minValue : 50,
-            stepSize : 5,
-            style    : {marginTop: '10px'},
-            value    : me.exampleComponent.width
-        }, {
-            module   : CheckBox,
-            checked  : false,
-            labelText: 'At end',
-            style    : {marginTop: '10px'},
-
-            listeners: {change: ({ value }) => {
-                const
-                    { exampleComponent } = this,
-                    { style } = exampleComponent;
-
-                Object.assign(style, {
-                    bottom   : value ? '1em' : '',
-                    position : value ? 'absolute' : ''
-                });
-
-                exampleComponent.style = style;
-            }}
-        }];
+            module   : TextField, labelText: 'labelText', value: 'Fruit',
+            listeners: {change: me.onConfigChange.bind(me, 'labelText')}
+        }]
     }
 
+    /**
+     * @summary Creates the example field; native changes retain typed scalar values.
+     * @returns {Neo.examples.form.field.select.FruitSelect}
+     */
     createExampleComponent() {
-        return Neo.create({
-            module       : SelectField,
-            labelPosition: 'inline',
-            labelText    : 'US States',
-            labelWidth   : 80,
-            store        : MainStore,
-            value        : 'Arizona', // or 'AZ'
-            valueField   : 'abbreviation',
-            width        : '50%',
-            pickerConfig : {
-                minHeight : '6em'
-            }
-        })
+        return Neo.create(FruitSelect, {labelText: 'Fruit', name: 'fruit', width: 300})
     }
 }
 
-Neo.applyClassConfig(MainContainer);
-
-export default MainContainer;
+export default Neo.setupClass(MainContainer);

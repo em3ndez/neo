@@ -17,6 +17,7 @@ class MainContainer extends Viewport {
         className: 'SharedDialog.view.MainContainer',
         /**
          * @member {Neo.controller.Component} controller=MainContainerController
+         * @reactive
          */
         controller: MainContainerController,
         /**
@@ -74,25 +75,25 @@ class MainContainer extends Viewport {
                 },
 
                 items: [{
-                    labelText     : 'Dock',
-                    valueLabelText: 'Top',
-                    value         : 'top'
+                    labelText : 'Dock',
+                    valueLabel: 'Top',
+                    value     : 'top'
                 }, {
-                    checked       : true,
-                    valueLabelText: 'Right',
-                    value         : 'right'
+                    checked   : true,
+                    valueLabel: 'Right',
+                    value     : 'right'
                 }, {
-                    valueLabelText: 'Bottom',
-                    value         : 'bottom'
+                    valueLabel: 'Bottom',
+                    value     : 'bottom'
                 }, {
-                    valueLabelText: 'Left',
-                    value         : 'left'
+                    valueLabel: 'Left',
+                    value     : 'left'
                 }]
             }]
         }, {
             ntype: 'component',
             flex : 1,
-            html : '#1',
+            text : '#1',
 
             style: {
                 alignItems    : 'center',
@@ -106,6 +107,7 @@ class MainContainer extends Viewport {
         }],
         /**
          * @member {Object} layout={ntype:'vbox',align:'stretch'}
+         * @reactive
          */
         layout: {ntype: 'vbox', align: 'stretch'},
         /**
@@ -115,6 +117,4 @@ class MainContainer extends Viewport {
     }
 }
 
-Neo.applyClassConfig(MainContainer);
-
-export default MainContainer;
+export default Neo.setupClass(MainContainer);

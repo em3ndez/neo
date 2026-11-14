@@ -1,6 +1,6 @@
-import Neo       from '../Neo.mjs';
-import Base      from './Base.mjs';
-import * as core from '../core/_export.mjs';
+import Neo          from '../Neo.mjs';
+import Base         from './Base.mjs';
+import CanvasGroups from './CanvasGroups.mjs';
 
 /**
  * The Canvas worker is responsible for dynamically manipulating offscreen canvas.
@@ -17,48 +17,125 @@ class Canvas extends Base {
          */
         className: 'Neo.worker.Canvas',
         /**
+         * key: value => canvasId: {windowId: OffscreenCanvas}
+         * @member {Object} canvasWindowMap={}
+         */
+        canvasWindowMap: {},
+        /**
          * key: value => canvasId: OffscreenCanvas
          * @member {Object} map={}
          */
         map: {},
         /**
+         * Remote method access for other workers
+         * @member {Object} remote
+         * @protected
+         */
+        remote: {
+            app: [
+                'loadModule',
+                'registerCanvas',
+                'retrieveCanvas',
+                'unregisterCanvas'
+            ]
+        },
+        /**
          * @member {Boolean} singleton=true
          * @protected
          */
-        singleton: true,
-        /**
-         * @member {String} workerId='canvas'
-         * @protected
-         */
-        workerId: 'canvas'
+        singleton: true
     }
 
     /**
-     *
+     * @member {String} workerId='canvas'
+     * @protected
+     */
+    workerId = 'canvas'
+
+    /**
+     * @summary Opens a direct channel to the app worker and registers it under this worker's canvas group, which
+     * the worker's own name carries, so the app worker routes each group's traffic to its own canvas worker.
      */
     afterConnect() {
         let me             = this,
             channel        = new MessageChannel(),
-            {port1, port2} = channel;
+            {port1, port2} = channel,
+            group          = CanvasGroups.groupFromWorkerName(globalThis.name);
 
         port1.onmessage = me.onMessage.bind(me);
 
-        me.sendMessage('app', {action: 'registerPort', transfer: port2}, [port2]);
+        me.sendMessage('app', {action: 'registerPort', group, transfer: port2}, [port2]);
 
-        me.channelPorts.app = port1;
+        me.channelPorts.app = port1
     }
 
     /**
+     * @summary Remotely loads an ES module into the Canvas Worker.
+     * This method uses scoped dynamic imports to ensure Webpack only bundles
+     * relevant modules (inside 'canvas/' directories) for this worker.
+     *
+     * The engine's own renderers (`src/canvas/…`) import through a root beside this worker, which stays
+     * inside the package wherever it is installed. Every other path is app space, whose root a consumer
+     * build rebases to its workspace, so a root shared with the engine renderers would lose them.
+     *
+     * A renderer an installed package ships is addressed as `node_modules/<package>/<path>`, in development and
+     * in a build alike. It imports through the directory that holds the engine package, which is the
+     * workspace's `node_modules` once the engine is installed, so it loads only from a consumer workspace, never
+     * from the Engine repository itself. A build admits a package only for the directories its `package.json`
+     * names under `neo.canvasModules`, e.g. `"neo": {"canvasModules": ["src/canvas"]}`, and only while the
+     * workspace lists the package among its dependencies. Any other package path answers `{success: false}`.
+     *
      * @param {Object} data
+     * @param {String} data.path The path to the module to load (e.g., 'src/canvas/Header.mjs',
+     * 'apps/MyApp/canvas/MyShape.mjs' or 'node_modules/my-charts/src/canvas/Sparkline.mjs').
+     * @returns {Promise<Object>} {success: true, path} or {success: false, path, error}
      */
-    onRegisterCanvas(data) {
-        this.map[data.nodeId] = data.node;
+    async loadModule({path}) {
+        if (path.endsWith('.mjs')) {
+            path = path.slice(0, -4)
+        }
 
-        Neo.currentWorker.sendMessage(data.origin, {
-            action : 'reply',
-            replyId: data.id,
-            success: true
-        });
+        try {
+            if (path.startsWith('src/canvas/')) {
+                await import(
+                    /* webpackMode: "lazy" */
+                    `../canvas/${path.slice(11)}.mjs`
+                )
+            } else if (path.startsWith('node_modules/')) {
+                await import(
+                    // Scans nothing in the Engine's own build; canvasModuleContextPlugin admits a consumer's declared roots
+                    /* webpackExclude: /[\s\S]/ */
+                    /* webpackMode: "lazy" */
+                    `../../../${path.slice(13)}.mjs`
+                )
+            } else {
+                await import(
+                    /* webpackInclude: /(?:apps|examples|src)\/.*canvas\/.*\.mjs$/ */
+                    /* webpackExclude: /(?:\/|\\)(buildScripts|dist|node_modules(?:\/|\\)(?!neo\.mjs)|ai(?:\/|\\)|\.claude(?:\/|\\)|server\.mjs|test(?:\/|\\)|System Volume Information|\$RECYCLE\.BIN)/ */
+                    /* webpackMode: "lazy" */
+                    `../../${path}.mjs`
+                )
+            }
+
+            return {success: true, path}
+        } catch (e) {
+            console.error(`Canvas Worker: Failed to load module ${path}`, e);
+            return {success: false, path, error: e.message}
+        }
+    }
+
+    /**
+     * Overrides worker/Base to handle specific messages like registerCanvasDirect
+     * @param {MessageEvent} e
+     */
+    onMessage(e) {
+        let msg = e.data;
+
+        if (msg.action === 'registerCanvasDirect') {
+            this.registerCanvasDirect(msg)
+        } else {
+            super.onMessage(e)
+        }
     }
 
     /**
@@ -67,19 +144,94 @@ class Canvas extends Base {
     onRegisterNeoConfig(msg) {
         super.onRegisterNeoConfig(msg);
 
-        let path = Neo.config.appPath.slice(0, -8); // removing "/app.mjs"
+        if (Neo.config.useCanvasWorkerStartingPoint) {
+            let path = Neo.config.appPath;
 
-        import(
-            /* webpackInclude: /\/canvas.mjs$/ */
-            /* webpackExclude: /\/node_modules/ */
-            /* webpackMode: "lazy" */
-            `../../${path}/canvas.mjs`
-        ).then(module => {
-            module.onStart();
-        });
+            if (path.endsWith('.mjs')) {
+                path = path.slice(0, -8); // removing "/app.mjs"
+            }
+
+            import(
+                /* webpackInclude: /(?:apps|examples|src)\/.*canvas\.mjs$/ */
+                /* webpackExclude: /(?:\/|\\)(buildScripts|dist|node_modules(?:\/|\\)(?!neo\.mjs)|ai(?:\/|\\)|\.claude(?:\/|\\)|server\.mjs|test(?:\/|\\)|System Volume Information|\$RECYCLE\.BIN)/ */
+                /* webpackMode: "lazy" */
+                `../../${path}/canvas.mjs`
+                ).then(module => {
+                module.onStart()
+            })
+        }
+    }
+
+    /**
+     * @param {Object} data
+     */
+    registerCanvas(data) {
+        let me = this;
+
+        if (data.windowId) {
+            me.canvasWindowMap[data.nodeId] ??= {};
+            me.canvasWindowMap[data.nodeId][data.windowId] = data.node
+        }
+
+        me.map[data.nodeId] = data.node;
+
+        return true
+    }
+
+    /**
+     * @summary Receives an OffscreenCanvas directly from the Main Thread.
+     *
+     * This is the receiving end of the "Triangular Communication" pattern initiated by `Neo.main.DomAccess.transferCanvasToWorker`.
+     * By receiving the canvas directly from Main, we avoid the `OffscreenCanvas` transfer restrictions inherent in Firefox's SharedWorker implementation.
+     * Once the canvas is registered internally, this method pings the App Worker back over their direct `MessageChannel` to confirm receipt so the App Worker can proceed with rendering instructions.
+     *
+     * @param {Object} msg
+     * @protected
+     */
+    registerCanvasDirect(msg) {
+        this.registerCanvas(msg);
+
+        // Ping App worker that canvas was received from main.
+        this.sendMessage('app', {
+            action     : 'canvasRegistered',
+            componentId: msg.componentId,
+            nodeId     : msg.nodeId
+        })
+    }
+
+    /**
+     * @deprecated No caller left: `registerCanvas` already maps a canvas the moment main transfers it.
+     * @param {Object} data
+     * @param {String} data.nodeId
+     * @param {String} data.origin
+     * @param {Number} data.windowId
+     */
+    retrieveCanvas(data) {
+        let me     = this,
+            canvas = me.canvasWindowMap[data.nodeId]?.[data.windowId];
+
+        if (canvas) {
+            me.map[data.nodeId] = canvas
+        }
+
+        return {hasCanvas: !!canvas}
+    }
+
+    /**
+     * @param {Object} data
+     * @param {String} data.nodeId
+     */
+    unregisterCanvas(data) {
+        let me = this;
+
+        delete me.map[data.nodeId];
+
+        // We could also cleanup canvasWindowMap, but it might be overkill since
+        // windowIds are reused. However, for correctness:
+        if (me.canvasWindowMap[data.nodeId]) {
+            delete me.canvasWindowMap[data.nodeId]
+        }
     }
 }
 
-let instance = Neo.applyClassConfig(Canvas);
-
-export default instance;
+export default Neo.setupClass(Canvas);

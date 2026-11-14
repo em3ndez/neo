@@ -19,11 +19,9 @@ class Page2 extends FormPageContainer {
             module   : DateField,
             labelText: 'Birthday',
             name     : 'birthday',
-            style    : {marginBottom: '800px', marginTop: '800px'}
+            style    : {marginBottom: '2000px', marginTop: '800px'}
         }]
     }
 }
 
-Neo.applyClassConfig(Page2);
-
-export default Page2;
+export default Neo.setupClass(Page2);

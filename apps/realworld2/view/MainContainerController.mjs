@@ -29,6 +29,7 @@ class MainContainerController extends ComponentController {
          * Stores the current user data after logging in
          * @member {Object|null} currentUser_=null
          * @protected
+         * @reactive
          */
         currentUser_: null,
         /**
@@ -190,11 +191,27 @@ class MainContainerController extends ComponentController {
     }
 
     /**
+     * @summary Loads the shared tag vocabulary into the active consumer.
      *
+     * Home renders the raw strings in its existing tag list. The editor hands that same string
+     * array directly to `form.field.Chip`: the field's Store promotion owns record construction,
+     * so the app never maintains a second hand-mapped tag model.
+     * @param {Neo.component.Base|null} target=this.getReference('home')
      */
-    getTags() {
+    getTags(target=this.getReference('home')) {
         TagApi.get().then(data => {
-            this.getReference('home').getTagList().tags = data.json.tags;
+            const
+                tags     = data.json.tags,
+                tagField = target?.getReference?.('tags'),
+                tagList  = target?.getTagList?.();
+
+            if (tagList) {
+                tagList.tags = tags
+            }
+
+            if (tagField) {
+                tagField.store = tags
+            }
         });
     }
 
@@ -221,37 +238,47 @@ class MainContainerController extends ComponentController {
      * @param {Object} userData
      */
     login(userData) {
-        this.currentUser = userData;
+        let me         = this,
+            {windowId} = me;
+
+        me.currentUser = userData;
 
         Neo.main.addon.LocalStorage.createLocalStorageItem({
             key  : LOCAL_STORAGE_KEY,
-            value: userData.token
+            value: userData.token,
+            windowId
         }).then(() => {
             // wait until the header vdom-update is done to avoid showing sign up & sign in twice
-            setTimeout(() => {
+            me.timeout(50).then(() => {
                 Neo.Main.setRoute({
-                    value: '/'
-                });
-            }, 50);
-        });
+                    value: '/',
+                    windowId
+                })
+            })
+        })
     }
 
     /**
      *
      */
     logout() {
-        this.currentUser = null;
+        let me         = this,
+            {windowId} = me;
+
+        me.currentUser = null;
 
         Neo.main.addon.LocalStorage.destroyLocalStorageItem({
-            key: LOCAL_STORAGE_KEY
+            key: LOCAL_STORAGE_KEY,
+            windowId
         }).then(() => {
             // wait until the header vdom-update is done to avoid showing sign up & sign in twice
-            setTimeout(() => {
+            this.timeout(50).then(() => {
                 Neo.Main.setRoute({
-                    value: '/'
-                });
-            }, 50);
-        });
+                    value: '/',
+                    windowId
+                })
+            })
+        })
     }
 
     /**
@@ -287,11 +314,11 @@ class MainContainerController extends ComponentController {
             else if (hashString === '/login')          {newView = me.getView('login',    LoginFormContainer); newView.mode = 'login';}
             else if (hashString.includes('/profile/')) {newView = me.getView('profile',  ProfileContainer);}
             else if (hashString === '/settings')       {newView = me.getView('settings', SettingsFormContainer);}
-          /*else if (value.hasOwnProperty('/register')) {newView = me.getView('signUpComponent',   SignUpComponent,   'signup'); newView.mode = 'signup';}
+          /*else if (Object.hasOwn(value, '/register')) {newView = me.getView('signUpComponent',   SignUpComponent,   'signup'); newView.mode = 'signup';}
 
             if (!(oldValue && (
-                oldValue.hasOwnProperty('/login')    && value.hasOwnProperty('/register') ||
-                oldValue.hasOwnProperty('/register') && value.hasOwnProperty('/login')))
+                Object.hasOwn(oldValue, '/login')    && Object.hasOwn(value, '/register') ||
+                Object.hasOwn(oldValue, '/register') && Object.hasOwn(value, '/login')))
             ) {
                 if (component.items.length > 2) {
                     component.removeAt(1, false, true);
@@ -303,11 +330,14 @@ class MainContainerController extends ComponentController {
             }*/
 
             // short delay to ensure the new card already got added
-            setTimeout(() => {
-                cards.layout.activeIndex = cards.indexOf(newView);
-            }, 100);
+            me.timeout(100).then(() => {
+                cards.layout.activeIndex = cards.indexOf(newView)
+            });
 
             switch (newView.reference) {
+                case 'editor':
+                    me.getTags(newView);
+                    break;
                 case 'gallery':
                     newView.getArticles();
                     break;
@@ -368,6 +398,4 @@ class MainContainerController extends ComponentController {
     }
 }
 
-Neo.applyClassConfig(MainContainerController);
-
-export default MainContainerController;
+export default Neo.setupClass(MainContainerController);

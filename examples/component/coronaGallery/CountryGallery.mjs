@@ -22,6 +22,7 @@ class CountryGallery extends Gallery {
         className: 'Neo.examples.component.coronaGallery.CountryGallery',
         /**
          * @member {String[]} cls=['neo-country-gallery']
+         * @reactive
          */
         cls: ['neo-country-gallery'],
         /**
@@ -46,6 +47,7 @@ class CountryGallery extends Gallery {
         selectOnMount: false,
         /**
          * @member {Neo.data.Store} store=CountryStore
+         * @reactive
          */
         store: CountryStore
     }
@@ -60,9 +62,10 @@ class CountryGallery extends Gallery {
     createItem(vdomItem, record, index) {
         let me    = this,
             cls   = ['neo-gallery-item', 'image-wrap', 'view', 'neo-transition-1000'],
+            fn    = CountryGallery.formatNumber,
             style = {height: (me.itemHeight - 70) + 'px', width: me.itemWidth  + 'px'};
 
-        return {cls, id: me.getItemVnodeId(record[me.keyProperty]), tabIndex: '-1', cn: [
+        return {cls, id: me.getItemVnodeId(me.getRecordId(record)), tabIndex: '-1', cn: [
             {cls: ['neo-item-wrapper'], style: {height: me.itemHeight + 'px'}, cn: [
                 {cls: ['neo-country-gallery-item'], style, cn: [
                     {cls: ['neo-item-header'], cn: [
@@ -72,29 +75,37 @@ class CountryGallery extends Gallery {
                     {tag: 'table', cls: ['neo-content-table'], cn: [
                         {tag: 'tr', cn: [
                             {tag: 'td', html: 'Cases'},
-                            {tag: 'td', cls: ['neo-align-right'], html: record.cases},
+                            {tag: 'td', cls: ['neo-align-right'], html: fn(record.cases)},
                             {tag: 'td', style: {width: '100%'}},
                             {tag: 'td', html: 'Cases today'},
-                            {tag: 'td', cls: ['neo-align-right'], html: record.todayCases}
+                            {tag: 'td', cls: ['neo-align-right'], html: fn(record.todayCases)}
                         ]},
                         {tag: 'tr', cn: [
                             {tag: 'td', html: 'Deaths'},
-                            {tag: 'td', cls: ['neo-align-right', 'neo-content-deaths'], html: record.deaths},
+                            {tag: 'td', cls: ['neo-align-right', 'neo-content-deaths'], html: fn(record.deaths)},
                             {tag: 'td', style: {width: '100%'}},
                             {tag: 'td', html: 'Deaths today'},
-                            {tag: 'td', cls: ['neo-align-right', 'neo-content-deaths'], html: record.todayDeaths}
+                            {tag: 'td', cls: ['neo-align-right', 'neo-content-deaths'], html: fn(record.todayDeaths)}
                         ]},
                         {tag: 'tr', cn: [
                             {tag: 'td', html: 'Recovered'},
-                            {tag: 'td', cls: ['neo-align-right', 'neo-content-recovered'], html: record.recovered},
+                            {tag: 'td', cls: ['neo-align-right', 'neo-content-recovered'], html: fn(record.recovered)},
                             {tag: 'td', style: {width: '100%'}},
                             {tag: 'td', html: 'Critical'},
-                            {tag: 'td', cls: ['neo-align-right', 'neo-content-critical'], html: record.critical}
+                            {tag: 'td', cls: ['neo-align-right', 'neo-content-critical'], html: fn(record.critical)}
                         ]}
                     ]}
                 ]}
             ]}
-        ]};
+        ]}
+    }
+
+    /**
+     * @param {Number} value
+     * @returns {String}
+     */
+    static formatNumber(value) {
+        return value.toLocaleString()
     }
 
     /**
@@ -159,15 +170,7 @@ class CountryGallery extends Gallery {
 
         imageName = map[imageName] || imageName;
 
-        return `https://raw.githubusercontent.com/neomjs/pages/master/resources/images/flaticon/country_flags/png/${imageName}.png`;
-    }
-
-    /**
-     * @param {String} vnodeId
-     * @returns {String} itemId
-     */
-    getItemId(vnodeId) {
-        return vnodeId.split('__')[1];
+        return `https://raw.githubusercontent.com/neomjs/pages/main/resources_pub/images/flaticon/country_flags/png/${imageName}.png`
     }
 
     /**
@@ -176,13 +179,13 @@ class CountryGallery extends Gallery {
     onStoreLoad(items) {
         super.onStoreLoad(items);
 
-        setTimeout(() => {
-            this.selectOnMount = true;
-            this.afterSetMounted(true, false);
-        }, Neo.config.environment === 'development' ? 200 : 500);
+        let me = this;
+
+        me.timeout(Neo.config.environment === 'development' ? 200 : 500).then(() => {
+            me.selectOnMount = true;
+            me.afterSetMounted(true, false)
+        })
     }
 }
 
-Neo.applyClassConfig(CountryGallery);
-
-export default CountryGallery;
+export default Neo.setupClass(CountryGallery);

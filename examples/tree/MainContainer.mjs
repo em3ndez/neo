@@ -27,7 +27,7 @@ class MainContainer extends ConfigurationViewport {
             hideLabel     : true,
             hideValueLabel: false,
             listeners     : {change: me.onConfigChange.bind(me, 'disableSelection')},
-            valueLabelText: 'disableSelection'
+            valueLabel    : 'disableSelection'
         }, {
             module        : CheckBox,
             checked       : treeList.draggable,
@@ -35,7 +35,7 @@ class MainContainer extends ConfigurationViewport {
             hideValueLabel: false,
             listeners     : {change: me.onConfigChange.bind(me, 'draggable')},
             style         : {marginTop: '10px'},
-            valueLabelText: 'draggable'
+            valueLabel    : 'draggable'
         }, {
             module        : CheckBox,
             checked       : treeList.dragZone?.leafNodesOnly || false,
@@ -43,7 +43,7 @@ class MainContainer extends ConfigurationViewport {
             hideValueLabel: false,
             listeners     : {change: me.onLeafNodesOnlyChange.bind(me)},
             style         : {marginTop: '10px'},
-            valueLabelText: 'DragZone.leafNodesOnly'
+            valueLabel    : 'DragZone.leafNodesOnly'
         }, {
             module   : NumberField,
             clearable: true,
@@ -56,12 +56,12 @@ class MainContainer extends ConfigurationViewport {
             style    : {marginTop: '10px'}
         }, {
             module        : CheckBox,
-            checked       : treeList.sortable,
+            checked       : treeList.dragResortable,
             hideLabel     : true,
             hideValueLabel: false,
-            listeners     : {change: me.onConfigChange.bind(me, 'sortable')},
+            listeners     : {change: me.onConfigChange.bind(me, 'dragResortable')},
             style         : {marginTop: '10px'},
-            valueLabelText: 'sortable'
+            valueLabel    : 'dragResortable'
         }, {
             module   : NumberField,
             clearable: true,
@@ -72,7 +72,7 @@ class MainContainer extends ConfigurationViewport {
             stepSize : 5,
             style    : {marginTop: '10px'},
             value    : treeList.width
-        }];
+        }]
     }
 
     /**
@@ -114,7 +114,7 @@ class MainContainer extends ConfigurationViewport {
                     minWidth  : '15em'
                 }
             }]
-        });
+        })
     }
 
     /**
@@ -124,11 +124,9 @@ class MainContainer extends ConfigurationViewport {
         let dragZone = this.exampleComponent.down({module: ApiTreeList}).dragZone;
 
         if (dragZone) {
-            dragZone.leafNodesOnly = opts.value;
+            dragZone.leafNodesOnly = opts.value
         }
     }
 }
 
-Neo.applyClassConfig(MainContainer);
-
-export default MainContainer;
+export default Neo.setupClass(MainContainer);

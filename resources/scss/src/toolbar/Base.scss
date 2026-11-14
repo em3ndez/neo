@@ -5,7 +5,18 @@
 
     .neo-button {
         margin: 0;
+
+        @media (max-width: 600px) {
+            padding: 0 5px;
+        }
     }
+
+    // A gated action that is not being offered has NO DOM node. `toolbar.Base` withdraws it through
+    // the component's own absence primitive (`vdom.removeDom`), so no consumer rule on
+    // `.neo-toolbar-action` — whatever its specificity — can give it a box back. A class-driven
+    // `display: none` used to live here and was outranked by ordinary viewport-scoped app CSS.
+    // `.neo-toolbar-action-context-inactive` is the instance-side marker the tab overflow
+    // measurement filters by; it never reaches a rendered node, so there is nothing to style.
 
     &.neo-dock-left {
         .neo-button {
@@ -143,7 +154,7 @@
         .neo-button {
             &.icon-left {
                 .neo-button-glyph {
-                    margin: 0 6px 0 0;
+                    margin: var(--button-glyph-margin);
                 }
             }
         }

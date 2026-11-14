@@ -29,26 +29,24 @@ class Page5 extends FormPageContainer {
          * @member {Object[]} items
          */
         items: [{
-            labelText     : 'Fruits',
-            value         : 'apple',
-            valueLabelText: 'Apple'
+            labelText : 'Fruits',
+            value     : 'apple',
+            valueLabel: 'Apple'
         }, {
-            value         : 'banana',
-            valueLabelText: 'Banana'
+            value     : 'banana',
+            valueLabel: 'Banana'
         }, {
-            checked       : true,
-            value         : 'lemon',
-            valueLabelText: 'Lemon'
+            checked   : true,
+            value     : 'lemon',
+            valueLabel: 'Lemon'
         }, {
-            value         : 'orange',
-            valueLabelText: 'Orange'
+            value     : 'orange',
+            valueLabel: 'Orange'
         }, {
-            value         : 'strawberry',
-            valueLabelText: 'Strawberry'
+            value     : 'strawberry',
+            valueLabel: 'Strawberry'
         }]
     }
 }
 
-Neo.applyClassConfig(Page5);
-
-export default Page5;
+export default Neo.setupClass(Page5);

@@ -21,19 +21,22 @@ class CountryHelix extends Helix {
          * @member {Object} bind
          */
         bind: {
-            country: {twoWay: true, value: data => data.country}
+            country: {key: 'country', twoWay: true}
         },
         /**
          * @member {String|null} country_=null
+         * @reactive
          */
         country_: null,
         /**
          * The vertical delta between each helix item (increasing this value will create a spiral)
          * @member {Number} deltaY=1.2
+         * @reactive
          */
         deltaY: 1.2,
         /**
          * @member {Object} itemTpl_
+         * @reactive
          */
         itemTpl:
         {cls: ['surface', 'neo-helix-item'], style: {}, tabIndex: '-1', cn: [
@@ -45,24 +48,24 @@ class CountryHelix extends Helix {
                     ]},
                     {tag: 'table', cls: ['neo-content-table'], cn: [
                         {tag: 'tr', cn: [
-                            {tag: 'td', html: 'Cases'},
+                            {tag: 'td', text: 'Cases'},
                             {tag: 'td', cls: ['neo-align-right']},
                             {tag: 'td', style: {width: '100%'}},
-                            {tag: 'td', html: 'Cases today'},
+                            {tag: 'td', text: 'Cases today'},
                             {tag: 'td', cls: ['neo-align-right']}
                         ]},
                         {tag: 'tr', cn: [
-                            {tag: 'td', html: 'Deaths'},
+                            {tag: 'td', text: 'Deaths'},
                             {tag: 'td', cls: ['neo-align-right', 'neo-content-deaths']},
                             {tag: 'td', style: {width: '100%'}},
-                            {tag: 'td', html: 'Deaths today'},
+                            {tag: 'td', text: 'Deaths today'},
                             {tag: 'td', cls: ['neo-align-right', 'neo-content-deaths']}
                         ]},
                         {tag: 'tr', cn: [
-                            {tag: 'td', html: 'Recovered'},
+                            {tag: 'td', text: 'Recovered'},
                             {tag: 'td', cls: ['neo-align-right', 'neo-content-recovered']},
                             {tag: 'td', style: {width: '100%'}},
-                            {tag: 'td', html: 'Critical'},
+                            {tag: 'td', text: 'Critical'},
                             {tag: 'td', cls: ['neo-align-right', 'neo-content-critical']}
                         ]}
                     ]}
@@ -77,11 +80,13 @@ class CountryHelix extends Helix {
         /**
          * The radius of the Helix in px
          * @member {Number} radius=2500
+         * @reactive
          */
         radius: 2500,
         /**
          * The rotationAngle of the Helix in degrees
          * @member {Number} rotationAngle=720
+         * @reactive
          */
         rotationAngle: 720,
         /**
@@ -91,22 +96,28 @@ class CountryHelix extends Helix {
         showCloneInfo: false,
         /**
          * @member {Neo.data.Store} store=CountryStore
+         * @reactive
          */
         store: CountryStore,
         /**
          * The translateX value gets included into each helix item
          * @member {Number} translateY=500
+         * @reactive
          */
         translateY: 500,
         /**
          * The translateX value gets included into each helix item
          * @member {Number} translateZ_=-2300
+         * @reactive
          */
         translateZ: -2300
     }
 
     /**
-     * Triggered after the country config got changed
+     * Triggered after the country config got changed.
+     * We need to distinguish between manual view-based selections (like keynav or clicks) and
+     * programmatic selections that originate from other widgets (like the combobox or hash change).
+     * If the change is external, we update the selection and trigger the rotation animation ("fireworks").
      * @param {String|null} value
      * @param {String|null} oldValue
      * @protected
@@ -114,10 +125,18 @@ class CountryHelix extends Helix {
     afterSetCountry(value, oldValue) {
         if (oldValue !== undefined) {
             let me             = this,
-                selectionModel = me.selectionModel;
+                selectionModel = me.selectionModel,
+                recordId       = value;
 
-            if (value && !selectionModel.isSelected(value)) {
-                selectionModel.select(value, false);
+            if (me.useInternalId && value) {
+                let record = me.store.get(value);
+                if (record) {
+                    recordId = me.getRecordId(record);
+                }
+            }
+
+            if (recordId && !selectionModel.isSelected(recordId)) {
+                selectionModel.select(recordId);
                 me.onKeyDownSpace(null);
             }
         }
@@ -135,18 +154,18 @@ class CountryHelix extends Helix {
             fN         = Util.formatNumber,
             table      = firstChild.cn[1];
 
-        vdomItem.id = me.getItemVnodeId(record[me.keyProperty]);
+        vdomItem.id = me.getItemVnodeId(me.getRecordId(record));
 
         firstChild.cn[0].cn[0].src  = Util.getCountryFlagUrl(record.country);
-        firstChild.cn[0].cn[1].html = record.country;
+        firstChild.cn[0].cn[1].text = record.country;
 
-        table.cn[0].cn[1].html = fN({value: record.cases});
-        table.cn[1].cn[1].html = fN({value: record.deaths});
-        table.cn[2].cn[1].html = fN({value: record.recovered});
+        table.cn[0].cn[1].text = fN({value: record.cases});
+        table.cn[1].cn[1].text = fN({value: record.deaths});
+        table.cn[2].cn[1].text = fN({value: record.recovered});
 
-        table.cn[0].cn[4].html = fN({value: record.todayCases});
-        table.cn[1].cn[4].html = fN({value: record.todayDeaths});
-        table.cn[2].cn[4].html = fN({value: record.critical});
+        table.cn[0].cn[4].text = fN({value: record.todayCases});
+        table.cn[1].cn[4].text = fN({value: record.todayDeaths});
+        table.cn[2].cn[4].text = fN({value: record.critical});
 
         return vdomItem;
     }
@@ -167,7 +186,13 @@ class CountryHelix extends Helix {
      * @returns {String}
      */
     getItemId(vnodeId) {
-        return vnodeId.split('__')[1];
+        let itemId = vnodeId.split('__')[1];
+
+        if (this.store.getKeyType()?.includes('int')) {
+            itemId = parseInt(itemId)
+        }
+
+        return itemId
     }
 
     /**
@@ -175,10 +200,9 @@ class CountryHelix extends Helix {
      * @param {String[]} items
      */
     onSelect(items) {
-        this.country = items[0] || null;
+        let record = items[0] ? this.store.get(items[0]) : null;
+        this.country = record ? record.country : null;
     }
 }
 
-Neo.applyClassConfig(CountryHelix);
-
-export default CountryHelix;
+export default Neo.setupClass(CountryHelix);

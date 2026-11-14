@@ -1,4 +1,5 @@
-import CoreBase from '../core/Base.mjs';
+import Base     from '../core/Base.mjs';
+import NeoArray from '../util/Array.mjs';
 
 /**
  * The base class for all other layouts.
@@ -6,7 +7,7 @@ import CoreBase from '../core/Base.mjs';
  * @class Neo.layout.Base
  * @extends Neo.core.Base
  */
-class Base extends CoreBase {
+class Layout extends Base {
     static config = {
         /**
          * @member {String} className='Neo.layout.Base'
@@ -21,44 +22,82 @@ class Base extends CoreBase {
         /**
          * The name of the App this layout belongs to
          * @member {String|null} appName_=null
+         * @reactive
          */
         appName_: null,
         /**
-         * The Id of the Container instance this layout is bound to
+         * The id of the Container instance this layout is bound to
          * @member {?String} containerId=null
          * @protected
          */
         containerId: null,
         /**
+         * A layout specific CSS selector which gets added to Container the layout is bound to.
+         * @member {String|null} containerCls_=null
+         * @protected
+         * @reactive
+         */
+        containerCls_: null,
+        /**
          * Identifier for all classes that extend layout.Base
          * @member {Boolean} isLayout=true
          * @protected
          */
-        isLayout: true
+        isLayout: true,
+        /**
+         * @member {Number|null} windowId_=null
+         * @reactive
+         */
+        windowId_: null
     }
 
     /**
-     * Triggered after the appName config got changed
-     * @param {String|null} value
-     * @param {String|null} oldValue
+     * @returns {Neo.container.Base|null}
+     */
+    get container() {
+        let {containerId} = this;
+
+        // the instance might not be registered yet
+        return Neo.getComponent(containerId) || Neo.get(containerId)
+    }
+
+    /**
+     * Triggered after the windowId config got changed
+     * @param {Number} value
+     * @param {Number|null} oldValue
      * @protected
      */
-    afterSetAppName(value, oldValue) {
-        value && Neo.currentWorker.insertThemeFiles(value, this.__proto__);
+    afterSetWindowId(value, oldValue) {
+        value && Neo.currentWorker.insertThemeFiles(value, this.__proto__)
     }
 
     /**
      * Placeholder method
      * @param {Neo.component.Base} item
+     * @param {Number} index
      * @protected
      */
-    applyChildAttributes(item) {}
+    applyChildAttributes(item, index) {}
 
     /**
-     * Placeholder method
+     * @param {Boolean} silent=false
      * @protected
      */
-    applyRenderAttributes() {}
+    applyRenderAttributes(silent=false) {
+        let me                        = this,
+            {container, containerCls} = me,
+            {wrapperCls}              = container;
+
+        if (containerCls) {
+            if (!container) {
+                Neo.logError(me.className + ': applyRenderAttributes -> container not yet created', me.containerId)
+            }
+
+            NeoArray.add(wrapperCls, containerCls);
+
+            container[silent ? 'setSilent' :  'set']({wrapperCls})
+        }
+    }
 
     /**
      *
@@ -66,18 +105,18 @@ class Base extends CoreBase {
     destroy() {
         let me = this;
 
-        me.bind && Neo.getComponent(me.containerId).getModel()?.removeBindings(me.id);
+        me.bind && me.getStateProvider()?.removeBindings(me.id);
 
-        super.destroy();
+        super.destroy()
     }
 
     /**
-     * Returns the container model or its closest parent model
+     * Returns the container stateProvider or its closest parent stateProvider
      * @param {String} [ntype]
-     * @returns {Neo.model.Component|null}
+     * @returns {Neo.state.Provider|null}
      */
-    getModel(ntype) {
-        return Neo.getComponent(this.containerId).getModel();
+    getStateProvider(ntype) {
+        return this.container.getStateProvider(ntype)
     }
 
     /**
@@ -90,23 +129,82 @@ class Base extends CoreBase {
 
         let me = this;
 
-        me.bind && Neo.getComponent(me.containerId).getModel()?.parseConfig(me);
+        me.bind && me.container.getStateProvider()?.createBindings(me)
     }
 
     /**
      * Placeholder method
      * @param {Neo.component.Base} item
+     * @param {Number} index
      * @protected
      */
-    removeChildAttributes(item) {}
+    removeChildAttributes(item, index) {}
 
     /**
-     * Placeholder method
      * @protected
      */
-    removeRenderAttributes() {}
+    removeRenderAttributes() {
+        let me                        = this,
+            {container, containerCls} = me,
+            {wrapperCls}              = container;
+
+        if (containerCls) {
+            if (!container) {
+                Neo.logError(me.className + ': removeRenderAttributes -> container not yet created', me.containerId)
+            }
+
+            NeoArray.remove(wrapperCls, containerCls);
+
+            container.wrapperCls = wrapperCls
+        }
+    }
+
+    /**
+     * Change multiple configs at once, ensuring that all afterSet methods get all new assigned values
+     * @param {Object} values={}
+     * @param {Boolean} silent=false
+     * @returns {Promise<*>}
+     */
+    set(values={}, silent=false) {
+        let me          = this,
+            {container} = me;
+
+        container.silentVdomUpdate = true;
+
+        super.set(values);
+
+        container.silentVdomUpdate = false;
+
+        if (silent || !container.needsVdomUpdate) {
+            return Promise.resolve()
+        } else {
+            return container.promiseUpdate()
+        }
+    }
+
+    /**
+     * Convenience shortcut calling set() with the silent flag
+     * @param {Object} values={}
+     */
+    setSilent(values={}) {
+        return this.set(values, true)
+    }
+
+    /**
+     * Serializes the instance into a JSON-compatible object for the Neural Link.
+     * @returns {Object}
+     */
+    toJSON() {
+        let me = this;
+
+        return {
+            ...super.toJSON(),
+            appName     : me.appName,
+            containerCls: me.containerCls,
+            containerId : me.containerId,
+            windowId    : me.windowId
+        }
+    }
 }
 
-Neo.applyClassConfig(Base);
-
-export default Base;
+export default Neo.setupClass(Layout);

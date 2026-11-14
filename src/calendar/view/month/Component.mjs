@@ -32,6 +32,7 @@ class Component extends BaseComponent {
         bind: {
             calendarStore: 'stores.calendars',
             currentDate  : data => data.currentDate,
+            enableDrag   : data => data.events.enableDrag,
             eventBorder  : data => data.events.border,
             eventStore   : 'stores.events',
             locale       : data => data.locale,
@@ -39,30 +40,46 @@ class Component extends BaseComponent {
             weekStartDay : data => data.weekStartDay
         },
         /**
-         * Bound to the view model
+         * Bound to the state provider
          * @member {Neo.calendar.store.Calendars|null} calendarStore_=null
+         * @reactive
          */
         calendarStore_: null,
         /**
          * Will get passed from the MainContainer
          * @member {Date|null} currentDate_=null
          * @protected
+         * @reactive
          */
         currentDate_: null,
         /**
          * The format of the column headers.
          * Valid values are: narrow, short & long
          * @member {String} dayNameFormat_='short'
+         * @reactive
          */
         dayNameFormat_: 'short',
         /**
-         * Bound to the view model
+         * Bound to the state provider.
+         * @member {Boolean} enableDrag_=true
+         * @protected
+         * @reactive
+         */
+        enableDrag_: true,
+        /**
+         * Bound to the state provider
          * @member {String|null} eventBorder_=null
+         * @reactive
          */
         eventBorder_: null,
         /**
-         * Bound to the view model.
+         * @member {Neo.calendar.view.month.EventDragZone|null} eventDragZone=null
+         */
+        eventDragZone: null,
+        /**
+         * Bound to the state provider.
          * @member {Neo.calendar.store.Events|null} eventStore_=null
+         * @reactive
          */
         eventStore_: null,
         /**
@@ -93,14 +110,16 @@ class Component extends BaseComponent {
          */
         isScrolling: false,
         /**
-         * Bound to the view model.
+         * Bound to the state provider.
          * @member {String} locale_=Neo.config.locale
+         * @reactive
          */
         locale_: Neo.config.locale,
         /**
          * The format of the month header names.
          * Valid values are: narrow, short & long
          * @member {String} monthNameFormat_='long'
+         * @reactive
          */
         monthNameFormat_: 'short',
         /**
@@ -115,22 +134,30 @@ class Component extends BaseComponent {
          */
         owner: null,
         /**
+         * Config values for Neo.calendar.view.month.plugin.DragDrop
+         * @member {Object|null} pluginDragDropConfig=null
+         */
+        pluginDragDropConfig: null,
+        /**
          * @member {String|null} scrollTask=null
          * @protected
          */
         scrollTaskId: null,
         /**
-         * Bound to the view model.
+         * Bound to the state provider.
          * @member {Boolean} showWeekends_=true
+         * @reactive
          */
         showWeekends_: true,
         /**
          * @member {Object} timeFormat_={hour:'2-digit',minute:'2-digit'}
+         * @reactive
          */
         timeFormat_: {hour: '2-digit', minute: '2-digit'},
         /**
          * True to use box shadows for the months while scrolling
          * @member {Boolean} useScrollBoxShadows_=true
+         * @reactive
          */
         useScrollBoxShadows_: true,
         /**
@@ -144,12 +171,13 @@ class Component extends BaseComponent {
                     {vtype: 'text'}
                 ]}
             ]},
-            {cls: ['neo-c-m-scrollcontainer']}
+            {cls: ['neo-c-m-scrollcontainer'], flag: 'neo-c-m-scrollcontainer'}
         ]},
         /**
          * 0-6 => Sun-Sat
-         * Bound to the view model.
+         * Bound to the state provider.
          * @member {Number} weekStartDay_=0
+         * @reactive
          */
         weekStartDay_: 0
     }
@@ -167,13 +195,12 @@ class Component extends BaseComponent {
             {wheel   : me.onWheel, scope: me}
         ]);
 
-        if (me.calendarStore.getCount() > 0 && me.eventStore.getCount() > 0) {
-            me.needsEventUpdate = true;
-        }
+        // The days are the grid's frame, so they do not wait on data: a month with no calendars and
+        // no events still renders its weeks. Events are read per day cell inside `createWeek`, which
+        // skips a record whose calendar is missing.
+        me.createContent(true);
 
-        me.needsEventUpdate && me.createContent(true);
-
-        me.updateHeader(true);
+        me.updateHeader(true)
     }
 
     /**
@@ -192,7 +219,7 @@ class Component extends BaseComponent {
         };
 
         oldValue?.un(listeners);
-        value   ?.on(listeners);
+        value   ?.on(listeners)
     }
 
     /**
@@ -207,7 +234,7 @@ class Component extends BaseComponent {
         if (me.isConstructed) {
             me.createContent(true);
             me.updateHeader();
-            me.afterSetMounted(true, false); // todo: extract the logic into a new method
+            me.updateHeaderHeight(true)
         }
     }
 
@@ -223,7 +250,34 @@ class Component extends BaseComponent {
         me.intlFormat_day = new Intl.DateTimeFormat(me.locale, {weekday: value});
 
         if (oldValue !== undefined) {
-            me.updateHeader();
+            me.updateHeader()
+        }
+    }
+
+    /**
+     * @summary Lazily imports and registers the month DragDrop plugin when `enableDrag` is enabled.
+     * @param {Boolean} value
+     * @param {Boolean} oldValue
+     * @protected
+     */
+    afterSetEnableDrag(value, oldValue) {
+        if (value && !this.getPlugin('calendar-month-dragdrop')) {
+            import('./plugin/DragDrop.mjs').then(module => {
+                let me = this;
+
+                if (!me.isDestroyed && !me.getPlugin('calendar-month-dragdrop')) {
+                    let {appName} = me,
+                        plugins   = me.plugins || [];
+
+                    plugins.push({
+                        module: module.default,
+                        appName,
+                        ...me.pluginDragDropConfig
+                    });
+
+                    me.plugins = plugins
+                }
+            })
         }
     }
 
@@ -240,7 +294,7 @@ class Component extends BaseComponent {
         oldValue && NeoArray.remove(cls, `neo-event-border-${oldValue}`);
         value    && NeoArray.add(   cls, `neo-event-border-${value}`);
 
-        me.cls = cls;
+        me.cls = cls
     }
 
     /**
@@ -259,7 +313,7 @@ class Component extends BaseComponent {
         };
 
         oldValue?.un(listeners);
-        value   ?.on(listeners);
+        value   ?.on(listeners)
     }
 
     /**
@@ -277,7 +331,7 @@ class Component extends BaseComponent {
             me.intlFormat_time  = new Intl.DateTimeFormat(value, me.timeFormat);
 
             me.updateMonthNames(true);
-            me.updateHeader();
+            me.updateHeader()
         }
     }
 
@@ -293,7 +347,7 @@ class Component extends BaseComponent {
         me.intlFormat_month = new Intl.DateTimeFormat(me.locale, {month: value});
 
         if (oldValue !== undefined) {
-            me.updateMonthNames();
+            me.updateMonthNames()
         }
     }
 
@@ -309,20 +363,10 @@ class Component extends BaseComponent {
         if (value) {
             if (me.needsEventUpdate) {
                 me.createContent();
-                me.needsEventUpdate = false;
+                me.needsEventUpdate = false
             }
 
-            setTimeout(() => {
-                me.getDomRect([me.vdom.cn[1].id, me.vdom.cn[0].id]).then(data => {
-                    me.headerHeight = data[1].height;
-
-                    Neo.main.DomAccess.scrollTo({
-                        direction: 'top',
-                        id       : me.vdom.cn[1].id,
-                        value    : data[0].height - data[1].height
-                    });
-                });
-            }, 100);
+            me.updateHeaderHeight(true)
         }
     }
 
@@ -334,8 +378,8 @@ class Component extends BaseComponent {
      */
     afterSetShowWeekends(value, oldValue) {
         if (oldValue !== undefined) {
-            let me   = this,
-                vdom = me.vdom,
+            let me     = this,
+                {vdom} = me,
                 i, item;
 
             vdom.cn[1].cn.forEach(row => {
@@ -345,9 +389,9 @@ class Component extends BaseComponent {
 
                         if (item.cls.includes('neo-weekend')) {
                             if (value) {
-                                delete item.removeDom;
+                                delete item.removeDom
                             } else {
-                                item.removeDom = true;
+                                item.removeDom = true
                             }
                         }
                     }
@@ -355,7 +399,7 @@ class Component extends BaseComponent {
             });
 
             // triggers the vdom update
-            me.updateHeader();
+            me.updateHeader()
         }
     }
 
@@ -366,7 +410,7 @@ class Component extends BaseComponent {
      * @protected
      */
     afterSetTimeFormat(value, oldValue) {
-        this.intlFormat_time = new Intl.DateTimeFormat(this.locale, value);
+        this.intlFormat_time = new Intl.DateTimeFormat(this.locale, value)
     }
 
     /**
@@ -377,7 +421,7 @@ class Component extends BaseComponent {
      */
     afterSetUseScrollBoxShadows(value, oldValue) {
         NeoArray[value ? 'add' : 'remove'](this.vdom.cn[1].cls, 'neo-scroll-shadows');
-        this.update();
+        this.update()
     }
 
     /**
@@ -389,7 +433,7 @@ class Component extends BaseComponent {
     afterSetWeekStartDay(value, oldValue) {
         if (oldValue !== undefined) {
             this.createContent(true);
-            this.updateHeader();
+            this.updateHeader()
         }
     }
 
@@ -400,7 +444,7 @@ class Component extends BaseComponent {
      * @protected
      */
     beforeSetDayNameFormat(value, oldValue) {
-        return this.beforeSetEnumValue(value, oldValue, 'dayNameFormat', DateUtil.prototype.dayNameFormats);
+        return this.beforeSetEnumValue(value, oldValue, 'dayNameFormat', DateUtil.prototype.dayNameFormats)
     }
 
     /**
@@ -410,7 +454,7 @@ class Component extends BaseComponent {
      * @protected
      */
     beforeSetMonthNameFormat(value, oldValue) {
-        return this.beforeSetEnumValue(value, oldValue, 'monthNameFormat', DateUtil.prototype.monthNameFormats);
+        return this.beforeSetEnumValue(value, oldValue, 'monthNameFormat', DateUtil.prototype.monthNameFormats)
     }
 
     /**
@@ -422,9 +466,9 @@ class Component extends BaseComponent {
         if (!me.mounted) {
             me.needsEventUpdate = true;
         } else {
-            let date = me.currentDate, // cloned
-                vdom = me.vdom,
-                i    = 0,
+            let date   = me.currentDate, // cloned
+                {vdom} = me,
+                i      = 0,
                 firstDayOffset, row;
 
             vdom.cn[1].cn = [];
@@ -439,15 +483,15 @@ class Component extends BaseComponent {
                 row = me.createWeek(DateUtil.clone(date));
 
                 if (row.header) {
-                    vdom.cn[1].cn.push(row.header);
+                    vdom.cn[1].cn.push(row.header)
                 }
 
                 vdom.cn[1].cn.push(row.row);
 
-                date.setDate(date.getDate() + 7);
+                date.setDate(date.getDate() + 7)
             }
 
-            me[silent ? '_vdom' : 'vdom'] = vdom;
+            me.update()
         }
     }
 
@@ -456,12 +500,11 @@ class Component extends BaseComponent {
      * @returns {Object}
      */
     createWeek(date) {
-        let me            = this,
-            i             = 0,
-            calendarStore = me.calendarStore,
-            eventsStore   = me.eventStore,
-            header        = null,
-            ymdDate       = DateUtil.convertToyyyymmdd(date),
+        let me                          = this,
+            i                           = 0,
+            {calendarStore, eventStore} = me,
+            header                      = null,
+            ymdDate                     = DateUtil.convertToyyyymmdd(date),
             calendarRecord, day, dayConfig, dayRecords, recordKey, row, weekDay;
 
         row = {
@@ -486,22 +529,23 @@ class Component extends BaseComponent {
                             tag : 'span',
                             cls : ['neo-month-name'],
                             flag: 'month-name',
-                            html: me.intlFormat_month.format(date)
+                            text: me.intlFormat_month.format(date)
                         }, {
                             vtype: 'text',
-                            html : ` ${date.getFullYear()}`
+                            text : ` ${date.getFullYear()}`
                         }]
                     }]
                 };
             }
 
             dayConfig = {
-                cls: ['neo-day'],
-                id : `${me.id}__day__${ymdDate}`,
-                cn : [{
+                cls : ['neo-day'],
+                flag: ymdDate,
+                id  : `${me.id}__day__${ymdDate}`,
+                cn  : [{
                     cls : ['neo-day-number'],
-                    html: day,
-                    id : `${me.id}__day_number__${ymdDate}`
+                    id  : `${me.id}__day_number__${ymdDate}`,
+                    text: day
                 }]
             };
 
@@ -516,27 +560,29 @@ class Component extends BaseComponent {
             }
 
             if (!dayConfig.removeDom) {
-                dayRecords = eventsStore.getDayRecords(date);
+                dayRecords = eventStore.getDayRecords(date);
 
                 dayRecords.forEach(record => {
-                    recordKey      = record[eventsStore.keyProperty];
+                    recordKey      = record[eventStore.keyProperty];
                     calendarRecord = calendarStore.get(record.calendarId);
 
-                    if (calendarRecord.active) {
+                    // An event whose calendar is not in the store has nothing to give it a color, and
+                    // `get()` answers `null` for it. The day is still drawn; the event is not.
+                    if (calendarRecord?.active) {
                         dayConfig.cn.push({
-                            cls     : ['neo-event', `neo-${calendarRecord.color}`],
+                            cls     : ['neo-event', 'neo-draggable', `neo-${calendarRecord.color}`],
                             flag    : recordKey,
                             id      : me.id + '__' + recordKey,
                             tabIndex: -1,
 
                             cn: [{
                                 cls : ['neo-event-title'],
-                                html: record.title,
-                                id  : me.id + '__title__' + recordKey
+                                id  : me.id + '__title__' + recordKey,
+                                text: record.title
                             }, {
                                 cls : ['neo-event-time'],
-                                html: me.intlFormat_time.format(record.startDate),
-                                id  : me.id + '__time__' + recordKey
+                                id  : me.id + '__time__' + recordKey,
+                                text: me.intlFormat_time.format(record.startDate)
                             }]
                         });
                     }
@@ -545,24 +591,32 @@ class Component extends BaseComponent {
 
             row.cn.push(dayConfig);
 
-            date.setDate(date.getDate() + 1);
+            date.setDate(date.getDate() + 1)
         }
 
         return {header, row}
     }
 
     /**
+     * @summary Returns the VDOM node for `.neo-c-m-scrollcontainer`.
+     * @returns {Object}
+     */
+    getScrollContainer() {
+        return VDomUtil.getByFlag(this.vdom, 'neo-c-m-scrollcontainer')
+    }
+
+    /**
      * @param {Object[]} data
      */
     onCalendarStoreLoad(data) {
-        this.eventStore.getCount() > 0 && this.createContent();
+        this.eventStore.getCount() > 0 && this.createContent()
     }
 
     /**
      * @param {Object} data
      */
     onCalendarStoreRecordChange(data) {
-        this.createContent();
+        this.createContent()
     }
 
     /**
@@ -570,12 +624,13 @@ class Component extends BaseComponent {
      */
     onEventDoubleClick(data) {
         if (this.data.events.enableEdit) {
-            let me                  = this,
-                editEventContainer  = me.owner.editEventContainer,
-                eventNode           = data.path[0],
-                weekNode            = data.path[2],
-                scrollContainerNode = data.path[3],
-                eventVdom           = VDomUtil.findVdomChild(me.vdom, eventNode.id).vdom,
+            let me                   = this,
+                {editEventContainer} = me.owner,
+                {path}               = data,
+                eventNode           = path[0],
+                weekNode            = path[2],
+                scrollContainerNode = path[3],
+                eventVdom           = VDomUtil.find(me.vdom, eventNode.id).vdom,
                 record              = me.eventStore.get(eventVdom.flag),
                 style               = editEventContainer.style;
 
@@ -585,12 +640,12 @@ class Component extends BaseComponent {
             });
 
             editEventContainer.setSilent({
-                parentId: data.path[1].id,
+                parentId: path[1].id,
                 record,
                 style
             });
 
-            editEventContainer.render(true);
+            editEventContainer.initVnode(true)
         }
     }
 
@@ -598,14 +653,14 @@ class Component extends BaseComponent {
      * @param {Object[]} data
      */
     onEventStoreLoad(data) {
-        this.calendarStore.getCount() > 0 && this.createContent();
+        this.calendarStore.getCount() > 0 && this.createContent()
     }
 
     /**
      * @param {Object[]} data
      */
     onEventStoreRecordChange(data) {
-        this.createContent();
+        this.createContent()
     }
 
     /**
@@ -614,38 +669,46 @@ class Component extends BaseComponent {
      * @param {Object[]} data.path
      */
     onFocusChange(data) {
-        let oldPath = data.oldPath,
-            path    = data.path;
+        let {windowId}      = this,
+            {oldPath, path} = data;
 
         if (oldPath?.[0]?.cls.includes('neo-event')) {
-            Neo.applyDeltas(this.appName, {id: oldPath[0].id, cls: {remove: ['neo-focus']}});
+            Neo.applyDeltas(windowId, {id: oldPath[0].id, cls: {remove: ['neo-focus']}})
         }
 
         if (path?.[0]?.cls.includes('neo-event')) {
-            Neo.applyDeltas(this.appName, {id: path[0].id, cls: {add: ['neo-focus']}});
+            Neo.applyDeltas(windowId, {id: path[0].id, cls: {add: ['neo-focus']}})
         }
     }
 
     /**
+     * @summary Shifts the 18-week window by 6 weeks on boundary wheel scroll and compensates scrollTop.
      * @param {Object} data
      */
     onWheel(data) {
         if (Math.abs(data.deltaY) > Math.abs(data.deltaX)) {
             let me        = this,
                 container = me.vdom.cn[1],
+                wheelData = {clientHeight: data.clientHeight, scrollTop: data.scrollTop},
                 i         = 0,
                 date, len, week;
 
             // console.log(data.scrollTop, Math.round(data.scrollTop / (data.clientHeight - me.headerHeight) * 6));
 
             if (data.deltaY > 0 && Math.round(data.scrollTop / (data.clientHeight - me.headerHeight) * 6) > 11) {
+                let weeks       = container.cn.filter(item => item.cls.includes('neo-week')),
+                    rectPromise = Neo.main.DomAccess.getBoundingClientRect?.({
+                        id      : [weeks[0].id, weeks[6].id],
+                        windowId: me.windowId
+                    });
+
                 date = new Date(container.cn[container.cn.length - 1].flag);
 
                 date.setDate(date.getDate() - (date.getDay() - me.weekStartDay));
 
                 for (; i < 6; i++) {
                     if (container.cn[1].cls.includes('neo-month-header')) {
-                        container.cn.splice(1, 1);
+                        container.cn.splice(1, 1)
                     }
 
                     container.cn.shift();
@@ -656,17 +719,30 @@ class Component extends BaseComponent {
 
                     week.header && container.cn.push(week.header);
 
-                    container.cn.push(week.row);
+                    container.cn.push(week.row)
                 }
 
-                me.update();
+                Promise.all([me.promiseUpdate(), rectPromise]).then(([, rects]) => {
+                    let removedHeight = rects?.[1]?.top > rects?.[0]?.top
+                        ? rects[1].top - rects[0].top
+                        : data.clientHeight - me.headerHeight;
+
+                    wheelData.scrollTop = data.scrollTop - removedHeight;
+
+                    Neo.main.DomAccess.scrollTo({
+                        direction: 'top',
+                        id       : me.vdom.cn[1].id,
+                        value    : wheelData.scrollTop,
+                        windowId : me.windowId
+                    })
+                })
             }
 
             else if (data.deltaY < 0 && Math.round(data.scrollTop / (data.clientHeight - me.headerHeight) * 6) < 1) {
                 if (container.cn[0].flag) {
-                    date = new Date(container.cn[0].flag);
+                    date = new Date(container.cn[0].flag)
                 } else {
-                    date = new Date(container.cn[1].flag);
+                    date = new Date(container.cn[1].flag)
                 }
 
                 date.setDate(date.getDate() - (date.getDay() - me.weekStartDay));
@@ -675,7 +751,7 @@ class Component extends BaseComponent {
                     len = container.cn.length;
 
                     if (container.cn[len - 2].cls.includes('neo-month-header')) {
-                        container.cn.splice(len - 2, 1);
+                        container.cn.splice(len - 2, 1)
                     }
 
                     container.cn.pop();
@@ -686,60 +762,107 @@ class Component extends BaseComponent {
 
                     container.cn.unshift(week.row);
 
-                    week.header && container.cn.unshift(week.header);
+                    week.header && container.cn.unshift(week.header)
                 }
 
-                me.promiseUpdate(me.vdom).then(() => {
+                me.promiseUpdate().then(() => {
+                    wheelData.scrollTop = data.clientHeight - me.headerHeight;
+
                     Neo.main.DomAccess.scrollTo({
                         direction: 'top',
                         id       : me.vdom.cn[1].id,
-                        value    : data.clientHeight - me.headerHeight
-                    });
-                });
+                        value    : wheelData.scrollTop,
+                        windowId : me.windowId
+                    })
+                })
             }
 
             if (!me.isScrolling) {
                 me.isScrolling = true;
                 NeoArray.add(me.vdom.cn[1].cls, 'neo-is-scrolling');
                 me.vdom.cn[0].cn[0].style.opacity = 0;
-                me.update();
+                me.update()
             }
 
             me.scrollTaskId && clearTimeout(me.scrollTaskId);
 
-            me.scrollTaskId = setTimeout(me.onWheelEnd.bind(me), 300);
+            me.scrollTaskId = setTimeout(me.onWheelEnd.bind(me, wheelData), 300)
         }
     }
 
     /**
-     *
+     * @summary Updates the static month header from the top visible week and smoothly snaps scroll to that row.
+     * @param {Object} [data]
+     * @param {Number} [data.clientHeight]
+     * @param {Number} [data.scrollTop]
+     * @returns {Promise<void>}
      */
-    onWheelEnd() {
-        let me     = this,
-            vdom   = me.vdom,
-            header = vdom.cn[0].cn[0],
-            i      = 6,
-            date, flag;
+    async onWheelEnd(data) {
+        let me           = this,
+            {vdom}       = me,
+            container    = vdom.cn[1],
+            header       = vdom.cn[0].cn[0],
+            weeks        = container.cn.filter(item => item.cls.includes('neo-week')),
+            maxRowIndex  = Math.max(0, weeks.length - 6),
+            closestIndex = Math.min(6, maxRowIndex),
+            date, distance, flag, i, minDistance, rects, rowHeight, targetScrollTop, visibleTop;
 
-        me.isScrolling = false;
-
-        for (; i < 12; i++) {
-            flag = vdom.cn[1].cn[i].flag; // todo: #989 => get the date of the first fully visible row for the header
-
-            if (flag) {
-                date = new Date(flag);
-                date.setMonth(date.getMonth() + 1);
-                header.cn[0].html = me.intlFormat_month.format(date);
-                header.cn[1].html = ` ${date.getFullYear()}`;
-                break;
-            }
+        if (me.scrollTaskId) {
+            clearTimeout(me.scrollTaskId);
+            me.scrollTaskId = null
         }
 
-        NeoArray.remove(vdom.cn[1].cls, 'neo-is-scrolling');
+        rects = await Neo.main.DomAccess.getBoundingClientRect({
+            id      : [container.id, ...weeks.map(week => week.id)],
+            windowId: me.windowId
+        });
+
+        if (me.scrollTaskId || me.isDestroyed) {
+            return
+        }
+
+        if (rects?.[2]?.top > rects?.[1]?.top) {
+            visibleTop  = (rects[0].top ?? rects[0].y ?? 0) + (me.headerHeight || 0);
+            minDistance = Infinity;
+
+            for (i = 0; i <= maxRowIndex; i++) {
+                distance = Math.abs(rects[i + 1].top - visibleTop);
+
+                if (distance < minDistance) {
+                    minDistance  = distance;
+                    closestIndex = i
+                }
+            }
+
+            targetScrollTop = Math.round(rects[closestIndex + 1].top - rects[1].top)
+        } else if (data?.clientHeight > (me.headerHeight || 0)) {
+            rowHeight       = (data.clientHeight - (me.headerHeight || 0)) / 6;
+            closestIndex    = Math.min(maxRowIndex, Math.max(0, Math.round(data.scrollTop / rowHeight)));
+            targetScrollTop = Math.round(closestIndex * rowHeight)
+        }
+
+        flag = weeks[closestIndex]?.flag;
+
+        if (flag) {
+            date              = new Date(`${flag}T12:00:00`);
+            header.cn[0].text = me.intlFormat_month.format(date);
+            header.cn[1].text = ` ${date.getFullYear()}`
+        }
+
+        me.isScrolling = false;
+        NeoArray.remove(container.cls, 'neo-is-scrolling');
         header.style.opacity = 1;
         me.update();
 
-        // todo: #990 => scroll the view to the closest row
+        if (Neo.isNumber(targetScrollTop)) {
+            Neo.main.DomAccess.scrollTo({
+                behavior : 'smooth',
+                direction: 'top',
+                id       : container.id,
+                value    : targetScrollTop,
+                windowId : me.windowId
+            })
+        }
     }
 
     /**
@@ -748,13 +871,13 @@ class Component extends BaseComponent {
     updateHeader(create=false) {
         let me     = this,
             date   = me.currentDate, // cloned
-            vdom   = me.vdom,
+            {vdom} = me,
             header = vdom.cn[0].cn[0],
             i      = 1,
             day, node;
 
-        header.cn[0].html = me.intlFormat_month.format(date);
-        header.cn[1].html = ` ${date.getFullYear()}`;
+        header.cn[0].text = me.intlFormat_month.format(date);
+        header.cn[1].text = ` ${date.getFullYear()}`;
 
         date.setDate(me.currentDate.getDate() - me.currentDate.getDay() + me.weekStartDay);
 
@@ -764,33 +887,66 @@ class Component extends BaseComponent {
             if (create) {
                 node = {
                     cls : ['neo-day-name'],
-                    html: me.intlFormat_day.format(date)
+                    text: me.intlFormat_day.format(date)
                 };
 
                 if (!me.showWeekends && (day === 0 || day === 6)) {
                     node.removeDom = true;
                 }
 
-                vdom.cn[0].cn.push(node);
+                vdom.cn[0].cn.push(node)
             } else {
                 node = vdom.cn[0].cn[i];
 
                 // the method could be called before the header content got created
                 if (node) {
-                    node.html = me.intlFormat_day.format(date);
+                    node.text = me.intlFormat_day.format(date);
 
                     if (!me.showWeekends && (day === 0 || day === 6)) {
-                        node.removeDom = true;
+                        node.removeDom = true
                     } else {
-                        delete node.removeDom;
+                        delete node.removeDom
                     }
                 }
             }
 
-            date.setDate(date.getDate() + 1);
+            date.setDate(date.getDate() + 1)
         }
 
         me.update();
+    }
+
+    /**
+     * @summary Re-measures the rendered days-header height in pixels and optionally centers the scroll container.
+     *
+     * Because `.neo-days-header` is sized in `em` (`3.75em`), its pixel height changes whenever
+     * `MainContainer#baseFontSize` updates. `onWheel` uses `headerHeight` in pixels to compute the
+     * visible month viewport height, so both mount/date changes (`scrollTo=true`) and font-size
+     * updates (`scrollTo=false`) funnel through this measurement helper.
+     * @param {Boolean} [scrollTo=false] True scrolls the month container to the active month offset
+     * @returns {Promise<void>|undefined}
+     */
+    updateHeaderHeight(scrollTo=false) {
+        let me = this;
+
+        if (me.mounted) {
+            return me.timeout(100).then(() => {
+                if (me.mounted) {
+                    return me.getDomRect([me.vdom.cn[1].id, me.vdom.cn[0].id]).then(data => {
+                        me.headerHeight = data[1].height;
+
+                        if (scrollTo) {
+                            Neo.main.DomAccess.scrollTo({
+                                direction: 'top',
+                                id       : me.vdom.cn[1].id,
+                                value    : data[0].height - data[1].height,
+                                windowId : me.windowId
+                            })
+                        }
+                    })
+                }
+            })
+        }
     }
 
     /**
@@ -799,18 +955,15 @@ class Component extends BaseComponent {
     updateMonthNames(silent=false) {
         let me     = this,
             date   = me.currentDate, // cloned
-            vdom   = me.vdom,
-            months = VDomUtil.getFlags(vdom, 'month-name');
+            months = VDomUtil.getFlags(me.vdom, 'month-name');
 
         months.forEach(month => {
-            month.html = me.intlFormat_month.format(date);
+            month.text = me.intlFormat_month.format(date);
             date.setMonth(date.getMonth() + 1);
         });
 
-        me[silent ? '_vdom' : 'vdom'] = vdom;
+        me.update()
     }
 }
 
-Neo.applyClassConfig(Component);
-
-export default Component;
+export default Neo.setupClass(Component);

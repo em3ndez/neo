@@ -1,6 +1,7 @@
 import Flexbox from './Flexbox.mjs';
 
 /**
+ * The VBox layout allows you to arrange components vertically in a container.
  * @class Neo.layout.VBox
  * @extends Neo.layout.Flexbox
  */
@@ -19,6 +20,7 @@ class VBox extends Flexbox {
         /**
          * @member {String} direction='column'
          * @protected
+         * @reactive
          */
         direction: 'column'
     }
@@ -26,13 +28,12 @@ class VBox extends Flexbox {
     /**
      * Applies the flex value to an item of the container this layout is bound to
      * @param {Neo.component.Base} item
+     * @param {Number} index
      */
-    applyChildAttributes(item) {
+    applyChildAttributes(item, index) {
         // Do not apply flex if fixed height
-        !item.height && super.applyChildAttributes(item);
+        !item.height && super.applyChildAttributes(item, index)
     }
 }
 
-Neo.applyClassConfig(VBox);
-
-export default VBox;
+export default Neo.setupClass(VBox);

@@ -3,6 +3,7 @@ import Base from './Base.mjs';
 /**
  * @class RealWorld2.api.Tag
  * @extends RealWorld2.api.Base
+ * @singleton
  */
 class Tag extends Base {
     static config = {
@@ -14,14 +15,13 @@ class Tag extends Base {
         /**
          * @member {String} resource='/tags'
          */
-        resource: '/tags'
+        resource: '/tags',
+        /**
+         * @member {Boolean} singleton=true
+         * @protected
+         */
+        singleton: true
     }
 }
 
-Neo.applyClassConfig(Tag);
-
-let instance = Neo.create(Tag);
-
-Neo.applyToGlobalNs(instance);
-
-export default instance;
+export default Neo.setupClass(Tag);

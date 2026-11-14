@@ -17,7 +17,12 @@ class SideNavList extends List {
          */
         baseCls: ['form-side-nav-list', 'neo-list'],
         /**
+         * @member {Boolean} itemsFocusable=true
+         */
+        itemsFocusable: true,
+        /**
          * @member {Boolean} useHeaders=true
+         * @reactive
          */
         useHeaders: true
     }
@@ -32,7 +37,7 @@ class SideNavList extends List {
 
         return record.isHeader ? itemText : [
             {tag: 'i', cls: this.getIconCls(record)},
-            {html: itemText}
+            {text: itemText}
         ];
     }
 
@@ -43,26 +48,31 @@ class SideNavList extends List {
     getIconCls(record) {
         let cls = ['neo-list-icon'];
 
-        if (record.isValid === true) {
+        if (record.formState === 'valid') {
             return [...cls, 'neo-color-green', 'far', 'fa-circle-check'];
         }
 
-        if (record.isValid === false) {
+        if (record.formState === 'invalid') {
             return [...cls, 'neo-color-red', 'far', 'fa-circle-xmark'];
         }
 
+        if (record.formState === 'inProgress') {
+            return [...cls, 'neo-color-blue', 'fas', 'fa-circle-half-stroke'];
+        }
+
+        // clean
         return [...cls, 'neo-color-blue', 'far', 'fa-circle'];
     }
 
     /**
-     * Saves activeIndex & activeTitle into the closest view model
+     * Saves activeIndex & activeTitle into the closest stateProvider
      * @param {String[]} items
      */
     onSelect(items) {
         let me     = this,
             record = me.store.get(me.getItemRecordId(items[0]));
 
-        me.getModel().setData({
+        me.setState({
             activeIndex: record.cardIndex,
             activeTitle: record.name
         })
@@ -74,18 +84,16 @@ class SideNavList extends List {
     onStoreLoad() {
         let maxIndex = -1;
 
-        this.store.items.forEach(record => {
+        this.store.forEach(record => {
             if (!record.isHeader) {
-                maxIndex++;
+                maxIndex++
             }
         });
 
-        this.getModel().data.maxIndex = maxIndex;
+        this.getStateProvider().data.maxIndex = maxIndex;
 
         super.onStoreLoad()
     }
 }
 
-Neo.applyClassConfig(SideNavList);
-
-export default SideNavList;
+export default Neo.setupClass(SideNavList);

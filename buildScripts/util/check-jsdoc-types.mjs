@@ -1,0 +1,273 @@
+import catharsis             from 'catharsis';
+import {execSync, spawnSync} from 'node:child_process';
+import {readFileSync}        from 'node:fs';
+import path                  from 'node:path';
+import process               from 'node:process';
+import {fileURLToPath}       from 'node:url';
+import isEntryModule         from './isEntryModule.mjs';
+
+/*
+ * Substrate gate against unparseable JSDoc type expressions in the docs build.
+ *
+ * The docs build (`npm run generate-docs-json` — the last `build all` step) parses every `{type}` with
+ * the jsdoc engine → `catharsis` (the Closure/JSDoc type grammar, NOT TypeScript). A TS-like expression catharsis
+ * cannot parse throws inside a parse batch; the build then fails the whole run (by design) and the
+ * docs app loses that content. That failure surfaces late (last build step) and aborts on the first bad
+ * batch without enumerating the rest. This lint runs the SAME parser, ahead of the build, over every
+ * offender — so authors see it at commit / PR time instead of in a broken `build all`.
+ *
+ * Dependency note: unlike the dependency-free lint workflows, this one imports `catharsis` (a transitive
+ * dep of `jsdoc-api`), so its CI workflow runs `npm ci --ignore-scripts`. Running the real parser — rather
+ * than approximating it with a regex — is deliberate: the failure mode is a catharsis tokenizer quirk (a
+ * bare union in a record value breaks only with no space after the colon), which no regex can classify
+ * without false-positives on the many valid spaced/parenthesized record-unions across the codebase.
+ */
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname  = path.dirname(__filename);
+const scriptRoot = path.resolve(__dirname, '../..');
+
+// JSDoc tags whose {type} the docs build must be able to parse.
+const TYPE_TAG = /@(param|returns?|type|property|prop|typedef|yields?|throws|exception|augments|member|enum)\b/;
+
+// The authored-source surface the team writes JSDoc in — intentionally BROADER than the docs build's
+// current parse set (which only covers configured apps): an unparseable type is a defect anywhere, even
+// where `generate-docs-json` does not yet reach (an unconfigured app/example becomes a build break the
+// moment it is wired in). Excludes underscore-prefixed aggregators and node_modules/dist.
+//
+// Every member must be TRACKED — `git ls-files <member>` returns a non-zero count. A root whose files
+// are all gitignored is unreachable by any workflow `paths:` filter, so the mirror cannot watch what
+// this guard reads and the two verdicts stop being comparable. It fails silently here rather than
+// loudly: `collectDefaultFiles` tolerates `find`'s non-zero exit, so an untracked root costs no error
+// and the guard simply reports a scope it does not have. The sibling alignment spec pins the rule.
+const DEFAULT_DIRS = ['src', 'examples', 'apps', 'docs/app'];
+const EXCLUDE      = /(^|\/)_|\/node_modules\/|\/dist\//;
+
+// The same surface as globs, the form a workflow `paths:` filter takes — DERIVED from the roots above
+// so an edit to one cannot leave the other behind. `**/*.mjs` is exactly what the `find` selects.
+export const SCAN_SURFACE = Object.freeze(DEFAULT_DIRS.map(dir => `${dir}/**/*.mjs`));
+
+/**
+ * @summary Reads the balanced `{type}` starting at `braceStart` on line `i`, spanning continuation lines.
+ *
+ * The OUTER braces are the tag wrapper, so the returned string is the inner type expression catharsis
+ * parses — e.g. `@returns {{a:String}}` yields `{a:String}`, `@param {String}` yields `String`. Continuation
+ * lines have their leading ` * ` stripped. Returns `''` if the braces never balance (malformed / not a type).
+ * @param {String[]} lines
+ * @param {Number} i Index of the line carrying the tag.
+ * @param {Number} braceStart Column of the tag's opening `{` on line `i`.
+ * @returns {String}
+ */
+export function extractType(lines, i, braceStart) {
+    let depth = 0, expr = '', li = i, done = false;
+
+    while (li < lines.length && !done) {
+        const l = lines[li];
+        let start = li === i ? braceStart : 0;
+
+        if (li !== i) {
+            const lead = l.match(/^\s*\*\s?/);
+            if (lead) start = lead[0].length
+        }
+
+        for (let k = start; k < l.length; k++) {
+            const ch = l[k];
+            if      (ch === '{') { depth++; if (depth > 1) expr += ch }
+            else if (ch === '}') { depth--; if (depth === 0) { done = true; break } expr += ch }
+            else if (depth >= 1) expr += ch
+        }
+
+        if (!done) { expr += ' '; li++ }
+    }
+
+    return done ? expr.trim() : ''
+}
+
+/**
+ * @summary Extracts each `/**`-block JSDoc type expression and returns the ones catharsis cannot parse.
+ *
+ * Only `/** … *\/` doc blocks are scanned — jsdoc ignores `/* … *\/` block comments and `//` lines, so a
+ * type-like token inside those is not a build input and flagging it would be a false positive. Within a doc
+ * block, the balanced `{type}` after a type-bearing tag is parsed with the SAME parser the docs build uses
+ * (`catharsis`, jsdoc dictionary), so a hit here is exactly what breaks `npm run generate-docs-json`.
+ * @param {String} content Raw file source.
+ * @returns {Object[]} `[{line, tag, expr}]` — one entry per unparseable type expression (1-based line).
+ */
+export function findUnparseableTypes(content) {
+    const lines    = content.split('\n'),
+          failures = [];
+
+    let inBlock = false, isDoc = false;
+
+    for (let i = 0; i < lines.length; i++) {
+        const line = lines[i];
+
+        if (!inBlock) {
+            const open = line.indexOf('/*');
+            if (open !== -1) {
+                inBlock = true;
+                isDoc   = line[open + 2] === '*' // `/**` opens a doc block; `/*` (single star) does not
+            }
+        }
+
+        if (inBlock && isDoc) {
+            const tag = line.match(TYPE_TAG);
+
+            if (tag) {
+                const braceStart = line.indexOf('{', tag.index);
+
+                if (braceStart !== -1) {
+                    const expr = extractType(lines, i, braceStart);
+
+                    if (expr) {
+                        try { catharsis.parse(expr, {jsdoc: true}) }
+                        catch (e) { failures.push({line: i + 1, tag: tag[1], expr}) }
+                    }
+                }
+            }
+        }
+
+        if (inBlock && line.includes('*/')) {
+            inBlock = false;
+            isDoc   = false
+        }
+    }
+
+    return failures
+}
+
+/**
+ * @summary Normalizes an input path (absolute from lint-staged, or relative) to a repo-relative POSIX path.
+ * @param {String} file
+ * @param {String} gitRoot
+ * @returns {String}
+ */
+export function toRepoRelative(file, gitRoot) {
+    return path.relative(gitRoot, path.resolve(gitRoot, file)).split(path.sep).join('/')
+}
+
+/**
+ * @summary True when `file` (repo-relative POSIX) is inside the docs-build parse scope and not excluded.
+ * @param {String} file
+ * @returns {Boolean}
+ */
+export function inScope(file) {
+    if (!file.endsWith('.mjs') || EXCLUDE.test(file)) return false;
+    return DEFAULT_DIRS.some(dir => file === dir || file.startsWith(dir + '/'))
+}
+
+/**
+ * @summary Describes what a run actually read, phrased to survive being quoted somewhere else.
+ *
+ * The success line was a bare count, and a bare count is read as coverage of whatever the reader was
+ * doing — their diff, their directory, their repository. It is none of those: the scanned set is the
+ * docs-build parse scope, which for a consumer of this package is a different set of files entirely.
+ * This receipt has been pasted into pull-request bodies as evidence for changes it never opened, and
+ * the number was true every time.
+ *
+ * Caller-supplied paths report `N of M`, because {@link inScope} drops the rest SILENTLY — a hook
+ * handing over seven staged files and hearing about three is the same defect one layer down. When the
+ * two numbers differ the line says so, which is what makes a run that read NONE of the caller's files
+ * distinguishable from one that read all of them. That distinction is the whole point: "mentions a
+ * scope" is satisfiable by text, "0 of 7" is not.
+ *
+ * **Three counts, not two, because selection and IO diverge.** `offered` is what the caller or the
+ * default scan put forward; `admitted` is what survived the scope filter; `read` is what was actually
+ * opened. A count that stops at `admitted` reports a file it never read: an unreadable path warns on
+ * one line and is then counted as scanned on the next, which is this function's own defect committed
+ * inside the fix for it. `read` is the only number entitled to the word.
+ *
+ * Exported so the receipt is a contract with its own coverage rather than a string inside `main()`.
+ *
+ * @param {Object} counts
+ * @param {Number} counts.supplied How many positional paths the caller passed (0 = default scan).
+ * @param {Number} counts.offered  How many candidate paths were considered.
+ * @param {Number} counts.admitted How many survived the scope filter.
+ * @param {Number} counts.read     How many were opened without error.
+ * @returns {{scope: String, scanned: String}}
+ */
+export function describeScan({supplied, offered, admitted, read}) {
+    const unreadable = admitted - read,
+          base       = supplied > 0 ? `${read} of ${offered} supplied file(s) read` : `${read} file(s) read`;
+
+    return {
+        scope  : `docs-build parse scope: ${DEFAULT_DIRS.join(', ')}`,
+        scanned: unreadable > 0 ? `${base}, ${unreadable} unreadable` : base
+    }
+}
+
+function collectDefaultFiles(gitRoot) {
+    const result = spawnSync('find', [...DEFAULT_DIRS, '-type', 'f', '-name', '*.mjs'], {cwd: gitRoot, encoding: 'utf-8'});
+    // A missing optional dir makes `find` exit non-zero while still listing the others — tolerate stdout.
+    return (result.stdout || '').trim().split('\n').filter(Boolean)
+}
+
+function main() {
+    let gitRoot;
+    try {
+        gitRoot = execSync('git rev-parse --show-toplevel', {cwd: scriptRoot, encoding: 'utf-8'}).trim()
+    } catch (e) {
+        console.error('\x1b[31mError: Could not determine git repository root.\x1b[0m');
+        process.exit(1)
+    }
+
+    // Minimal argv parse — no extra dep. lint-staged passes staged paths as positional args; no args = the
+    // full docs-build-scope scan (CI). `--quiet` suppresses the per-violation listing.
+    const rawArgv   = process.argv.slice(2),
+          quiet     = rawArgv.includes('-q') || rawArgv.includes('--quiet'),
+          argvFiles = rawArgv.filter(arg => !arg.startsWith('-'));
+
+    const rawFiles = argvFiles.length > 0 ? argvFiles : collectDefaultFiles(gitRoot);
+    const files    = rawFiles.map(f => toRepoRelative(f, gitRoot)).filter(inScope);
+
+    const describe = read => describeScan({
+        supplied: argvFiles.length, offered: rawFiles.length, admitted: files.length, read
+    });
+
+    if (files.length === 0) {
+        const {scope, scanned} = describe(0);
+
+        console.log(`check-jsdoc-types: ${scanned}, nothing to check (${scope}).`);
+        process.exit(0)
+    }
+
+    // Counted, not assumed. `files.length` is what the scope ADMITTED; a file that fails to open is
+    // warned about and skipped, and reporting the admitted count as the scanned one turns that skip
+    // into a green claim about a file nobody read.
+    const violations = [];
+    let   read       = 0;
+
+    for (const file of files) {
+        let content;
+        try {
+            content = readFileSync(path.resolve(gitRoot, file), 'utf-8')
+        } catch (e) {
+            console.error(`check-jsdoc-types: could not read ${file}: ${e.message}`);
+            continue
+        }
+        read++;
+        findUnparseableTypes(content).forEach(({line, tag, expr}) => violations.push(`${file}:${line}  @${tag} {${expr}}`))
+    }
+
+    const {scope, scanned} = describe(read);
+
+    if (violations.length > 0) {
+        console.error(`\x1b[31mcheck-jsdoc-types: ${violations.length} unparseable JSDoc type expression(s) in ${scanned} (${scope}):\x1b[0m`);
+        if (!quiet) {
+            violations.forEach(v => console.error('  ' + v));
+            console.error('\nThe docs build (`npm run generate-docs-json`, the last `build all` step) parses these with');
+            console.error('the jsdoc engine → catharsis (Closure/JSDoc grammar, NOT TypeScript); an unparseable type fails the build');
+            console.error('and breaks the docs app. Most common cause: a TS-like type — typically a bare union inside a');
+            console.error('record value with no space after the colon (`{a:Object|null}`). Fix: parenthesize the union');
+            console.error('(`{a:(Object|null)}`) or add a space (`{a: Object|null}`); use a `@typedef` for complex shapes.')
+            console.error('See https://github.com/neomjs/neo/blob/dev/.github/CODING_GUIDELINES.md#11-jsdoc-type-expressions for accepted forms.')
+        }
+        process.exit(1)
+    }
+
+    console.log(`check-jsdoc-types: ${scanned}, 0 unparseable type expressions (${scope}).`)
+}
+
+if (isEntryModule(import.meta.url)) {
+    main()
+}

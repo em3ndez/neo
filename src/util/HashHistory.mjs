@@ -4,11 +4,11 @@ import Observable from '../core/Observable.mjs';
 /**
  * @class Neo.util.HashHistory
  * @extends Neo.core.Base
+ * @mixes Neo.core.Observable
  * @singleton
  */
 class HashHistory extends Base {
     /**
-     * True automatically applies the core.Observable mixin
      * @member {Boolean} observable=true
      * @static
      */
@@ -16,39 +16,76 @@ class HashHistory extends Base {
 
     static config = {
         /**
-         * @member {String} className='Neo.util.ClassSystem'
+         * @member {String} className='Neo.util.HashHistory'
          * @protected
          */
         className: 'Neo.util.HashHistory',
-        /**
-         * @member {Boolean} singleton=true
-         * @protected
-         */
-        singleton: true,
         /**
          * @member {Number} maxItems=50
          * @protected
          */
         maxItems: 50,
         /**
-         * @member {Array} stack=[]
+         * @member {Boolean} singleton=true
          * @protected
          */
-        stack: []
+        singleton: true,
+        /**
+         * Storing one stack per windowId
+         * @member {Object} stacks={}
+         * @protected
+         */
+        stacks: {}
     }
 
     /**
+     * Convenience shortcut
+     * @param {Number} [windowId]
      * @returns {Object}
      */
-    first() {
-        return this.stack[0] || null
+    first(windowId) {
+        return this.getAt(0, windowId)
     }
 
     /**
+     * @param {Number} index
+     * @param {Number} [windowId]
      * @returns {Number}
      */
-    getCount() {
-        return this.stack.length
+    getAt(index, windowId) {
+        return this.getStack(windowId)[index]
+    }
+
+    /**
+     * @param {Number} [windowId]
+     * @returns {Number}
+     */
+    getCount(windowId) {
+        return this.getStack(windowId).length
+    }
+
+    /**
+     * @summary Resolves a window's history without registering an anonymous stack on a cold read.
+     * An omitted windowId selects the first known window. Before any window is known, the returned
+     * empty array is not stored. Once a window is selected, its registered stack keeps its identity.
+     * @param {Number|String} [windowId]
+     * @returns {Object[]}
+     */
+    getStack(windowId) {
+        let me       = this,
+            {stacks} = me,
+            stackId  = windowId || Object.keys(stacks)[0],
+            stack    = stacks[stackId];
+
+        if (stackId === undefined) {
+            return []
+        }
+
+        if (!stack) {
+            stacks[stackId] = stack = []
+        }
+
+        return stack
     }
 
     /**
@@ -56,12 +93,15 @@ class HashHistory extends Base {
      * @param {String} data.appName
      * @param {Object} data.hash
      * @param {String} data.hashString
+     * @param {Number} data.windowId
      */
     push(data) {
-        let me    = this,
-            stack = me.stack;
+        let me         = this,
+            {windowId} = data,
+            stack      = me.getStack(windowId);
 
         if (stack[0]?.hashString !== data.hashString) {
+            delete data[windowId];
             stack.unshift(data);
 
             if (stack.length > me.maxItems) {
@@ -73,13 +113,13 @@ class HashHistory extends Base {
     }
 
     /**
+     * Convenience shortcut
+     * @param {Number} [windowId]
      * @returns {Object}
      */
-    second() {
-        return this.stack[1] || null
+    second(windowId) {
+        return this.getAt(1, windowId)
     }
 }
 
-let instance = Neo.applyClassConfig(HashHistory);
-
-export default instance;
+export default Neo.setupClass(HashHistory);

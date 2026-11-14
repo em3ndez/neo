@@ -14,6 +14,7 @@ class HeaderComponent extends Component {
         className: 'RealWorld.view.HeaderComponent',
         /**
          * @member {String} activeItem_='home'
+         * @reactive
          */
         activeItem_: 'home',
         /**
@@ -22,14 +23,17 @@ class HeaderComponent extends Component {
         baseCls: ['navbar', 'navbar-light'],
         /**
          * @member {Boolean} loggedIn_=false
+         * @reactive
          */
         loggedIn_: false,
         /**
          * @member {String|null} userImage_=null
+         * @reactive
          */
         userImage_:null,
         /**
          * @member {String|null} userName_=null
+         * @reactive
          */
         userName_: null,
         /**
@@ -38,34 +42,34 @@ class HeaderComponent extends Component {
         _vdom:
         {tag: 'nav', cls: ['navbar navbar-light'], cn: [
             {cls: ['container'], cn: [
-                {tag: 'a',  cls: ['navbar-brand'], href: '#/', html: 'conduit'},
+                {tag: 'a',  cls: ['navbar-brand'], href: '#/', text: 'conduit'},
                 {tag: 'ul', cls: ['nav navbar-nav', 'pull-xs-right'], cn: [
                     {tag: 'li', cls: ['nav-item'], cn: [
-                        {tag: 'a', cls: ['nav-link'], href: '#/', html: 'Home'}
+                        {tag: 'a', cls: ['nav-link'], href: '#/', text: 'Home'}
                     ]},
                     {tag: 'li', cls: ['nav-item'], removeDom: true, cn: [
                         {tag: 'a', cls: ['nav-link'], href: '#/editor', cn: [
                             {tag: 'i', cls: 'ion-compose'},
-                            {vtype: 'text', html: '&nbsp;New Article'}
+                            {vtype: 'text', text: '&nbsp;New Article'}
                         ]}
                     ]},
                     {tag: 'li', cls: ['nav-item'], removeDom: true, cn: [
                         {tag: 'a', cls: ['nav-link'], href: '#/settings', cn: [
                             {tag: 'i', cls: 'ion-gear-a'},
-                            {vtype: 'text', html: '&nbsp;Settings'}
+                            {vtype: 'text', text: '&nbsp;Settings'}
                         ]}
                     ]},
                     {tag: 'li', cls: ['nav-item'], removeDom: true, cn: [
                         {tag: 'a', cls : ['nav-link'], href: '#/profile', cn: [
                             {tag: 'img', cls: ['user-pic']},
-                            {vtype: 'text', html: '&nbsp;Profile'}
+                            {vtype: 'text', text: ' Profile'}
                         ]}
                     ]},
                     {tag: 'li', cls: ['nav-item'], cn: [
-                        {tag : 'a', cls : ['nav-link'], href: '#/login', html: 'Sign in'}
+                        {tag : 'a', cls : ['nav-link'], href: '#/login', text: 'Sign in'}
                     ]},
                     {tag: 'li', cls: ['nav-item'], cn: [
-                        {tag: 'a', cls : ['nav-link'], href: '#/register', html: 'Sign up'}
+                        {tag: 'a', cls : ['nav-link'], href: '#/register', text: 'Sign up'}
                     ]}
                 ]}
             ]}
@@ -140,7 +144,7 @@ class HeaderComponent extends Component {
                 profileLink = me.vdom.cn[0].cn[1].cn[3].cn[0];
 
             profileLink.href = '#/profile/' + value;
-            profileLink.cn[1].html = '&nbsp;' + value;
+            profileLink.cn[1].text = ' ' + value;
 
             me.update();
         }
@@ -170,6 +174,4 @@ class HeaderComponent extends Component {
     }
 }
 
-Neo.applyClassConfig(HeaderComponent);
-
-export default HeaderComponent;
+export default Neo.setupClass(HeaderComponent);

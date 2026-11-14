@@ -18,6 +18,7 @@ class Calendars extends Store {
         keyProperty: 'id',
         /**
          * @member {Neo.data.Model} model=Calendar
+         * @reactive
          */
         model: Calendar,
         /**
@@ -30,6 +31,4 @@ class Calendars extends Store {
     }
 }
 
-Neo.applyClassConfig(Calendars);
-
-export default Calendars;
+export default Neo.setupClass(Calendars);

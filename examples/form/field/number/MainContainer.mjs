@@ -85,7 +85,7 @@ class MainContainer extends ConfigurationViewport {
             listeners     : {change: me.onRadioChange.bind(me, 'triggerPosition', 'right')},
             name          : 'triggerPosition',
             style         : {marginTop: '10px'},
-            valueLabelText: 'right'
+            valueLabel    : 'right'
         }, {
             module        : Radio,
             checked       : me.exampleComponent.triggerPosition === 'sides',
@@ -93,7 +93,7 @@ class MainContainer extends ConfigurationViewport {
             labelText     : '',
             listeners     : {change: me.onRadioChange.bind(me, 'triggerPosition', 'sides')},
             name          : 'triggerPosition',
-            valueLabelText: 'sides'
+            valueLabel    : 'sides'
         }, {
             module   : CheckBox,
             checked  : me.exampleComponent.useSpinButtons,
@@ -109,21 +109,18 @@ class MainContainer extends ConfigurationViewport {
             stepSize : 5,
             style    : {marginTop: '10px'},
             value    : me.exampleComponent.width
-        }];
+        }]
     }
 
     createExampleComponent() {
         return Neo.create(NumberField, {
-            autoRender          : false,
             clearToOriginalValue: true,
             labelText           : 'Label',
             labelWidth          : 70,
             value               : 20,
             width               : 200
-        });
+        })
     }
 }
 
-Neo.applyClassConfig(MainContainer);
-
-export default MainContainer;
+export default Neo.setupClass(MainContainer);

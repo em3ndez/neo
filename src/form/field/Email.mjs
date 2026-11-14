@@ -30,6 +30,7 @@ class Email extends Text {
         errorTextValidEmail: 'Not a valid email address',
         /**
          * @member {String} inputType='email'
+         * @reactive
          */
         inputType: 'email'
     }
@@ -42,12 +43,12 @@ class Email extends Text {
     validate(silent=true) {
         let me          = this,
             returnValue = super.validate(silent),
-            value       = me.value;
+            {value}     = me;
 
         if (returnValue) {
             if (value && !Email.emailRegex.test(value)) {
                 me._error = me.errorTextValidEmail;
-                returnValue = false;
+                returnValue = false
             }
         }
 
@@ -57,6 +58,4 @@ class Email extends Text {
     }
 }
 
-Neo.applyClassConfig(Email);
-
-export default Email;
+export default Neo.setupClass(Email);

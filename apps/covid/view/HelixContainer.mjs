@@ -22,6 +22,7 @@ class HelixContainer extends Container {
         baseCls: ['neo-helix-maincontainer', 'neo-viewport'],
         /**
          * @member {Neo.controller.Component|null} controller=HelixContainerController
+         * @reactive
          */
         controller: HelixContainerController,
         /**
@@ -34,6 +35,7 @@ class HelixContainer extends Container {
         helixConfig: null,
         /**
          * @member {Object|null} layout={ntype: 'hbox', align: 'stretch'}
+         * @reactive
          */
         layout: {ntype: 'hbox', align: 'stretch'},
         /**
@@ -225,7 +227,7 @@ class HelixContainer extends Container {
                 }
             }, {
                 module: BoxLabel,
-                text  : [
+                html  : [
                     '<b>Navigation Concept</b>',
                     '<p>Click on an item to select it. Afterwards you can use the Arrow Keys to walk through the items.</p>',
                     '<p>Hit the Space Key to rotate the currently selected item to the front.</p>',
@@ -255,6 +257,4 @@ class HelixContainer extends Container {
     }
 }
 
-Neo.applyClassConfig(HelixContainer);
-
-export default HelixContainer;
+export default Neo.setupClass(HelixContainer);

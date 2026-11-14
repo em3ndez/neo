@@ -1,10 +1,10 @@
-import Model from '../Model.mjs';
+import BaseModel from './BaseModel.mjs';
 
 /**
  * @class Neo.selection.grid.CellModel
- * @extends Neo.selection.Model
+ * @extends Neo.selection.grid.BaseModel
  */
-class CellModel extends Model {
+class CellModel extends BaseModel {
     static config = {
         /**
          * @member {String} className='Neo.selection.grid.CellModel'
@@ -17,120 +17,168 @@ class CellModel extends Model {
          */
         ntype: 'selection-grid-cellmodel',
         /**
-         * @member {String} cls='selection-cellmodel'
+         * @member {String} cls='neo-selection-cellmodel'
          * @protected
          */
-        cls: 'neo-selection-cellmodel'
+        cls: 'neo-selection-cellmodel',
+        /**
+         * @member {Boolean} selectsCells=true
+         * @protected
+         */
+        selectsCells: true
     }
 
     /**
      *
      */
     addDomListener() {
-        let me   = this,
-            view = me.view;
+        let me            = this,
+            {view}        = me,
+            {parent}      = view,
+            gridContainer = view.gridContainer || parent, // Fallback if no specific Multi-Body structure
+            listener      = {cellClick: me.onCellClick, scope: me};
 
-        view.addDomListeners({
-            click   : me.onCellClick,
-            delegate: '.neo-grid-cell',
-            scope   : me
-        });
+        gridContainer.on(listener)
     }
 
     /**
+     * @param args
+     */
+    destroy(...args) {
+        let me            = this,
+            {view}        = me,
+            parent        = view?.parent,
+            gridContainer = view?.gridContainer || parent;
+
+        gridContainer?.un('cellClick', me.onCellClick, me);
+
+        super.destroy(...args)
+    }
+
+    /**
+     * Resolves a record from a logical cell ID, through the lookup a DOM event takes, so an integer key resolves too.
+     * @param {String} logicalId
+     * @returns {Neo.data.Record|null}
+     */
+    getRecord(logicalId) {
+        return this.view.getRecordFromLogicalId(logicalId)
+    }
+
+    /**
+     * Toggles the clicked cell. A model that {@link #selectsColumns} toggles the cell's column with it.
      * @param {Object} data
      */
     onCellClick(data) {
-        let me   = this,
-            path = data.path,
-            i    = 0,
-            len  = path.length,
-            id;
+        let me                  = this,
+            {view}              = me,
+            {dataField, record} = data,
+            logicalId;
 
-        for (; i < len; i++) {
-            if (path[i].cls.includes('neo-grid-cell')) {
-                id = path[i].id;
-                break;
-            }
+        // The single View-owned model listens once on the gridContainer, so each cell click is
+        // processed exactly once regardless of which body fired it.
+
+        if (record && dataField) {
+            logicalId = view.getLogicalCellId(record, dataField);
+
+            me.selectsColumns && me.setSelectedColumns(me.isSelected(logicalId) ? [] : [dataField]);
+            me.toggleSelection(logicalId)
         }
-
-        id && me.toggleSelection(id);
     }
 
     /**
      * @param {Object} data
      */
     onKeyDownDown(data) {
-        this.onNavKeyRow(data, 1);
+        this.canNavigate(data) && this.onNavKeyRow(1)
     }
 
     /**
      * @param {Object} data
      */
     onKeyDownLeft(data) {
-        this.onNavKeyColumn(data, -1);
+        this.canNavigate(data) && this.onNavKeyColumn(-1)
     }
 
     /**
      * @param {Object} data
      */
     onKeyDownRight(data) {
-        this.onNavKeyColumn(data, 1);
+        this.canNavigate(data) && this.onNavKeyColumn(1)
     }
 
     /**
      * @param {Object} data
      */
     onKeyDownUp(data) {
-        this.onNavKeyRow(data, -1);
+        this.canNavigate(data) && this.onNavKeyRow(-1)
     }
 
     /**
-     * @param {Object} data
+     * Moves the cell selection `step` columns along. A model that {@link #selectsColumns} moves the column with it.
      * @param {Number} step
      */
-    onNavKeyColumn(data, step) {
-        let me            = this,
-            view          = me.view,
-            idArray       = data.path[0].id.split('__'),
-            currentColumn = idArray[2],
-            dataFields    = view.columns.map(c => c.field),
-            newIndex      = (dataFields.indexOf(currentColumn) + step) % dataFields.length,
-            id;
+    onNavKeyColumn(step) {
+        let me                 = this,
+            {dataFields, view} = me,
+            {store}            = view,
+            currentColumn, currentIndex, newIndex, record;
 
-        while (newIndex < 0) {
-            newIndex += dataFields.length;
+        me.selectsColumns && me.stepSelectedColumn(step);
+
+        if (me.hasSelection()) {
+            currentColumn = view.getDataField(me.items[0]);
+            record        = me.getRecord(me.items[0])
+        } else {
+            currentColumn = dataFields[0];
+            record        = store.getAt(0)
         }
 
-        idArray[2] = dataFields[newIndex];
-        id = idArray.join('__');
+        if (!record) {
+            return
+        }
 
-        me.select(id);
-        view.focus(id);
+        currentIndex = dataFields.indexOf(currentColumn);
+        newIndex     = (currentIndex + step) % dataFields.length;
+
+        while (newIndex < 0) {
+            newIndex += dataFields.length
+        }
+
+        me.select(view.getLogicalCellId(record, dataFields[newIndex]));
+
+        view.gridContainer.scrollByColumns(currentIndex, step)
     }
 
     /**
-     * @param {Object} data
      * @param {Number} step
      */
-    onNavKeyRow(data, step) {
-        let me       = this,
-            view     = me.view,
-            store    = view.store,
-            idArray  = data.path[0].id.split('__'),
-            recordId = idArray[1],
-            newIndex = (store.indexOf(recordId) + step) % store.getCount(),
-            id;
+    onNavKeyRow(step) {
+        let me           = this,
+            {view}       = me,
+            {store}      = view,
+            countRecords = store.getCount(),
+            currentIndex = 0,
+            dataField, newIndex;
 
-        while (newIndex < 0) {
-            newIndex += store.getCount();
+        if (me.hasSelection()) {
+            currentIndex = store.indexOf(me.getRecord(me.items[0]));
+            dataField    = view.getDataField(me.items[0])
+        } else {
+            dataField = me.dataFields[0]
         }
 
-        idArray[1] = store.getKeyAt(newIndex);
-        id = idArray.join('__');
+        if (countRecords < 1) {
+            return
+        }
 
-        me.select(id);
-        view.focus(id);
+        newIndex = (currentIndex + step) % countRecords;
+
+        while (newIndex < 0) {
+            newIndex += countRecords
+        }
+
+        me.select(view.getLogicalCellId(store.getAt(newIndex), dataField));
+        view.scrollByRows(currentIndex, step)
     }
 
     /**
@@ -139,37 +187,35 @@ class CellModel extends Model {
     register(component) {
         super.register(component);
 
-        let me   = this,
-            id   = me.id,
-            view = me.view;
+        let me         = this,
+            {id, view} = me,
+            scope      = id;
 
         view.keys?._keys.push(
-            {fn: 'onKeyDownDown'  ,key: 'Down'  ,scope: id},
-            {fn: 'onKeyDownLeft'  ,key: 'Left'  ,scope: id},
-            {fn: 'onKeyDownRight' ,key: 'Right' ,scope: id},
-            {fn: 'onKeyDownUp'    ,key: 'Up'    ,scope: id}
-        );
+            {fn: 'onKeyDownDown'  ,key: 'Down'  ,scope},
+            {fn: 'onKeyDownLeft'  ,key: 'Left'  ,scope},
+            {fn: 'onKeyDownRight' ,key: 'Right' ,scope},
+            {fn: 'onKeyDownUp'    ,key: 'Up'    ,scope}
+        )
     }
 
     /**
      *
      */
     unregister() {
-        let me   = this,
-            id   = me.id,
-            view = me.view;
+        let me         = this,
+            {id, view} = me,
+            scope      = id;
 
         view.keys?.removeKeys([
-            {fn: 'onKeyDownDown'  ,key: 'Down'  ,scope: id},
-            {fn: 'onKeyDownLeft'  ,key: 'Left'  ,scope: id},
-            {fn: 'onKeyDownRight' ,key: 'Right' ,scope: id},
-            {fn: 'onKeyDownUp'    ,key: 'Up'    ,scope: id}
+            {fn: 'onKeyDownDown'  ,key: 'Down'  ,scope},
+            {fn: 'onKeyDownLeft'  ,key: 'Left'  ,scope},
+            {fn: 'onKeyDownRight' ,key: 'Right' ,scope},
+            {fn: 'onKeyDownUp'    ,key: 'Up'    ,scope}
         ]);
 
-        super.unregister();
+        super.unregister()
     }
 }
 
-Neo.applyClassConfig(CellModel);
-
-export default CellModel;
+export default Neo.setupClass(CellModel);

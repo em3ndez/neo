@@ -1,15 +1,17 @@
-import Base         from './Base.mjs';
 import BaseTrigger  from './trigger/Base.mjs';
 import ClearTrigger from './trigger/Clear.mjs';
+import Field        from './Base.mjs';
 import NeoArray     from '../../util/Array.mjs';
+import StringUtil   from '../../util/String.mjs';
 import VDomUtil     from '../../util/VDom.mjs';
 import VNodeUtil    from '../../util/VNode.mjs';
 
 /**
+ * @summary A text input with validation, labels, triggers and an optional live character counter.
  * @class Neo.form.field.Text
  * @extends Neo.form.field.Base
  */
-class Text extends Base {
+class Text extends Field {
     /**
      * Valid values for autoCapitalize
      * @member {String[]} autoCapitalizeValues=['characters','none','on','off','sentences','words']
@@ -45,6 +47,7 @@ class Text extends Base {
         autoCapitalize_: 'off',
         /**
          * @member {Boolean} autoComplete_=false
+         * @reactive
          */
         autoComplete_: false,
         /**
@@ -59,29 +62,54 @@ class Text extends Base {
          */
         centerBorderElWidth: null,
         /**
+         * Formats the visible and accessible character count. data passes length and maxLength (null without a limit).
+         * @member {Function} characterCountText
+         */
+        characterCountText: data => data.maxLength == null ? String(data.length) : `${data.length} / ${data.maxLength}`,
+        /**
          * True shows a clear trigger in case the field has a non-empty value.
          * @member {Boolean} clearable_=true
+         * @reactive
          */
         clearable_: true,
         /**
          * True will reset the field to its initial value config.
          * Recommended for fields with required: true
          * @member {Boolean} clearToOriginalValue_=false
+         * @reactive
          */
         clearToOriginalValue_: false,
         /**
          * Prevent users from typing specific characters.
          * E.g. disabling +-e for NumberFields
          * @member {String[]|null} disabledChars_=null
+         * @reactive
          */
         disabledChars_: null,
         /**
+         * Setting `editable` to `false` means that the input field will be read-only
+         * but the field is still workable and may have its value changed by user interaction.
+         *
+         * For example picker fields such as `Date` and `Select` may still have their
+         * values changed by selecting from the picker using keyboard or pointer.
+         * @member {Boolean} editable_=true
+         * @reactive
+         */
+        editable_: true,
+        /**
+         * Configure the value of empty fields. null or an empty string is recommended.
+         * @member {String|null} emptyValue=null
+         */
+        emptyValue: null,
+        /**
          * @member {String|null} error_=null
+         * @reactive
          */
         error_: null,
         /**
          * Useful for fields inside a css grid where errors should live outside the layout
          * @member {Boolean} errorPositionAbsolute_=false
+         * @reactive
          */
         errorPositionAbsolute_: false,
         /**
@@ -105,10 +133,12 @@ class Text extends Base {
         errorTextRequired: 'Required',
         /**
          * @member {Boolean} hideLabel_=false
+         * @reactive
          */
         hideLabel_: false,
         /**
          * @member {RegExp|null} inputPattern_=null
+         * @reactive
          */
         inputPattern_: null,
         /**
@@ -116,83 +146,116 @@ class Text extends Base {
          * The regex support for input based patterns is not fully there yet, so feel free to disable this feature
          * if needed (E.g. form.field.Phone).
          * @member {Boolean} inputPatternDOM_=true
+         * @reactive
          */
         inputPatternDOM_: true,
         /**
          * @member {String} inputType_='text'
+         * @reactive
          */
         inputType_: 'text',
+        /**
+         * @member {String|null} inputValue_=null
+         * @reactive
+         */
+        inputValue_: null,
         /**
          * @member {String[]} labelBaseCls=['neo-textfield-label']
          */
         labelBaseCls: ['neo-textfield-label'],
         /**
          * @member {String[]} labelCls_=[]
+         * @reactive
          */
         labelCls_: [],
         /**
          * Edge-case config in case we want to render leading content with their own selectors like:
          * <span class="my-label-id-cls">E10</span> • Firstname
          * @member {String|null} labelId_=null
+         * @reactive
          */
         labelId_: null,
         /**
          * CSS rules for labelId
          * @member {String[]} labelIdCls_=[]
+         * @reactive
          */
         labelIdCls_: [],
         /**
          * Separator between labelId & labelText
          * @member {String} labelIdSeparator_=' · '
+         * @reactive
          */
         labelIdSeparator_: ' · ',
         /**
          * @member {String} labelOptionalText_=' (Optional)'
+         * @reactive
          */
         labelOptionalText_: ' (Optional)',
         /**
          * Valid values: 'bottom', 'inline', 'left', 'right', 'top'
          * @member {String} labelPosition_='left'
+         * @reactive
          */
         labelPosition_: 'left',
         /**
-         * @member {String} labelText_='LabelText'
+         * The label text or VDOM.
+         * Supports:
+         * - String: Renders as safe text (textContent).
+         * - Object: A single VDOM object.
+         * - Object[]: An array of VDOM objects.
+         * @member {Object|Object[]|String} labelText_='LabelText'
+         * @reactive
          */
         labelText_: 'LabelText',
         /**
          * defaults to px
          * @member {Number|String} labelWidth_=150
+         * @reactive
          */
         labelWidth_: 150,
         /**
          * The maximum amount of chars which you can enter into this field
          * @member {Number|null} maxLength_=null
+         * @reactive
          */
         maxLength_: null,
         /**
          * The minimum amount of chars which you can enter into this field
          * @member {Number|null} minLength_=null
+         * @reactive
          */
         minLength_: null,
         /**
          * @member {String|null} placeholderText_=null
+         * @reactive
          */
         placeholderText_: null,
         /**
+         * Setting `readOnly` means that the field may not be changed by user interaction.
+         *
+         * The input field will be read-only and other ways of changing the field's value
+         * (such as by operating pickers) will be disabled.
          * @member {Boolean} readOnly_=false
+         * @reactive
          */
         readOnly_: false,
         /**
-         * @member {Boolean} required_=false
+         * Shows the visible input's string length below its right edge, followed by maxLength when set.
+         * Uses the same UTF-16 string-length convention as maxLength validation.
+         * @member {Boolean} showCharacterCount_=false
+         * @reactive
          */
-        required_: false,
+        showCharacterCount_: false,
         /**
          * @member {Boolean} showOptionalText_=false
+         * @reactive
          */
         showOptionalText_: false,
         /**
          * null => Follow the element's default behavior for spell checking
          * @member {Boolean|null} spellCheck_=false
+         * @reactive
          */
         spellCheck_: false,
         /**
@@ -201,21 +264,41 @@ class Text extends Base {
         subLabelBaseCls: ['neo-textfield-sublabel'],
         /**
          * @member {String[]} subLabelCls_=[]
+         * @reactive
          */
         subLabelCls_: [],
         /**
          * @member {String} subLabelText_=null
+         * @reactive
          */
         subLabelText_: null,
         /**
          * @member {Object|Object[]|null} triggers_=null
+         * @reactive
          */
         triggers_: null,
+        /**
+         * Using the alert state will display an empty but required field in orange instead of red.
+         * Intended to get combined with form.Container: getFormState().
+         * See apps/form as an example.
+         * @member {Boolean} useAlertState_=false
+         * @reactive
+         */
+        useAlertState_: false,
         /**
          * A string based value will get resolved into the closest controller which implements it
          * @member {Function|String|null} validator=null
          */
         validator: null,
+        /**
+         * get value can be xssProtected and values are escaped
+         * @member {Boolean} xssProtected_=false
+         * @reactive
+         */
+        xssProtected_: false,
+        /**
+         * @member {Object} _vdom
+         */
         /**
          * @member {Object} _vdom
          */
@@ -226,7 +309,8 @@ class Text extends Base {
             {tag: 'input', cls: ['neo-textfield-input'], flag: 'neo-real-input', style: {}},
             {cls: ['neo-textfield-error-wrapper'], removeDom: true, cn: [
                 {cls: ['neo-textfield-error']}
-            ]}
+            ]},
+            {tag: 'span', cls: ['neo-textfield-character-count'], removeDom: true}
         ]}
     }
 
@@ -238,6 +322,22 @@ class Text extends Base {
     clean = true
 
     /**
+     * Stores an error assigned externally through `error` / `form.Container#setErrors` so `validate()` can preserve it
+     * until `value` changes or `error` is explicitly cleared (`null`), without freezing `validator`-computed errors.
+     * @member {String|null} externalError=null
+     * @protected
+     */
+    externalError = null
+
+    /**
+     * The value the DOM input reported last through `onInputValueChange()`, kept until a render writes the input's
+     * value itself or the field unmounts. See {@link #afterVnodeSync} for what it restores.
+     * @member {String|null} reportedInputValue=null
+     * @protected
+     */
+    reportedInputValue = null
+
+    /**
      * @param {Object} config
      */
     construct(config) {
@@ -247,8 +347,8 @@ class Text extends Base {
 
         me.addDomListeners([
             {input     : me.onInputValueChange, scope: me},
-            {mouseenter: me.onMouseEnter, scope: me},
-            {mouseleave: me.onMouseLeave, scope: me}
+            {mouseenter: me.onMouseEnter,       scope: me},
+            {mouseleave: me.onMouseLeave,       scope: me}
         ])
     }
 
@@ -262,7 +362,7 @@ class Text extends Base {
         super.afterSetAppName(value, oldValue);
 
         value && this.triggers?.forEach(item => {
-            item.appName = value;
+            item.appName = value
         })
     }
 
@@ -284,6 +384,7 @@ class Text extends Base {
      * @protected
      */
     afterSetAutoComplete(value, oldValue) {
+        // while "off" is the correct value, browser vendors ignore it. Arbitrary strings do the trick.
         this.changeInputElKey('autocomplete', value ? null : 'no')
     }
 
@@ -330,11 +431,27 @@ class Text extends Base {
             let me = this;
 
             Neo.main.DomEvents.registerDisabledInputChars({
-                appName: me.appName,
-                chars  : value,
-                id     : me.getInputEl().id
+                chars   : value,
+                id      : me.getInputEl().id,
+                windowId: me.windowId
             })
         }
+    }
+
+    /**
+     * Triggered after the editable config got changed
+     * @param {Boolean} value
+     * @param {Boolean} oldValue
+     * @protected
+     */
+    afterSetEditable(value, oldValue) {
+        let me      = this,
+            {cls} = me;
+
+        NeoArray.toggle(cls, 'neo-not-editable', !value);
+        me.cls = cls;
+
+        me.updateReadOnlyState()
     }
 
     /**
@@ -344,6 +461,14 @@ class Text extends Base {
      * @protected
      */
     afterSetError(value, oldValue) {
+        if (oldValue !== undefined || value) {
+            this.externalError = value
+        }
+
+        if (value && oldValue !== undefined) {
+            this.clean = false
+        }
+
         this.updateError(value)
     }
 
@@ -355,7 +480,7 @@ class Text extends Base {
      */
     afterSetErrorPositionAbsolute(value, oldValue) {
         let me  = this,
-            cls = VDomUtil.findVdomChild(me.vdom, {cls: 'neo-textfield-error'}).vdom.cls;
+            cls = VDomUtil.find(me.vdom, {cls: 'neo-textfield-error'}).vdom.cls;
 
         NeoArray[value ? 'add' : 'remove'](cls, 'neo-absolute');
 
@@ -377,12 +502,11 @@ class Text extends Base {
     }
 
     /**
-     * Triggered after the id config got changed
-     * @param {String} value
-     * @param {String} oldValue
      * @protected
      */
-    afterSetId(value, oldValue) {
+    ensureStableIds() {
+        super.ensureStableIds();
+
         let me        = this,
             inputEl   = me.getInputEl(),
             inputElId = me.getInputElId(),
@@ -390,10 +514,7 @@ class Text extends Base {
 
         inputEl.id  = inputElId;
         labelEl.id  = me.getLabelId();
-        labelEl.for = inputElId;
-
-        // silent vdom update, the super call will trigger the engine
-        super.afterSetId(value, oldValue)
+        labelEl.for = inputElId
     }
 
     /**
@@ -406,7 +527,7 @@ class Text extends Base {
         if (this.inputPatternDOM) {
             if (value) {
                 value = value.toString();
-                value = value.substring(1, value.length - 1);
+                value = value.substring(1, value.length - 1)
             }
 
             this.changeInputElKey('pattern', value)
@@ -421,6 +542,27 @@ class Text extends Base {
      */
     afterSetInputType(value, oldValue) {
         this.changeInputElKey('type', value)
+    }
+
+    /**
+     * @summary Synchronizes the input spelling, optional count and value when inputValue changes.
+     * @param {String|null} value
+     * @param {String|null} oldValue
+     * @protected
+     */
+    afterSetInputValue(value, oldValue) {
+        let me    = this,
+            {cls} = me;
+
+        me.getInputEl().value = me.getInputElValue(value);
+
+        me.useAlertState && NeoArray.toggle(cls, 'neo-empty-required', me.isEmpty() && me.required);
+
+        NeoArray.toggle(cls, 'neo-has-content', me.hasContent());
+        me.cls = cls;
+
+        me.showCharacterCount && me.syncCharacterCount();
+        me.updateValueFromInputValue(value)
     }
 
     /**
@@ -456,9 +598,8 @@ class Text extends Base {
      * @protected
      */
     afterSetLabelPosition(value, oldValue) {
-        let me   = this,
-            cls  = me.cls,
-            vdom = me.vdom,
+        let me          = this,
+            {cls, vdom} = me,
             centerBorderElCls, isEmpty;
 
         vdom.cn[1].removeDom = value !== 'top' ? true : !Boolean(me.subLabelText);
@@ -472,7 +613,7 @@ class Text extends Base {
 
             vdom.cn[0].removeDom = me.hideLabel;
             vdom.cn[0].width     = me.labelWidth;
-            me.updateInputWidth();
+            me.updateInputWidth()
         } else if (value === 'inline') {
             centerBorderElCls = ['neo-center-border'];
             isEmpty           = me.isEmpty();
@@ -497,9 +638,9 @@ class Text extends Base {
 
             me.updateInputWidth();
 
-            !isEmpty && setTimeout(() => {
+            !isEmpty && me.timeout(20).then(() => {
                 me.updateCenterBorderElWidth(false)
-            }, 20)
+            })
         } else {
             // changes from e.g. left to top
             me.updateInputWidth()
@@ -508,24 +649,41 @@ class Text extends Base {
 
     /**
      * Triggered after the labelText config got changed
-     * @param {String} value
-     * @param {String} oldValue
+     * @param {Object|Object[]|String} value
+     * @param {Object|Object[]|String} oldValue
      * @protected
      */
     afterSetLabelText(value, oldValue) {
         let me      = this,
-            isEmpty = me.isEmpty();
+            isEmpty = me.isEmpty(),
+            labelEl = me.getLabelEl();
 
         if (me.labelId) {
-            value = `<span class="${me.labelIdCls.join(',')}">${me.labelId}</span>${me.labelIdSeparator + value}`
-        }
+            value = [{
+                tag : 'span',
+                cls : me.labelIdCls,
+                text: me.labelId
+            }, {
+                tag : 'span',
+                text: me.labelIdSeparator
+            }, ...(Array.isArray(value) ? value : (Neo.isString(value) ? [{text: value}] : [value]))];
 
-        me.getLabelEl().innerHTML = value;
+            labelEl.cn = value;
+            delete labelEl.text
+        } else {
+            if (Neo.isString(value)) {
+                labelEl.text = value;
+                delete labelEl.cn
+            } else {
+                labelEl.cn = Array.isArray(value) ? value : [value];
+                delete labelEl.text
+            }
+        }
 
         if (!me.hideLabel) {
             if (me.labelPosition === 'inline') {
                 if (!isEmpty) {
-                    delete me.getCenterBorderEl()?.width;
+                    delete me.getCenterBorderEl()?.width
                 }
 
                 me.promiseUpdate().then(() => {
@@ -546,8 +704,7 @@ class Text extends Base {
     afterSetLabelWidth(value, oldValue) {
         if (this.labelPosition !== 'inline') {
             let me    = this,
-                vdom  = me.vdom,
-                label = vdom.cn[0];
+                label = me.vdom.cn[0];
 
             label.width = value;
             !me.hideLabel && me.updateInputWidth()
@@ -555,13 +712,14 @@ class Text extends Base {
     }
 
     /**
-     * Triggered after the maxLength config got changed
+     * @summary Applies the maximum length to validation, the native input and the optional counter.
      * @param {Number|null} value
      * @param {Number|null} oldValue
      * @protected
      */
     afterSetMaxLength(value, oldValue) {
         this.validate(); // silent
+        this.showCharacterCount && this.syncCharacterCount();
         this.changeInputElKey('maxlength', value)
     }
 
@@ -592,6 +750,9 @@ class Text extends Base {
                 i        = 0,
                 len      = triggers.length;
 
+            // An unmounted input left the DOM, and what it reported left with it
+            value || (me.reportedInputValue = null);
+
             for (; i < len; i++) {
                 if (!triggers[i].vdom.removeDom) {
                     triggers[i].mounted = value
@@ -615,8 +776,8 @@ class Text extends Base {
      * @protected
      */
     afterSetPlaceholderText(value, oldValue) {
-        let me  = this,
-            cls = me.cls;
+        let me    = this,
+            {cls} = me;
 
         me.changeInputElKey('placeholder', value === '' ? null : value);
 
@@ -635,13 +796,13 @@ class Text extends Base {
      * @protected
      */
     afterSetReadOnly(value, oldValue) {
-        let me  = this,
-            cls = me.cls;
+        let me    = this,
+            {cls} = me;
 
         NeoArray[value ? 'add' : 'remove'](cls, 'neo-readonly');
         me.cls = cls;
 
-        me.changeInputElKey('readonly', value ? value : null);
+        me.updateReadOnlyState();
 
         me.triggers?.forEach(trigger => {
             trigger.hidden = value ? true : trigger.getHiddenState?.() || false
@@ -659,12 +820,30 @@ class Text extends Base {
 
         me.silentVdomUpdate = true;
 
-        me.validate(false);
+        oldValue !== undefined && me.validate(me.clean);
         me.changeInputElKey('required', value ? value : null);
         me.labelText = me.labelText; // apply the optional text if needed
 
         me.silentVdomUpdate = false;
 
+        me.update()
+    }
+
+    /**
+     * @summary Toggles the counter and its input description without changing the field's value policy.
+     * @param {Boolean} value
+     * @param {Boolean} oldValue
+     * @protected
+     */
+    afterSetShowCharacterCount(value, oldValue) {
+        if (!value && oldValue === undefined) return;
+
+        const me  = this,
+              cls = me.cls;
+
+        NeoArray.toggle(cls, 'neo-has-character-count', value);
+        me.cls = cls;
+        me.syncCharacterCount();
         me.update()
     }
 
@@ -695,8 +874,8 @@ class Text extends Base {
      * @protected
      */
     afterSetSubLabelCls(value, oldValue) {
-        let me  = this,
-            cls = me.vdom.cn[1].cls;
+        let me    = this,
+            {cls} = me.vdom.cn[1];
 
         NeoArray.remove(cls, oldValue);
         NeoArray.add(cls, value);
@@ -715,8 +894,8 @@ class Text extends Base {
             showLabel = me.labelPosition === 'top',
             subLabel  = me.vdom.cn[1];
 
-        subLabel.html      = value;
         subLabel.removeDom = !showLabel;
+        subLabel.text      = value;
 
         me.update()
     }
@@ -729,7 +908,7 @@ class Text extends Base {
      */
     afterSetTriggers(value, oldValue) {
         let me           = this,
-            vdom         = me.vdom,
+            {vdom}       = me,
             inputEl      = vdom.cn[2], // inputEl or inputWrapperEl
             preTriggers  = [],
             postTriggers = [],
@@ -751,10 +930,10 @@ class Text extends Base {
             });
 
             postTriggers.sort((a, b) => b.weight - a.weight); // DESC
-            preTriggers.sort((a, b) => a.weight - b.weight); // ASC
+            preTriggers.sort( (a, b) => a.weight - b.weight); // ASC
 
-            postTriggers = postTriggers.map(a => a.vdom);
-            preTriggers  = preTriggers.map(a => a.vdom);
+            postTriggers = postTriggers.map(trigger => trigger.createVdomReference());
+            preTriggers  = preTriggers.map( trigger => trigger.createVdomReference());
 
             if (inputEl.tag === 'input') {
                 // wrap the input tag
@@ -765,9 +944,9 @@ class Text extends Base {
                     width: inputEl.width
                 };
 
-                delete inputEl.width;
+                delete inputEl.width
             } else {
-                inputEl.cn = [...preTriggers, me.getInputEl(), ...postTriggers];
+                inputEl.cn = [...preTriggers, me.getInputEl(), ...postTriggers]
             }
         } else {
             if (inputEl.tag !== 'input') {
@@ -785,27 +964,26 @@ class Text extends Base {
 
     /**
      * Triggered after the value config got changed
-     * todo: add validation logic
      * @param {String} value
      * @param {String} oldValue
      * @protected
      */
     afterSetValue(value, oldValue) {
-        let me            = this,
-            originalValue = me.originalConfig.value,
-            isDirty       = value !== originalValue && Neo.isEmpty(value) !== Neo.isEmpty(originalValue),
+        let me = this,
             cls;
+
+        if (oldValue !== undefined) {
+            me.externalError = null
+        }
 
         me.silentVdomUpdate = true;
 
-        me.getInputEl().value = me.containsFocus ? value : me.inputValueRenderer(value);
+        me.updateInputValueFromValue(value);
 
         me.validate(); // silent
 
         cls = me.cls;
-
-        NeoArray[me.hasContent() ? 'add' : 'remove'](cls, 'neo-has-content');
-        NeoArray[isDirty ? 'add' : 'remove'](cls, 'neo-is-dirty');
+        NeoArray.toggle(cls, 'neo-is-dirty', me.isDirty);
         me.cls = cls;
 
         me.silentVdomUpdate = false;
@@ -827,13 +1005,55 @@ class Text extends Base {
     }
 
     /**
+     * Triggered after the windowId config got changed
+     * @param {Number} value
+     * @param {Number|null} oldValue
+     * @protected
+     */
+    afterSetWindowId(value, oldValue) {
+        super.afterSetWindowId(value, oldValue);
+
+        value && this.triggers?.forEach(item => {
+            item.windowId = value
+        })
+    }
+
+    /**
+     * A render lands with the vnode it was diffed against, the field's own render or an ancestor's that covered it.
+     * When the user typed after that render collected its payload, the vnode no longer holds what the DOM shows, and
+     * `onInputValueChange()`'s sync is undone: the next render would write a stale value over newer typing. Unless
+     * that render wrote the input's value itself, the DOM still shows the reported value, so the vnode gets it back.
+     * A first render built the input from the vnode, which leaves the report nothing to restore.
+     * @param {Object[]|null} deltas
+     * @protected
+     */
+    afterVnodeSync(deltas) {
+        let me                   = this,
+            {reportedInputValue} = me;
+
+        if (reportedInputValue !== null) {
+            let inputId = me.getInputElId();
+
+            if (!deltas || deltas.some(delta => delta.id === inputId && (delta.action === 'removeNode' || Object.hasOwn(delta.attributes || {}, 'value')))) {
+                me.reportedInputValue = null
+            } else {
+                let {vnode} = VNodeUtil.find(me.vnode, me.getInputElId()) || {};
+
+                vnode && (vnode.attributes.value = reportedInputValue)
+            }
+        }
+
+        super.afterVnodeSync(deltas)
+    }
+
+    /**
      * Return a shallow copy of the triggers config
      * @param {Array|null} value
      * @protected
      */
     beforeGetTriggers(value) {
         if (Array.isArray(value)) {
-            return [...value];
+            return [...value]
         }
 
         return value
@@ -885,10 +1105,10 @@ class Text extends Base {
 
         if (me.showOptionalText && !me.required) {
             if (!hasOptionalText) {
-                value += labelOptionalText;
+                value += labelOptionalText
             }
         } else if (value && hasOptionalText) {
-            value = value.replace(labelOptionalText, '');
+            value = value.replace(labelOptionalText, '')
         }
 
         return value
@@ -917,35 +1137,53 @@ class Text extends Base {
         if (!value) {
             value = [];
         } else if (!Array.isArray(value)) {
-            value = [value];
+            value = [value]
         }
 
-        let me = this;
+        let me                  = this,
+            {appName, windowId} = me;
 
         value.forEach((item, index) => {
             if (item.isClass) {
                 value[index] = Neo.create(item, {
-                    appName: me.appName,
-                    id     : me.getTriggerId(item.prototype.type),
-                    field  : me
-                });
+                    appName,
+                    id   : me.getTriggerId(item.prototype.type),
+                    field: me,
+                    windowId
+                })
             } else if (!(item instanceof BaseTrigger)) {
                 if (!item.module && !item.ntype) {
-                    item.ntype = 'trigger';
+                    item.ntype = 'trigger'
                 }
 
                 if (item.module) {
                     item.className = item.module.prototype.className;
-                    item.id        = me.getTriggerId(item.module.prototype.type);
+                    item.id        = me.getTriggerId(item.module.prototype.type)
                 }
 
                 value[index] = Neo[item.className ? 'create' : 'ntype']({
                     ...item,
-                    appName: me.appName,
-                    field  : me
+                    appName,
+                    field: me,
+                    windowId
                 })
             }
         });
+
+        return value
+    }
+
+    /**
+     * Triggered before the value config gets changed
+     * @param {String|null} value
+     * @param {String|null} oldValue
+     * @returns {String|null}
+     * @protected
+     */
+    beforeSetValue(value, oldValue) {
+        if (value === null || value === '') {
+            return this.emptyValue
+        }
 
         return value
     }
@@ -969,10 +1207,14 @@ class Text extends Base {
 
         if (me.disabledChars) {
             Neo.main.DomEvents.unregisterDisabledInputChars({
-                appName: me.appName,
-                id     : me.getInputEl().id
+                id      : me.getInputEl().id,
+                windowId: me.windowId
             })
         }
+
+        me.triggers?.forEach(trigger => {
+            trigger.destroy()
+        });
 
         super.destroy(...args)
     }
@@ -987,17 +1229,32 @@ class Text extends Base {
     }
 
     /**
+     * @summary Selects the input's text, so the next keystroke replaces it instead of appending.
+     *
+     * Selection is the same node's next step after {@link #focus}, and the facts it needs — the input element's id
+     * and the field's `windowId` — are the field's own. Callers reaching for `Neo.main.DomAccess.selectNode()`
+     * directly have to reassemble both. Omitting the range selects the whole value: `selectNode()` clamps its own.
+     * @param {Number} [start=0]
+     * @param {Number} [end] Defaults to the end of the value.
+     */
+    selectText(start=0, end) {
+        let me = this;
+
+        Neo.main.DomAccess.selectNode({end, id: me.getInputElId(), start, windowId: me.windowId})
+    }
+
+    /**
      * @returns {Object|null}
      */
     getCenterBorderEl() {
-        return VDomUtil.findVdomChild(this.vdom, {cls: 'neo-center-border'})?.vdom || null
+        return VDomUtil.find(this.vdom, {cls: 'neo-center-border'})?.vdom || null
     }
 
     /**
      * @returns {Object|null}
      */
     getInputEl() {
-        return VDomUtil.findVdomChild(this.vdom, {flag: 'neo-real-input'})?.vdom || null
+        return VDomUtil.find(this.vdom, {flag: 'neo-real-input'})?.vdom || null
     }
 
     /**
@@ -1008,6 +1265,26 @@ class Text extends Base {
     }
 
     /**
+     * What the input's vdom says for an input value. `value` is trimmed, the DOM is not: a space typed at either end
+     * is in the input and in the vnode, and a vdom holding the trimmed spelling would make every render write it back
+     * over the input, with whatever was typed while that render was on its way. So while the DOM's last report is such
+     * a spelling, the vdom keeps the report. An adjustor's correction or a value set in code is written as before.
+     * @param {*} value
+     * @returns {*}
+     * @protected
+     */
+    getInputElValue(value) {
+        let me                   = this,
+            {reportedInputValue} = me;
+
+        if (Neo.isString(reportedInputValue) && reportedInputValue !== value && reportedInputValue.trim() === value) {
+            return reportedInputValue
+        }
+
+        return me.containsFocus ? value : me.inputValueRenderer(value)
+    }
+
+    /**
      * Calculates the new inputWidth based on the labelWidth & total width
      * @returns {Number|null} null in case this.width is unknown
      */
@@ -1015,7 +1292,7 @@ class Text extends Base {
         let me          = this,
             ignoreLabel = me.hideLabel || me.labelPosition === 'bottom' || me.labelPosition === 'inline' || me.labelPosition === 'top',
             labelWidth  = ignoreLabel ? 0 : me.labelWidth,
-            width       = me.width;
+            {width}     = me;
 
         if (labelWidth && width) {
             return parseInt(width) - parseInt(labelWidth)
@@ -1037,7 +1314,7 @@ class Text extends Base {
      * @returns {Object|null}
      */
     getLabelEl() {
-        return VDomUtil.findVdomChild(this.vdom, {tag: 'label'})?.vdom || null
+        return VDomUtil.find(this.vdom, {tag: 'label'})?.vdom || null
     }
 
     /**
@@ -1045,6 +1322,15 @@ class Text extends Base {
      */
     getLabelId() {
         return `${this.id}__label`
+    }
+
+    /**
+     * @returns {*}
+     */
+    getSubmitValue() {
+        let superSubmitValue = super.getSubmitValue();
+
+        return this.xssProtected ? StringUtil.escapeHtml(superSubmitValue) : superSubmitValue
     }
 
     /**
@@ -1098,7 +1384,7 @@ class Text extends Base {
      * @returns {Boolean}
      */
     hasContent() {
-        let value = this.value;
+        let value = this.inputValue;
 
         return this.placeholderText?.length > 0 || value !== null && value.toString().length > 0
     }
@@ -1152,6 +1438,13 @@ class Text extends Base {
     /**
      * @returns {Boolean}
      */
+    isEmptyAndRequired() {
+        return this.isEmpty() && this.required
+    }
+
+    /**
+     * @returns {Boolean}
+     */
     isValid() {
         this.validate(true); // silent
 
@@ -1159,8 +1452,7 @@ class Text extends Base {
     }
 
     /**
-     * @param {Object} config
-     * @param {Boolean} [preventOriginalConfig] True prevents the instance from getting an originalConfig property
+     * @param args
      * @returns {Object} config
      */
     mergeConfig(...args) {
@@ -1180,8 +1472,10 @@ class Text extends Base {
      * @protected
      */
     onFocusEnter(data) {
-        let me  = this,
-            cls = me.cls;
+        super.onFocusEnter(data);
+
+        let me    = this,
+            {cls} = me;
 
         if (!me.readOnly) {
             NeoArray.add(cls, 'neo-focus');
@@ -1199,6 +1493,7 @@ class Text extends Base {
     }
 
     /**
+     * @summary Settles validation and input normalization, then updates the optional visible count.
      * @param {Object} data
      * @param {Object[]} data.oldPath
      * @protected
@@ -1206,10 +1501,11 @@ class Text extends Base {
     onFocusLeave(data) {
         let me             = this,
             centerBorderEl = me.getCenterBorderEl(), // labelPosition: 'inline'
+            inputEl        = me.getInputEl(),
             cls;
 
         if (!me.readOnly) {
-            me.validate(); // silent
+            me.validate(false);
 
             cls = me.cls; // has to get set after validate()
 
@@ -1217,41 +1513,73 @@ class Text extends Base {
             me.cls = cls;
 
             if (centerBorderEl && me.isEmpty()) {
-                delete centerBorderEl.width;
+                delete centerBorderEl.width
             }
-
-            me.update()
         }
+
+        if (Neo.isString(me.value)) {
+            me.value = me.value.trim()
+        }
+
+        // Spaces typed at either end stayed in the input while the typing went on (see getInputElValue())
+        if (Neo.isString(inputEl.value) && inputEl.value !== inputEl.value.trim()) {
+            inputEl.value = me.inputValueRenderer(me.inputValue)
+        }
+
+        me.showCharacterCount && me.syncCharacterCount();
+        me.update();
 
         super.onFocusLeave(data)
     }
 
     /**
+     * @summary Preserves the reported native spelling while synchronizing the value and optional counter.
      * @param {Object} data
      * @protected
      */
     onInputValueChange(data) {
-        let me       = this,
-            oldValue = me.value,
-            value    = data.value,
-            vnode    = VNodeUtil.findChildVnode(me.vnode, {nodeName: 'input'});
+        let me         = this,
+            oldValue   = me.value,
+            inputValue = data.value;
 
-        if (vnode) {
-            // required for validation -> revert a wrong user input
-            vnode.vnode.attributes.value = value;
+        // Find the VNode for the real input element within the component's vnode tree.
+        const {vnode: inputVNode} = VNodeUtil.find(me.vnode, me.getInputElId()) || {};
+
+        if (inputVNode) {
+            // This is the critical synchronization step. The user's input has changed the
+            // real DOM on the Main Thread. We must manually update our "last known state"
+            // (this.vnode) to match this reality *before* the next diffing cycle runs.
+            // This prevents the framework from sending a redundant delta update that could
+            // overwrite the user's input or cause cursor jumps.
+            // Required e.g. for validation -> revert a wrong user input
+            inputVNode.attributes.value = inputValue;
+            me.reportedInputValue       = inputValue
         }
 
-        me.value = me.inputValueAdjustor(value);
+        if (Neo.isString(inputValue)) {
+            inputValue = inputValue.trim()
+        }
 
-        me.fireUserChangeEvent(value, oldValue)
+        me.clean      = false;
+        me.inputValue = me.inputValueAdjustor(inputValue); // updates this.value
+
+        // A space at either end changes no config, so afterSetInputValue() never ran for it
+        me.getInputEl().value = me.getInputElValue(me.inputValue);
+
+        if (me.showCharacterCount) {
+            me.syncCharacterCount();
+            me.update()
+        }
+
+        me.fireUserChangeEvent(me.value, oldValue)
     }
 
     /**
      * @param {Object} data
      */
     onMouseEnter(data) {
-        let me  = this,
-            cls = me.cls;
+        let me    = this,
+            {cls} = me;
 
         if (!me.readOnly) {
             NeoArray.add(cls, 'neo-hovered');
@@ -1263,8 +1591,8 @@ class Text extends Base {
      * @param {Object} data
      */
     onMouseLeave(data) {
-        let me  = this,
-            cls = me.cls;
+        let me    = this,
+            {cls} = me;
 
         if (!me.readOnly) {
             NeoArray.remove(cls, 'neo-hovered');
@@ -1293,38 +1621,77 @@ class Text extends Base {
             if (trigger.type === type) {
                 NeoArray.remove(triggers, trigger);
                 len--;
-                hasMatch = true;
+                hasMatch = true
             }
         }
 
         if (hasMatch && !silent) {
-            me.triggers = triggers;
+            me.triggers = triggers
         }
 
         return hasMatch
     }
 
     /**
-     * Resets the field to its original value or null depending on the clearToOriginalValue config
-     * You can optionally pass a new value, which will adjust the originalConfig.value if needed.
+     * @summary Resets the field to its original value or null in a single VDOM update and fires `change` last.
+     *
+     * Restores `clean` to its initial configuration, clears any active or external error silently before
+     * delegating to `super.reset(value)`, and flushes a single `update()` when the value itself did not change.
      * @param {String|null} [value=null]
      */
     reset(value = null) {
-        let me = this;
+        let me       = this,
+            isClean  = me.originalConfig.clean ?? true,
+            oldValue = me.value;
+
+        me.externalError = null;
 
         if (me.clearToOriginalValue) {
             if (value) {
-                me.originalConfig.value = value;
+                me.originalConfig.value = value
             } else {
                 value = me.originalConfig.value
             }
         }
 
+        if (isClean) {
+            me.clean = false;
+            me.updateError(null, true)
+        }
+
+        me.clean = isClean;
+
         super.reset(value);
 
-        if (value === null && me.clean) {
-            me.updateError(null)
+        if (me.value === oldValue) {
+            me.validate();
+            me.update()
         }
+    }
+
+    /**
+     * @summary Projects the visible input spelling into the counter, preserving other accessible descriptions.
+     * Does not write the input value or schedule a render; input/config hooks own those operations.
+     * @protected
+     */
+    syncCharacterCount() {
+        const me           = this,
+              counter      = VDomUtil.find(me.vdom, {cls: 'neo-textfield-character-count'}).vdom,
+              input        = me.getInputEl(),
+              id           = `${me.id}__character-count`,
+              descriptions = String(input['aria-describedby'] || '').split(/\s+/).filter(value => value && value !== id);
+
+        counter.id        = id;
+        counter.removeDom = !me.showCharacterCount;
+
+        if (me.showCharacterCount) {
+            const length = String(input.value ?? '').length;
+            counter.text = me.characterCountText({length, maxLength: me.maxLength});
+            descriptions.push(id)
+        }
+
+        if (descriptions.length) input['aria-describedby'] = descriptions.join(' ');
+        else delete input['aria-describedby']
     }
 
     /**
@@ -1346,31 +1713,46 @@ class Text extends Base {
     }
 
     /**
-     @param {String|null} value
-     @param {Boolean} silent=false
+     * @summary Updates the field's invalid CSS class and error wrapper VDOM in a single batched render.
+     * @param {String|null} value
+     * @param {Boolean} silent=false
      */
     updateError(value, silent = false) {
-        let me  = this,
-            cls = me.cls,
+        let me    = this,
+            {cls} = me,
             errorNode, errorWrapper;
 
         if (!(me.clean && !me.mounted)) {
+            me._error           = value;
+            me.silentVdomUpdate = true;
+
             NeoArray[value ? 'add' : 'remove'](cls, 'neo-invalid');
             me.cls = cls;
 
-            errorWrapper = VDomUtil.findVdomChild(me.vdom, {cls: 'neo-textfield-error-wrapper'}).vdom;
+            errorWrapper = VDomUtil.find(me.vdom, {cls: 'neo-textfield-error-wrapper'}).vdom;
             errorNode    = errorWrapper.cn[0];
 
             if (value) {
-                errorNode.html = value;
+                errorNode.text = value
             } else {
-                delete errorNode.html;
+                delete errorNode.text
             }
 
             errorWrapper.removeDom = !value;
 
+            me.silentVdomUpdate = false;
+
             !silent && me.update()
         }
+    }
+
+    /**
+     * Override this method as needed inside class extensions.
+     * @param {*} value
+     * @protected
+     */
+    updateInputValueFromValue(value) {
+        this.inputValue = value
     }
 
     /**
@@ -1379,20 +1761,29 @@ class Text extends Base {
      */
     updateInputWidth() {
         let me         = this,
+            inputEl    = me.vdom.cn[2],
             inputWidth = me.getInputWidth();
 
         if (inputWidth !== null && inputWidth !== me.width) {
-            me.vdom.cn[1].width = inputWidth
+            inputEl.width = inputWidth
         } else {
-            delete me.vdom.cn[1].width
+            delete inputEl.width
         }
 
         me.update()
     }
 
     /**
-     * Since triggers do not get rendered, assign the relevant props
-     * todo: this could be handled by component.Base
+     * The DOM based readonly attribute needs to honor the editable & readOnly configs
+     */
+    updateReadOnlyState() {
+        let me = this;
+
+        me.changeInputElKey('readonly', !me.editable || me.readOnly || null)
+    }
+
+    /**
+     * Since triggers do not get vnodeInitialized, assign the relevant props
      */
     updateTriggerVnodes() {
         let me          = this,
@@ -1405,10 +1796,19 @@ class Text extends Base {
 
             trigger && Object.assign(trigger, {
                 vnode,
-                _rendered: true,
-                _mounted : true
+                _mounted         : true,
+                _vnodeInitialized: true
             })
         })
+    }
+
+    /**
+     * Override this method as needed inside class extensions.
+     * @param {String} inputValue
+     * @protected
+     */
+    updateValueFromInputValue(inputValue) {
+        this.value = inputValue
     }
 
     /**
@@ -1417,58 +1817,86 @@ class Text extends Base {
      * @returns {Boolean} Returns true in case there are no client-side errors
      */
     validate(silent=true) {
-        let me           = this,
-            maxLength    = me.maxLength,
-            minLength    = me.minLength,
-            required     = me.required,
-            returnValue  = true,
-            value        = me.value,
-            valueLength  = value?.toString().length,
-            inputPattern = me.inputPattern,
-            isEmpty      = value !== 0 && (!value || valueLength < 1),
-            errorParam   = {inputPattern, maxLength, minLength, valueLength},
+        let me          = this,
+            {inputPattern, maxLength, minLength, required, value} = me,
+            returnValue = true,
+            valueLength = value?.toString().length,
+            isEmpty     = value !== 0 && (!value || valueLength < 1),
+            errorParam  = {inputPattern, maxLength, minLength, valueLength},
             errorText;
 
         if (!silent) {
             // in case we manually call validate(false) on a form or field before it is mounted, we do want to see errors.
-            me.clean = false;
+            me.clean = false
         }
 
         if (isEmpty) {
             if (required) {
                 me._error   = me.errorTextRequired;
-                returnValue = false;
+                returnValue = false
             }
         } else {
             if (Neo.isNumber(maxLength) && valueLength > maxLength) {
                 me._error   = me.errorTextMaxLength(errorParam);
-                returnValue = false;
+                returnValue = false
             } else if (Neo.isNumber(minLength) && valueLength < minLength) {
                 me._error   = me.errorTextMinLength(errorParam);
-                returnValue = false;
+                returnValue = false
             } else if (inputPattern && !inputPattern.test(value)) {
                 me._error   = me.errorTextInputPattern(errorParam);
-                returnValue = false;
-            } else if (Neo.isFunction(me.validator)) {
+                returnValue = false
+            } else if (me.validator) {
+                me.bindCallback(me.validator, 'validator');
+
                 errorText = me.validator(me);
 
                 if (errorText !== true) {
                     me._error   = errorText;
-                    returnValue = false;
+                    returnValue = false
                 }
             }
         }
 
         if (returnValue) {
-            me._error = null;
+            if (me.externalError) {
+                me._error   = me.externalError;
+                returnValue = false
+            } else {
+                me._error = null
+            }
         }
 
         !me.clean && me.updateError(me._error, silent);
 
         return !returnValue ? false : super.validate(silent)
     }
+    /**
+     * @summary Serializes the field's input, label and counter configuration.
+     * @returns {Object}
+     */
+    toJSON() {
+        let me = this;
+
+        return {
+            ...super.toJSON(),
+            autoCapitalize    : me.autoCapitalize,
+            autoComplete      : me.autoComplete,
+            clearable         : me.clearable,
+            editable          : me.editable,
+            hideLabel         : me.hideLabel,
+            inputPattern      : me.inputPattern?.toString(),
+            inputType         : me.inputType,
+            inputValue        : me.inputValue,
+            labelPosition     : me.labelPosition,
+            labelText         : me.labelText,
+            maxLength         : me.maxLength,
+            minLength         : me.minLength,
+            placeholderText   : me.placeholderText,
+            readOnly          : me.readOnly,
+            showCharacterCount: me.showCharacterCount,
+            triggers          : me.triggers?.map(trigger => trigger.toJSON())
+        }
+    }
 }
 
-Neo.applyClassConfig(Text);
-
-export default Text;
+export default Neo.setupClass(Text);

@@ -1,12 +1,12 @@
-import Base       from '../../core/Base.mjs';
-import DomAccess  from '../DomAccess.mjs';
-import Stylesheet from './Stylesheet.mjs'
+import Base        from './Base.mjs';
+import DomAccess   from '../DomAccess.mjs';
+import HighlightJs from '../../util/HighlightJs.mjs';
 
 /**
  * Required for the docs app which uses highlight.js for the source views
  * @class Neo.main.addon.HighlightJS
- * @extends Neo.core.Base
- * @singleton
+ * @extends Neo.main.addon.Base
+ * @summary Main-thread DOM highlighting with the Engine bundle and optional classic-script overrides.
  */
 class HighlightJS extends Base {
     static config = {
@@ -16,15 +16,22 @@ class HighlightJS extends Base {
          */
         className: 'Neo.main.addon.HighlightJS',
         /**
-         * @member {String} highlightJsPath='./resources/highlight/highlight.pack.js'
+         * An explicit classic-script override; null reuses the Engine's generated module bundle.
+         * @member {String|null} highlightJsPath=null
          * @protected
          */
-        highlightJsPath: './resources/highlight/highlight.pack.js',
+        highlightJsPath: null,
         /**
          * @member {String} highlightJsLineNumbersPath=Neo.config.basePath + 'node_modules/highlightjs-line-numbers.js/dist/highlightjs-line-numbers.min.js'
          * @protected
          */
         highlightJsLineNumbersPath: Neo.config.basePath + 'node_modules/highlightjs-line-numbers.js/dist/highlightjs-line-numbers.min.js',
+        /**
+         * Disabling the auto-preload to honor custom paths.
+         * @member {Boolean|Number} preloadFilesDelay=false
+         * @protected
+         */
+        preloadFilesDelay: false,
         /**
          * Remote method access for other workers
          * @member {Object} remote
@@ -32,6 +39,8 @@ class HighlightJS extends Base {
          */
         remote: {
             app: [
+                'highlightAuto',
+                'loadFiles',
                 'scrollIntoView',
                 'syntaxHighlight',
                 'switchTheme',
@@ -40,30 +49,55 @@ class HighlightJS extends Base {
             ]
         },
         /**
-         * @member {Boolean} singleton=true
+         * @member {String} themePath='./resources/lib/highlightjs-custom-github-theme.css'
          * @protected
          */
-        singleton: true,
-        /**
-         * @member {String} themePath='./resources/highlightjs-custom-github-theme.css'
-         * @protected
-         */
-        themePath: './resources/highlightjs-custom-github-theme.css'
+        themePath: './resources/lib/highlightjs-custom-github-theme.css'
     }
 
     /**
-     * @param {Object} config
+     * See: https://highlightjs.readthedocs.io/en/latest/api.html#highlightauto
+     * @param {Object} data
+     * @param {String} data.html
+     * @returns {Object} value
      */
-    construct(config) {
-        super.construct(config);
+    highlightAuto(data) {
+        if (!this.isReady) {
+            return this.cacheMethodCall({fn: 'highlightAuto', data})
+        }
 
+        return hljs.highlightAuto(data.html).value
+    }
+
+    /**
+     * @summary Loads the shared highlighter before the classic line-number plugin, which consumes window.hljs.
+     * @param {Object} data
+     * @returns {Promise<void>}
+     */
+    async loadFiles(data) {
         let me = this;
 
-        DomAccess.loadScript(me.highlightJsPath).then(() => {
-            DomAccess.addScript({src: me.highlightJsLineNumbersPath});
-        });
+        if (data) {
+            delete data.appName;
+            delete data.windowId;
 
-        Stylesheet.createStyleSheet(null, 'hljs-theme', me.themePath)
+            me.set(data);
+        }
+
+        if (me.highlightJsPath) {
+            await DomAccess.loadScript(me.highlightJsPath)
+        } else {
+            await HighlightJs.load();
+            globalThis.hljs = HighlightJs.hljs
+        }
+
+        await Promise.all([
+            DomAccess.loadScript(me.highlightJsLineNumbersPath),
+            Neo.main.addon.Stylesheet.createStyleSheet({
+                id  : 'hljs-theme',
+                href: me.themePath
+            })
+        ])
     }
 
     /**
@@ -73,6 +107,10 @@ class HighlightJS extends Base {
      * @protected
      */
     scrollIntoView(data) {
+        if (!this.isReady) {
+            return this.cacheMethodCall({fn: 'scrollIntoView', data})
+        }
+
         let parentEl = DomAccess.getElement(data.vnodeId),
             el       = parentEl.querySelector('[data-list-header="' + data.text + '"]');
 
@@ -84,58 +122,82 @@ class HighlightJS extends Base {
     }
 
     /**
-     * @param {Object} data
-     * @param {String} data.vnodeId
-     */
-    syntaxHighlight(data) {
-        if (hljs) {
-            let node = document.getElementById(data.vnodeId);
-
-            hljs.highlightBlock(node);
-            hljs.lineNumbersBlock(node);
-        } else {
-            console.error('highlight.js is not included inside the main thread.')
-        }
-    }
-
-    /**
      * You can pass in 'light', 'dark', or a path for a custom theme
-     * @param {String} theme
+     * @param {Object} data
+     * @param {String} data.theme
      */
-    switchTheme(theme) {
+    switchTheme({theme}) {
         let definedThemes = {
-                dark: './resources/highlightjs-custom-dark-theme.css',
-                light: './resources/highlightjs-custom-github-theme.css'
+                dark : './resources/lib/highlightjs-custom-dark-theme.css',
+                light: './resources/lib/highlightjs-custom-github-theme.css'
             },
             switchToTheme = definedThemes[theme];
 
         switchToTheme ??= theme;
         this.themePath = switchToTheme;
-        Stylesheet.createStyleSheet(null, 'hljs-theme', switchToTheme);
+        Neo.main.addon.Stylesheet.createStyleSheet({
+            id  : 'hljs-theme',
+            href: switchToTheme
+        })
+    }
+
+    /**
+     * @summary Highlights a code leaf, including new contents published into an already highlighted element.
+     * @param {Object} data
+     * @param {String} data.vnodeId
+     */
+    syntaxHighlight(data) {
+        if (!this.isReady) {
+            return this.cacheMethodCall({fn: 'syntaxHighlight', data})
+        }
+
+        let node = document.getElementById(data.vnodeId);
+
+        if (node?.textContent && !node.querySelector('.hljs-ln')) {
+            // VDOM can replace the contents while retaining the code element and this library marker.
+            // An existing line table is already processed; feeding it back loses the source newlines.
+            delete node.dataset.highlighted;
+            hljs.highlightBlock(node);
+            // Finish the bundled plugin before another mount/source callback can queue the same work.
+            if (hljs.lineNumbersBlockSync) {
+                hljs.lineNumbersBlockSync(node)
+            } else {
+                hljs.lineNumbersBlock(node)
+            }
+        }
     }
 
     /**
      * @param {Object} data
      */
     syntaxHighlightInit(data) {
-        if (hljs) {
-            let blocks = document.querySelectorAll('pre code:not(.hljs)');
-            Array.prototype.forEach.call(blocks, hljs.highlightBlock);
-        } else {
-            console.error('highlight.js is not included inside the main thread.')
+        if (!this.isReady) {
+            return this.cacheMethodCall({fn: 'syntaxHighlightInit', data})
         }
+
+        let blocks = document.querySelectorAll('pre code:not(.hljs)');
+        Array.prototype.forEach.call(blocks, hljs.highlightBlock)
     }
 
     /**
+     * @summary Marks lines in a current code leaf; late requests for removed source DOM are no-ops.
      * @param {Object} data
      * @param {Number} data.addLine
      * @param {String} data.vnodeId
      * @param {Number} data.removeLine
      */
     syntaxHighlightLine(data) {
+        if (!this.isReady) {
+            return this.cacheMethodCall({fn: 'syntaxHighlightLine', data})
+        }
+
         let parentEl = document.getElementById(data.vnodeId),
             cls      = 'neo-highlighted-line',
             el;
+
+        if (!parentEl) {
+            return
+        }
 
         if (Neo.isNumber(data.addLine)) {
             el = parentEl.querySelector('[data-line-number="' + data.addLine + '"]');
@@ -153,12 +215,9 @@ class HighlightJS extends Base {
 
         if (Neo.isNumber(data.removeLine)) {
             el = parentEl.querySelector('[data-line-number="' + data.removeLine + '"]');
-
-            el && el.parentNode.classList.remove(cls)
+            el?.parentNode.classList.remove(cls)
         }
     }
 }
 
-let instance = Neo.applyClassConfig(HighlightJS);
-
-export default instance;
+export default Neo.setupClass(HighlightJS);

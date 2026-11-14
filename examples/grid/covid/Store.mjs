@@ -18,6 +18,7 @@ class Store extends BaseStore {
         keyProperty: 'country',
         /**
          * @member {Neo.data.Model} model=Model
+         * @reactive
          */
         model: Model,
         /**
@@ -30,6 +31,4 @@ class Store extends BaseStore {
     }
 }
 
-Neo.applyClassConfig(Store);
-
-export default Store;
+export default Neo.setupClass(Store);

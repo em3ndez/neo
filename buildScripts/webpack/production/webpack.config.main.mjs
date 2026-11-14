@@ -1,22 +1,27 @@
-import fs                from 'fs-extra';
-import path              from 'path';
-import webpack           from 'webpack';
-import WebpackHookPlugin from 'webpack-hook-plugin';
+import fs                     from 'fs-extra';
+import os                     from 'os';
+import path                   from 'path';
+import WebpackHookPlugin      from 'webpack-hook-plugin';
+import mainAddonContextPlugin from '../mainAddonContextPlugin.mjs';
+import {FONTAWESOME_COPY_LIST} from '../fontAwesomeCopyList.mjs';
 
 const cwd            = process.cwd(),
       requireJson    = path => JSON.parse(fs.readFileSync((path))),
       packageJson    = requireJson(path.resolve(cwd, 'package.json')),
-      insideNeo      = packageJson.name === 'neo.mjs',
+      insideNeo      = packageJson.name.includes('neo.mjs'),
       neoPath        = insideNeo ? './' : './node_modules/neo.mjs/',
       buildTarget    = requireJson(path.resolve(neoPath, 'buildScripts/webpack/production/buildTarget.json')),
       filenameConfig = requireJson(path.resolve(neoPath, 'buildScripts/webpack/json/build.json')),
       entry          = {main: path.resolve(neoPath, filenameConfig.mainInput)},
-      copyFolder     = path.resolve(neoPath, 'buildScripts/copyFolder.mjs'),
+      copyFolder     = path.resolve(neoPath, 'buildScripts/util/copyFolder.mjs'),
+      defConfigFrom  = path.resolve(neoPath, 'src/DefaultConfig.mjs'),
+      defConfigTo    = path.resolve(cwd, buildTarget.folder, 'DefaultConfig.mjs'),
       faFrom         = path.resolve(cwd, 'node_modules/@fortawesome/fontawesome-free'),
       faTo           = path.resolve(cwd, buildTarget.folder, 'resources/fontawesome-free'),
+      minifyFile     = path.resolve(neoPath, 'buildScripts/util/minifyFile.mjs'),
+      nodeCmd        = os.platform().startsWith('win') ? 'node.exe' : 'node',
       plugins        = [];
 
-let contextAdjusted = false;
 
 if (!insideNeo) {
     let resourcesPath = path.resolve(cwd, 'resources'),
@@ -39,20 +44,31 @@ export default {
     entry,
     target: 'web',
 
-    plugins: [
-        // Only for the non workspace based build scope, we have to ignore workspace related addons.
-        // This might be a fit for webpack.ContextExclusionPlugin, but I did not get it working.
-        new webpack.ContextReplacementPlugin(/.*/, context => {
-            if (insideNeo && !contextAdjusted && path.join(context.request) === path.join('../../../src/main/addon')) {
-                let req = context.request.split(path.sep);
-                req.splice(0, 2);
+    experiments: {
+        outputModule: true
+    },
 
-                context.request = req.join(path.sep);
-                contextAdjusted = true;
-            }
-        }),
+    externals: {
+        './DefaultConfig.mjs': './DefaultConfig.mjs'
+    },
+
+    externalsType: 'module',
+
+    // `import.meta.url` stays a runtime value. Inlined, it is the build machine's `file://` path, shipped in the public
+    // bundle, and `Main#importAddonModule` would test the builder's tree instead of the page's.
+    module: {
+        parser: {
+            javascript: {importMeta: false}
+        }
+    },
+
+    plugins: [
+        mainAddonContextPlugin(insideNeo, cwd),
         new WebpackHookPlugin({
-            onBuildEnd: [`node ${copyFolder} -s ${faFrom} -t ${faTo}`]
+            onBuildEnd: [
+                `${nodeCmd} ${copyFolder} -s ${faFrom} -t ${faTo} -i ${FONTAWESOME_COPY_LIST.join(',')}`,
+                `${nodeCmd} ${minifyFile} ${defConfigFrom} ${defConfigTo}`
+            ]
         }),
         ...plugins
     ],
@@ -60,7 +76,8 @@ export default {
     output: {
         chunkFilename: 'chunks/main/[id].js',
         filename     : filenameConfig.mainOutput,
+        library      : {type: 'module'},
         path         : path.resolve(cwd, buildTarget.folder),
-        publicPath   : ''
+        publicPath   : 'auto'
     }
 };

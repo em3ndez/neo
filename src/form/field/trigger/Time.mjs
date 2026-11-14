@@ -33,6 +33,7 @@ class Time extends Picker {
         clockConfig: null,
         /**
          * @member {String|null} iconCls=null
+         * @reactive
          */
         iconCls: null,
         /**
@@ -43,6 +44,7 @@ class Time extends Picker {
         /**
          * Format: hh:mm
          * @member {String|null} value_=null
+         * @reactive
          */
         value_: null
     }
@@ -62,11 +64,12 @@ class Time extends Picker {
             parentId: me.id,
             showDisc: false,
             size    : null,
+            windowId: me.windowId,
             ...me.clockConfig
         });
 
-        me.vdom.cn = [me.clock.vdom];
-        me.update();
+        me.vdom.cn = [me.clock.createVdomReference()];
+        me.update()
     }
 
     /**
@@ -79,7 +82,7 @@ class Time extends Picker {
         super.afterSetAppName(value, oldValue);
 
         if (value) {
-            this.clock.appName = value;
+            this.clock.appName = value
         }
     }
 
@@ -91,11 +94,23 @@ class Time extends Picker {
      */
     afterSetValue(value, oldValue) {
         if (value) {
-            this.clock.time = value;
+            this.clock.time = value
+        }
+    }
+
+    /**
+     * Triggered after the windowId config got changed
+     * @param {Number} value
+     * @param {Number|null} oldValue
+     * @protected
+     */
+    afterSetWindowId(value, oldValue) {
+        super.afterSetWindowId(value, oldValue);
+
+        if (value) {
+            this.clock.windowId = value
         }
     }
 }
 
-Neo.applyClassConfig(Time);
-
-export default Time;
+export default Neo.setupClass(Time);

@@ -1,12 +1,14 @@
 import Container from '../container/Base.mjs';
 import Label     from '../component/Label.mjs';
 
+let singletons = {};
+
 /**
  * Base class for component tooltips
  * @class Neo.tooltip.Base
  * @extends Neo.container.Base
  */
-class Base extends Container {
+class Tooltip extends Container {
     static config = {
         /**
          * @member {String} className='Neo.tooltip.Base'
@@ -25,6 +27,7 @@ class Base extends Container {
         /**
          * A reference to the target component which is supposed to show this tooltip on mouseenter
          * @member {String|null} componentId_=null
+         * @reactive
          */
         componentId_: null,
         /**
@@ -44,6 +47,10 @@ class Base extends Container {
          * @protected
          */
         dismissDelayTaskId: null,
+        /**
+         * @member {Boolean} floating=true
+         */
+        floating: true,
         /**
          * The delay in ms before the tooltip gets shown
          * @member {Number|null} hideDelay=400
@@ -69,13 +76,20 @@ class Base extends Container {
         /**
          * True prevents the tooltip from hiding while the mouse cursor is above it
          * @member {Boolean|null} stayOnHover_=true
+         * @reactive
          */
-        stayOnHover_: true,
-        /**
-         * Shortcut to add a label item
-         * @member {String} text_=null
-         */
-        text_: null
+        stayOnHover_: true
+    }
+
+    /**
+     * Arms one of the named delays, replacing a pending timer of the same name.
+     * @param {String} id valid values: dismiss, hide, show
+     * @param {Function} callback
+     * @param {Number} delay
+     */
+    addTimeout(id, callback, delay) {
+        this.clearTimeout(id);
+        this[id + 'DelayTaskId'] = setTimeout(callback, delay)
     }
 
     /**
@@ -93,8 +107,8 @@ class Base extends Container {
             let me = this;
 
             Neo.getComponent(value).addDomListeners({
-                mouseenter: me.showDelayed,
-                mouseleave: me.hideDelayed,
+                mouseenter: me.onDelegateMouseEnter,
+                mouseleave: me.onDelegateMouseLeave,
                 delegate  : me.delegate,
                 scope     : me
             })
@@ -135,14 +149,12 @@ class Base extends Container {
                 item  = items[0];
 
             if (item?.ntype === 'label') {
-                item.text = value;
+                item.text = value
             } else {
-                items.push({
+                me.add({
                     module: Label,
                     text  : value
-                });
-
-                me.items = items;
+                })
             }
         }
     }
@@ -153,7 +165,7 @@ class Base extends Container {
      */
     clearTimeout(timers) {
         if (!Array.isArray(timers)) {
-            timers = [timers];
+            timers = [timers]
         }
 
         let me = this,
@@ -164,19 +176,110 @@ class Base extends Container {
 
             if (me[id]) {
                 clearTimeout(me[id]);
-                me[id] = null;
+                me[id] = null
             }
-        });
+        })
     }
 
     /**
-     * Instantly hides the tooltip
-     * @param {Object|null} data
+     * @param {Neo.controller.Application} app
+     * @returns {Neo.tooltip.Base}
      */
-    hide(data) {
+    static createSingleton(app) {
+        if (!singletons[app.name]) {
+            singletons[app.name] = Neo.create('Neo.tooltip.Base', {
+                appName    : app.name,
+                componentId: app.mainView.id,
+                delegate   : this.delegateFilter,
+                isShared   : true,
+                resetCfg   : {},
+                windowId   : app.mainView.windowId,
+                listeners  : {
+                    // Reconfigure on over a target
+                    targetOver(event) {
+                        Tooltip.applySingletonTargetConfig(this, event)
+                    }
+                }
+            });
+        }
+
+        return singletons[app.name]
+    }
+
+    /**
+     * @summary Reconfigures the shared tooltip from the active delegated target, including the closest
+     * nested theme so a viewport-owned singleton visually follows the hovered component scope.
+     * @param {Neo.tooltip.Base} tooltip
+     * @param {Object} event
+     * @param {Neo.component.Base} [event.target]
+     * @param {Object} event.data
+     * @returns {Object} The config applied to the singleton.
+     */
+    static applySingletonTargetConfig(tooltip, {target, data} = {}) {
+        let config = target?._tooltip ? {...target._tooltip} : {text: data?.target?.data?.neoTooltip},
+            theme  = this.resolveTargetTheme(target, data),
+            key;
+
+        // Revert last pointerOver config set to initial setting.
+        tooltip.setSilent(tooltip.resetCfg);
+        tooltip.resetCfg = {};
+
+        // Explicit tooltip configs remain authoritative; otherwise inherit the active target theme.
+        if (theme && !config.theme) {
+            config.theme = theme
+        }
+
+        // Cache things we have to reset.
+        for (key in config) {
+            tooltip.resetCfg[key] = tooltip[key]
+        }
+
+        // Set ourself up as the target wants.
+        tooltip.set(config);
+
+        return config
+    }
+
+    // Used as a delegate filter to activate on targets which have a tooltip configuration
+    static delegateFilter(path) {
+        for (let i = 0, { length } = path; i < length; i++) {
+            if (path[i].cls.includes('neo-uses-shared-tooltip') || path[i].data['neoTooltip']) {
+                return i
+            }
+        }
+    }
+
+    /**
+     * @summary Returns the closest theme for a shared-tooltip target: first via component ownership,
+     * then via the delegated DOM path for data-attribute tooltips.
+     * @param {Neo.component.Base} target
+     * @param {Object} data
+     * @returns {String|undefined}
+     */
+    static resolveTargetTheme(target, data) {
+        let theme = target?.getTheme?.();
+
+        if (theme) {
+            return theme
+        }
+
+        for (const node of data?.path || []) {
+            theme = node.cls?.find?.(item => item.startsWith('neo-theme-'));
+
+            if (theme) {
+                return theme
+            }
+        }
+    }
+
+    /**
+     * @summary Hides a mounted tooltip or records the hidden intent for its pending mount flight.
+     */
+    hide() {
         let me = this;
 
         me.clearTimeout(['dismiss', 'hide', 'show']);
+        me._hidden = true;
         me.mounted && me.unmount()
     }
 
@@ -188,9 +291,61 @@ class Base extends Container {
         let me = this;
 
         if (me.hideDelay) {
-            me.hideDelayTaskId = setTimeout(me.hide.bind(me), me.hideDelay, data);
+            me.addTimeout('hide', me.hide.bind(me), me.hideDelay)
         } else {
             me.hide(data)
+        }
+    }
+
+    /**
+     * @param {Object} data
+     */
+    onDelegateMouseEnter(data) {
+        let me              = this,
+            {currentTarget} = data;
+
+        // If it's an internal move within the delegate, do nothing
+        if (currentTarget !== me.activeTarget?.id) {
+            me.activeTarget = Neo.get(currentTarget);
+
+            // Allow listeners (eg the Tooltip singleton) which is shared between all Components
+            // listens for this in order to reconfigure itself from the activeTarget.
+            // So this event must be fired before the alignment is set up.
+            me.fire('targetOver', {
+                target : me.activeTarget,
+                data
+            });
+
+            me.align.target = currentTarget;
+            me.align.targetMargin = 10;
+
+            // Still visible, just realign
+            if (me.mounted) {
+                me.show();
+                me.alignTo()
+            } else {
+                me.showDelayed(data)
+            }
+        }
+    }
+
+    /**
+     * @param {Object} data
+     */
+    onDelegateMouseLeave(data) {
+        let me = this;
+
+        // If it's an internal move within the delegate, do nothing
+        if (data.currentTarget === me.activeTarget?.id) {
+            me.fire('targetOut', {
+                target : me.activeTarget,
+                data
+            });
+
+            me.activeTarget = null;
+            // a show still pending would fire after the leave and cancel the hide
+            me.clearTimeout('show');
+            me.hideDelayed(data)
         }
     }
 
@@ -203,7 +358,7 @@ class Base extends Container {
             targetId = data.path[0].id;
 
         // only use path[0] based events to ignore mouseenter & leave for child nodes
-        me.id === targetId && me.clearTimeout(['dismiss', 'hide']);
+        me.id === targetId && me.clearTimeout(['dismiss', 'hide'])
     }
 
     /**
@@ -215,11 +370,11 @@ class Base extends Container {
             targetId = data.path[0].id;
 
         // only use path[0] based events to ignore mouseenter & leave for child nodes
-        me.id === targetId && me.hideDelayed(null);
+        me.id === targetId && me.hideDelayed(null)
     }
 
     /**
-     * Instantly shows the tooltip
+     * @summary Shows the tooltip in one mount flight, which lands on the latest visibility intent.
      * @param {Object} data
      */
     show(data) {
@@ -227,13 +382,17 @@ class Base extends Container {
 
         me.showDelayTaskId = null;
 
-        me.clearTimeout('hide');
+        me.clearTimeout(['hide', 'dismiss']);
 
         if (me.dismissDelay) {
-            me.dismissDelayTaskId = setTimeout(me.hide.bind(me), me.dismissDelay, data);
+            me.addTimeout('dismiss', me.hide.bind(me), me.dismissDelay, data)
         }
 
-        !me.mounted && me.render(true)
+        if (!me.mounted && !me.mountFlight) {
+            me.startMountFlight(me.initVnode(true))
+        }
+
+        me._hidden = false
     }
 
     /**
@@ -244,13 +403,11 @@ class Base extends Container {
         let me = this;
 
         if (me.showDelay) {
-            me.showDelayTaskId = setTimeout(me.show.bind(me), me.showDelay, data)
+            me.addTimeout('show', me.show.bind(me), me.showDelay)
         } else {
             me.show(data)
         }
     }
 }
 
-Neo.applyClassConfig(Base);
-
-export default Base;
+export default Neo.setupClass(Tooltip);

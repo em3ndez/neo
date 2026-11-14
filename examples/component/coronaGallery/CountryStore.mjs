@@ -18,11 +18,10 @@ class CountryStore extends Store {
         keyProperty: 'country',
         /**
          * @member {Neo.data.Model} model=CountryModel
+         * @reactive
          */
         model: CountryModel
     }
 }
 
-Neo.applyClassConfig(CountryStore);
-
-export default CountryStore;
+export default Neo.setupClass(CountryStore);

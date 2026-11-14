@@ -15,6 +15,7 @@ class MonthContainer extends Container {
         className: 'Neo.calendar.view.settings.MonthContainer',
         /**
          * @member {Object} layout={ntype:'vbox',align:'stretch'}
+         * @reactive
          */
         layout: {ntype: 'vbox', align: 'stretch'}
     }
@@ -34,10 +35,10 @@ class MonthContainer extends Container {
             flex          : 'none',
             hideValueLabel: false,
             labelText     : 'dayNameFormat',
-            labelWidth    : labelWidth,
+            labelWidth,
             listeners     : {change: me.onRadioChange, scope: me},
             name          : 'cm_dayNameFormat',
-            valueLabelText: 'narrow'
+            valueLabel    : 'narrow'
         }, {
             module        : RadioField,
             checked       : monthComponent.dayNameFormat === 'short',
@@ -45,11 +46,11 @@ class MonthContainer extends Container {
             flex          : 'none',
             hideValueLabel: false,
             labelText     : '',
-            labelWidth    : labelWidth,
+            labelWidth,
             listeners     : {change: me.onRadioChange, scope: me},
             name          : 'cm_dayNameFormat',
             style         : {marginTop: '5px'},
-            valueLabelText: 'short'
+            valueLabel    : 'short'
         }, {
             module        : RadioField,
             checked       : monthComponent.dayNameFormat === 'long',
@@ -57,11 +58,11 @@ class MonthContainer extends Container {
             flex          : 'none',
             hideValueLabel: false,
             labelText     : '',
-            labelWidth    : labelWidth,
+            labelWidth,
             listeners     : {change: me.onRadioChange, scope: me},
             name          : 'cm_dayNameFormat',
             style         : {marginTop: '5px'},
-            valueLabelText: 'long'
+            valueLabel    : 'long'
         }, {
             module        : RadioField,
             checked       : monthComponent.monthNameFormat === 'short',
@@ -69,11 +70,11 @@ class MonthContainer extends Container {
             flex          : 'none',
             hideValueLabel: false,
             labelText     : 'monthNameFormat',
-            labelWidth    : labelWidth,
+            labelWidth,
             listeners     : {change: me.onRadioChange, scope: me},
             name          : 'cm_monthNameFormat',
             style         : {marginTop: '10px'},
-            valueLabelText: 'short'
+            valueLabel    : 'short'
         }, {
             module        : RadioField,
             checked       : monthComponent.monthNameFormat === 'long',
@@ -81,11 +82,11 @@ class MonthContainer extends Container {
             flex          : 'none',
             hideValueLabel: false,
             labelText     : '',
-            labelWidth    : labelWidth,
+            labelWidth,
             listeners     : {change: me.onRadioChange, scope: me},
             name          : 'cm_monthNameFormat',
             style         : {marginTop: '5px'},
-            valueLabelText: 'long'
+            valueLabel    : 'long'
         }, {
             module        : CheckBoxField,
             checked       : monthComponent.useScrollBoxShadows,
@@ -95,22 +96,22 @@ class MonthContainer extends Container {
             listeners     : {change: me.onConfigChange, scope: me},
             name          : 'useScrollBoxShadows',
             style         : {marginTop: '10px'},
-            valueLabelText: 'useScrollBoxShadows'
-        }]);
+            valueLabel    : 'useScrollBoxShadows'
+        }])
     }
 
     /**
      * @returns {Neo.calendar.view.month.Component}
      */
     getMonthComponent() {
-        return this.up('calendar-maincontainer').monthComponent;
+        return this.up('calendar-maincontainer').monthComponent
     }
 
     /**
      * @param {Object} data
      */
     onConfigChange(data) {
-        this.getMonthComponent()[data.component.name] = data.value;
+        this.getMonthComponent()[data.component.name] = data.value
     }
 
     /**
@@ -121,14 +122,12 @@ class MonthContainer extends Container {
             let name = data.component.name;
 
             if (name.startsWith('cm_')) {
-                name = name.substring(3);
+                name = name.substring(3)
             }
 
-            this.getMonthComponent()[name] = data.component.fieldValue;
+            this.getMonthComponent()[name] = data.component.fieldValue
         }
     }
 }
 
-Neo.applyClassConfig(MonthContainer);
-
-export default MonthContainer;
+export default Neo.setupClass(MonthContainer);

@@ -25,43 +25,37 @@ class Style extends Base {
         let styles = {};
 
         if (Neo.isString(newStyle)) {
-            newStyle = Neo.core.Util.createStyleObject(newStyle);
+            newStyle = Neo.createStyleObject(newStyle)
         }
 
         if (Neo.isString(oldStyle)) {
-            oldStyle = Neo.core.Util.createStyleObject(oldStyle);
+            oldStyle = Neo.createStyleObject(oldStyle)
         }
 
         if (!newStyle && !oldStyle) {
-            return null;
+            return null
         } else if (!oldStyle) {
-            return Neo.clone(newStyle);
-        } else if (!newStyle) {
-            Object.keys(oldStyle).forEach(function(style) {
-                styles[style] = null;
-            });
+            return Neo.clone(newStyle)
         } else {
-            Object.keys(newStyle).forEach(function(style) {
-                if (!oldStyle.hasOwnProperty(style) || oldStyle[style] !== newStyle[style]) {
-                    styles[style] = newStyle[style];
+            newStyle && Object.keys(newStyle).forEach(style => {
+                if (!Object.hasOwn(oldStyle, style) || oldStyle[style] !== newStyle[style]) {
+                    styles[style] = newStyle[style]
                 }
             });
 
-            Object.keys(oldStyle).forEach(function(style) {
-                if (!newStyle.hasOwnProperty(style)) {
-                    styles[style] = null;
+            Object.keys(oldStyle).forEach(style => {
+                if (!newStyle || !Object.hasOwn(newStyle, style)) {
+                    styles[style] = null
                 }
             });
 
             if (Object.keys(styles).length > 0) {
-                return styles;
+                return styles
             }
 
-            return null;
+            return null
         }
     }
 }
 
-Neo.applyClassConfig(Style);
-
-export default Style;
+export default Neo.setupClass(Style);

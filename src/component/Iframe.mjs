@@ -33,10 +33,8 @@ class Iframe extends Base {
      * @protected
      */
     afterSetSrc(value, oldValue) {
-        this.changeVdomRootKey('src', value);
+        this.changeVdomRootKey('src', value)
     }
 }
 
-Neo.applyClassConfig(Iframe);
-
-export default Iframe;
+export default Neo.setupClass(Iframe);

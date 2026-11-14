@@ -1,15 +1,15 @@
-import Button                from "../../../../src/button/Base.mjs";
-import CheckBox              from "../../../../src/form/field/CheckBox.mjs";
+import Button                from '../../../../src/button/Base.mjs';
+import CheckBox              from '../../../../src/form/field/CheckBox.mjs';
 import ConfigurationViewport from '../../../ConfigurationViewport.mjs';
+import ComboBox              from '../../../../src/form/field/ComboBox.mjs';
 import Component             from '../../../../src/component/Base.mjs';
 import Container             from '../../../../src/container/Base.mjs';
-import DisplayField          from "../../../../src/form/field/Display.mjs"
-import Form                  from "../../../../src/form/Container.mjs"
-import NumberField           from "../../../../src/form/field/Number.mjs"
+import DisplayField          from '../../../../src/form/field/Display.mjs';
+import Form                  from '../../../../src/form/Container.mjs';
+import NumberField           from '../../../../src/form/field/Number.mjs';
 import Process               from '../../../../src/component/Process.mjs';
-import RangeField            from "../../../../src/form/field/Range.mjs"
-import SelectField           from "../../../../src/form/field/Select.mjs";
-import TextField             from "../../../../src/form/field/Text.mjs"
+import RangeField            from '../../../../src/form/field/Range.mjs';
+import TextField             from '../../../../src/form/field/Text.mjs';
 import Toast                 from '../../../../src/component/Toast.mjs';
 
 /**
@@ -43,7 +43,7 @@ class MainContainer extends ConfigurationViewport {
             module   : TextField,
             labelText: 'iconColor',
             listeners: {change: me.onConfigChange.bind(me, 'iconColor')}
-        }];
+        }]
     }
 
     createExampleComponent() {
@@ -57,7 +57,7 @@ class MainContainer extends ConfigurationViewport {
                 temperature   = Math.ceil(result.current_weather.temperature),
                 temperatureEl = me.down({flag: 'temperature'})
 
-            temperatureEl.value = temperature;
+            temperatureEl.value = temperature
         });
 
         return Neo.create({
@@ -188,22 +188,22 @@ class MainContainer extends ConfigurationViewport {
                     value            : 20
                 },
                 items       : [{
-                    module      : SelectField,
+                    module      : ComboBox,
                     displayField: 'name',
                     labelText   : 'Fahrstil',
                     value       : 'normal',
 
                     store: {
                         data : [
-                            {style: 'sportStyle', name: 'sport', code: 'sportCode'},
-                            {style: 'nomalStyle', name: 'normal', code: 'normalCode'},
-                            {style: 'ecoStyle', name: 'eco', code: 'ecoCode'},
+                            {style: 'sportStyle',  name: 'sport',  code: 'sportCode'},
+                            {style: 'normalStyle', name: 'normal', code: 'normalCode'},
+                            {style: 'ecoStyle',    name: 'eco',    code: 'ecoCode'},
                         ],
                         model: {
                             fields: [
-                                {name: 'style', type: 'string'},
-                                {name: 'name', type: 'string'},
-                                {name: 'code', type: 'string'}
+                                {name: 'style', type: 'String'},
+                                {name: 'name',  type: 'String'},
+                                {name: 'code',  type: 'String'}
                             ]
                         }
                     }
@@ -231,7 +231,7 @@ class MainContainer extends ConfigurationViewport {
                 }],
                 listeners   : {fieldChange: onRangeChange}
             }]
-        });
+        })
     }
 
     /**
@@ -242,8 +242,8 @@ class MainContainer extends ConfigurationViewport {
         const processes = Neo.find({ntype: 'process'});
 
         processes.forEach(process => {
-            process[config] = opts.value;
-        });
+            process[config] = opts.value
+        })
     }
 
     /**
@@ -262,19 +262,21 @@ class MainContainer extends ConfigurationViewport {
         if (startKm) {
             const startProcess = this.down({flag: 'start-process'});
 
-            startProcess.arrowColor = '#12FE88';
+            startProcess.arrowColor = '#12FE88'
         }
+
         if (endKm) {
             const startProcess = this.down({flag: 'end-process'});
 
-            startProcess.arrowColor = '#12FE88';
+            startProcess.arrowColor = '#12FE88'
         }
 
         if ((startKm && !endKm) || endKm <= startKm) {
-            endKmEl.value = startKm + 5;
+            endKmEl.value = startKm + 5
         }
+
         if (endBattery >= startBattery) {
-            endBatteryEl.value = startBattery - 1;
+            endBatteryEl.value = startBattery - 1
         }
 
         if (startKm && endKm) {
@@ -291,9 +293,9 @@ class MainContainer extends ConfigurationViewport {
             additionalInformationEl.disabled = false;
             resultEl.value = Math.ceil(resultKm);
             remainKwhEl.value = Math.ceil(kwpMaxEl.value * (endBattery / 100));
-            averageKwhEl.value = Math.ceil(100 * (kWhUsed / kmDiff));
+            averageKwhEl.value = Math.ceil(100 * (kWhUsed / kmDiff))
         } else {
-            additionalInformationEl.disabled = true;
+            additionalInformationEl.disabled = true
         }
     }
 
@@ -311,12 +313,12 @@ class MainContainer extends ConfigurationViewport {
             msg = `Du bist seeehr sportlich unterwegs mit ${averageKwh} kWh auf 100km`;
             iconCls = 'fa fa-flag-checkered';
             ui = 'danger';
-            title = 'racing';
+            title = 'racing'
         } else if (averageKwh < 15) {
             msg = `Du bist sehr umweltbewusst gefahren und hast nur ${averageKwh} kwh/100km verbraucht.`;
             iconCls = 'fa-brands fa-pagelines';
             ui = 'success';
-            title = 'ECO';
+            title = 'ECO'
         }
 
         Neo.toast({
@@ -325,10 +327,8 @@ class MainContainer extends ConfigurationViewport {
             iconCls: iconCls,
             title  : title,
             msg    : msg
-        });
+        })
     }
 }
 
-Neo.applyClassConfig(MainContainer);
-
-export default MainContainer;
+export default Neo.setupClass(MainContainer);

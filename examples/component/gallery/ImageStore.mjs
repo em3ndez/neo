@@ -18,15 +18,14 @@ class ImageStore extends Store {
         autoLoad: true,
         /**
          * @member {Neo.data.Model} model=ImageModel
+         * @reactive
          */
         model: ImageModel,
         /**
-         * @member {String} url='../../resources/examples/data/ai_contacts.json'
+         * @member {String} url=Neo.config.basePath+'resources/examples/data/ai_contacts.json'
          */
-        url: '../../resources/examples/data/ai_contacts.json'
+        url: Neo.config.basePath + 'resources/examples/data/ai_contacts.json'
     }
 }
 
-Neo.applyClassConfig(ImageStore);
-
-export default ImageStore;
+export default Neo.setupClass(ImageStore);

@@ -19,10 +19,12 @@ class ToggleOperatorsButton extends Button {
         ntype: 'filter-toggleoperatorsbutton',
         /**
          * @member {String[]} operators_=['===', '>', '<']
+         * @reactive
          */
         operators_: ['===', '>', '<'],
         /**
          * @member {String|null} value_=null
+         * @reactive
          */
         value_: null
     }
@@ -37,11 +39,11 @@ class ToggleOperatorsButton extends Button {
 
         me.handler = me.onButtonClick;
 
-        me.text = me.value || me.operators[0];
+        me.text = me.value || me.operators[0]
     }
 
     /**
-     * Triggered after the value config got changed
+     * @summary Paints the current operator, preserving the initial affordance when a projection resets to null.
      * @param {String|null} value
      * @param {String|null} oldValue
      */
@@ -49,13 +51,13 @@ class ToggleOperatorsButton extends Button {
         if (oldValue !== undefined) {
             let me = this;
 
-            me.text = value;
+            me.text = value || me.operators[0];
 
             me.fire('change', {
                 component: me,
                 oldValue,
                 value
-            });
+            })
         }
     }
 
@@ -72,12 +74,12 @@ class ToggleOperatorsButton extends Button {
 
             for (; i < len; i++) {
                 if (this.beforeSetEnumValue(value[i], oldValue, 'operators', Filter.operators) !== value[i]) {
-                    return oldValue;
+                    return oldValue
                 }
             }
         }
 
-        return value;
+        return value
     }
 
     /**
@@ -87,10 +89,8 @@ class ToggleOperatorsButton extends Button {
         let me    = this,
             index = (me.operators.indexOf(data.component.text) + 1) % me.operators.length;
 
-        me.value = me.operators[index];
+        me.value = me.operators[index]
     }
 }
 
-Neo.applyClassConfig(ToggleOperatorsButton);
-
-export default ToggleOperatorsButton;
+export default Neo.setupClass(ToggleOperatorsButton);

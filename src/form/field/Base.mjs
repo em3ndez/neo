@@ -1,21 +1,21 @@
+import { createSequence } from '../../util/Function.mjs';
 import Component        from '../../component/Base.mjs';
 import ComponentManager from '../../manager/Component.mjs';
+import NeoArray         from '../../util/Array.mjs';
 
 /**
  * Abstract base class for form fields
  * @class Neo.form.field.Base
  * @extends Neo.component.Base
  */
-class Base extends Component {
+class Field extends Component {
     /**
-     * @member {Object} delayable
+     * Valid values for isTouchedEvent
+     * @member {String[]} isTouchedEvents=['focusEnter','focusLeave']
      * @protected
      * @static
      */
-    static delayable = {
-        fireChangeEvent    : {type: 'debounce', timer: 300},
-        fireUserChangeEvent: {type: 'debounce', timer: 300}
-    }
+    static isTouchedEvents = ['focusEnter', 'focusLeave']
 
     static config = {
         /**
@@ -32,10 +32,29 @@ class Base extends Component {
          * Form groups can get set on any parent component level.
          * An alternative way for using dots in field names.
          * @member {String|null} formGroup_=null
+         * @reactive
          */
         formGroup_: null,
         /**
+         * @member {Object|null} keys={}
+         * @reactive
+         */
+        keys: {},
+        /**
+         * True indicates that a user has interacted with the form field
+         * @member {Boolean} isTouched_=false
+         * @reactive
+         */
+        isTouched_: false,
+        /**
+         * Event name which sets isTouched to true. Valid options are 'focusEnter' & 'focusLeave'
+         * @member {String} isTouched_=false
+         * @reactive
+         */
+        isTouchedEvent_: 'focusLeave',
+        /**
          * @member {String|null} name_=null
+         * @reactive
          */
         name_: null,
         /**
@@ -44,6 +63,7 @@ class Base extends Component {
          * & accessibility though, so the default got set to true.
          * Feel free to change it to false to keep the DOM minimal.
          * @member {Boolean} renderName_=true
+         * @reactive
          */
         renderName_: true,
         /**
@@ -53,21 +73,150 @@ class Base extends Component {
          */
         renderPath: true,
         /**
+         * True makes an empty field invalid. `Base` declares the flag and re-validates when it changes;
+         * each field type enforces it in `validate()` / `isValid()`.
+         * @member {Boolean} required_=false
+         * @reactive
+         */
+        required_: false,
+        /**
          * @member {*} value_=null
+         * @reactive
          */
         value_: null
     }
 
+    /**
+     * Config keys explicitly passed to this field at construction time (or via immediate container `itemDefaults`),
+     * preserved so ancestor `form.Container#fieldDefaults` never overwrite them.
+     * @type {Set<String>}
+     * @private
+     */
+    #explicitConfigKeys = new Set()
     /**
      * An internal cache for formGroups of all parent levels
      * @member {String|null} formGroupString=null
      */
     formGroupString = null
     /**
+     * Base implementation to check if the fields value has changed.
+     * Can get overridden in superclasses.
+     * @returns {Boolean}
+     */
+    get isDirty() {
+        return !Neo.isEqual(this.getSubmitValue(), this.originalConfig.value)
+    }
+    /**
      * An internal cache for formGroup(s) and the field name
      * @member {String|null} path=null
      */
     path = null
+
+    /**
+     * @param {Object} config
+     */
+    construct(config={}) {
+        let me = this;
+
+        me.applyFieldDefaults(config);
+
+        super.construct(config);
+
+        createSequence(me, 'afterSetValue', (value, oldValue) => {
+            oldValue !== undefined && me.fireChangeEvent(value, oldValue)
+        }, me)
+    }
+
+    /**
+     * @summary Applies ancestor `form.Container#fieldDefaults` when a pre-constructed field is dynamically
+     * reparented into a container hierarchy inside a form.
+     * @param {String|null} value
+     * @param {String|null} oldValue
+     * @protected
+     */
+    afterSetParentId(value, oldValue) {
+        super.afterSetParentId(value, oldValue);
+
+        if (oldValue !== undefined && value && value !== 'document.body') {
+            this.applyParentFieldDefaults()
+        }
+    }
+
+    /**
+     * @summary Applies `fieldDefaults` from ancestor `Neo.form.Container` instances to the initial field config.
+     *
+     * Records keys explicitly present on `config` before walking up the parent chain starting from `config.parentId`
+     * (closest `form.Container` first, then outer ancestor forms) so explicit field configs and immediate container
+     * `itemDefaults` always take precedence over `fieldDefaults`.
+     * @param {Object} config
+     * @protected
+     */
+    applyFieldDefaults(config) {
+        let me            = this,
+            FormContainer = Neo.form?.Container,
+            parent;
+
+        if (config) {
+            for (const [key, value] of Object.entries(config)) {
+                if (value !== undefined) {
+                    me.#explicitConfigKeys.add(key)
+                }
+            }
+
+            parent = config.parentId && config.parentId !== 'document.body' ? Neo.getComponent(config.parentId) : null;
+
+            while (parent) {
+                if (FormContainer && parent instanceof FormContainer && parent.fieldDefaults) {
+                    for (const [key, value] of Object.entries(parent.fieldDefaults)) {
+                        if (!me.#explicitConfigKeys.has(key) && (!Object.hasOwn(config, key) || config[key] === undefined)) {
+                            config[key] = Neo.clone(value, true, true)
+                        }
+                    }
+                }
+
+                parent = parent.parent
+            }
+        }
+    }
+
+    /**
+     * @summary Applies `fieldDefaults` from ancestor `Neo.form.Container` instances to an already-constructed field
+     * for any keys that were not explicitly configured on the field itself.
+     * @protected
+     */
+    applyParentFieldDefaults() {
+        let me            = this,
+            FormContainer = Neo.form?.Container,
+            defaults      = {},
+            hasDefaults   = false;
+
+        ComponentManager.getParents(me).forEach(parent => {
+            if (FormContainer && parent instanceof FormContainer && parent.fieldDefaults) {
+                for (const [key, value] of Object.entries(parent.fieldDefaults)) {
+                    if (!me.#explicitConfigKeys.has(key) && !Object.hasOwn(defaults, key)) {
+                        defaults[key] = Neo.clone(value, true, true);
+                        hasDefaults   = true
+                    }
+                }
+            }
+        });
+
+        if (hasDefaults) {
+            me.set(defaults)
+        }
+    }
+
+    /**
+     * Triggered after the name isTouched got changed
+     * @param {String|null} value
+     * @param {String|null} oldValue
+     */
+    afterSetIsTouched(value, oldValue) {
+        let {cls} = this;
+
+        NeoArray.toggle(cls, 'neo-is-touched', value);
+        this.cls = cls
+    }
 
     /**
      * Triggered after the name config got changed
@@ -81,12 +230,33 @@ class Base extends Component {
     }
 
     /**
+     * Triggered after the required config got changed
+     * @param {Boolean} value
+     * @param {Boolean} oldValue
+     * @protected
+     */
+    afterSetRequired(value, oldValue) {
+        oldValue !== undefined && this.validate(false)
+    }
+
+    /**
+     * Triggered after the role config got changed
+     * @param {String|null} value
+     * @param {String|null} oldValue
+     * @protected
+     */
+    afterSetRole(value, oldValue) {
+        this.getInputEl().role = value;
+        this.update()
+    }
+
+    /**
      * Triggered after the value config got changed
      * @param {*} value
      * @param {*} oldValue
      */
     afterSetValue(value, oldValue) {
-        oldValue !== undefined && this.fireChangeEvent(value, oldValue)
+
     }
 
     /**
@@ -101,7 +271,7 @@ class Base extends Component {
             returnValue;
 
         if (me.formGroupString) {
-            return me.formGroupString;
+            return me.formGroupString
         }
 
         value && group.push(value);
@@ -118,6 +288,16 @@ class Base extends Component {
     }
 
     /**
+     * Triggered before the isTouchedEvent config gets changed
+     * @param {String} value
+     * @param {String} oldValue
+     * @protected
+     */
+    beforeSetIsTouchedEvent(value, oldValue) {
+        return this.beforeSetEnumValue(value, oldValue, 'isTouchedEvent')
+    }
+
+    /**
      * Changes the value of a inputEl vdom object attribute or removes it in case it has no value
      * @param {String} key
      * @param {Array|Number|Object|String|null} value
@@ -127,9 +307,9 @@ class Base extends Component {
         let me = this;
 
         if (value || Neo.isBoolean(value) || value === 0) {
-            me.getInputEl()[key] = value;
+            me.getInputEl()[key] = value
         } else {
-            delete me.getInputEl()[key];
+            delete me.getInputEl()[key]
         }
 
         !silent && me.update()
@@ -243,15 +423,34 @@ class Base extends Component {
     /**
      * @returns {*}
      */
+    getSubmitValue() {
+        return this.value
+    }
+
+    /**
+     * @deprecated in v7.x
+     * @returns {*}
+     */
     getValue() {
-        return this.value;
+        return this.getSubmitValue()
     }
 
     /**
      * @returns {Boolean}
      */
     isValid() {
-        return true;
+        return true
+    }
+
+    /**
+     * @param {Object} data
+     */
+    onFocusEnter(data) {
+        super.onFocusEnter(data);
+
+        if (this.isTouchedEvent === 'focusEnter') {
+            this.isTouched = true
+        }
     }
 
     /**
@@ -260,11 +459,15 @@ class Base extends Component {
      * @protected
      */
     onFocusLeave(data) {
-        super.onFocusLeave?.(data);
+        super.onFocusLeave(data);
 
         let me            = this,
             FormContainer = Neo.form?.Container,
-            opts          = {...data, component: me, value: me.getValue()};
+            opts          = {...data, component: me, value: me.getSubmitValue()};
+
+        if (me.isTouchedEvent === 'focusLeave') {
+            me.isTouched = true
+        }
 
         if (Neo.isFunction(me.getGroupValue)) {
             opts.groupValue = me.getGroupValue()
@@ -284,7 +487,8 @@ class Base extends Component {
      * @param {*} value=null
      */
     reset(value=null) {
-        this.value = value;
+        this.originalConfig.value = value;
+        this.value = value
     }
 
     /**
@@ -293,7 +497,25 @@ class Base extends Component {
      * @returns {Boolean} Returns true in case there are no client-side errors
      */
     validate(silent=true) {
-        return true;
+        return true
+    }
+    /**
+     * Serializes the field into a JSON-compatible object.
+     * @returns {Object}
+     */
+    toJSON() {
+        let me = this;
+
+        return {
+            ...super.toJSON(),
+            formGroup: me.formGroup,
+            isDirty  : me.isDirty,
+            isTouched: me.isTouched,
+            isValid  : me.isValid(),
+            name     : me.name,
+            required : me.required,
+            value    : me.value
+        }
     }
 }
 
@@ -305,6 +527,4 @@ class Base extends Component {
  * @returns {Object}
  */
 
-Neo.applyClassConfig(Base);
-
-export default Base;
+export default Neo.setupClass(Field);

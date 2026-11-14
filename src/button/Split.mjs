@@ -20,6 +20,7 @@ class Split extends Button {
         ntype: 'split-button',
         /**
          * @member {Boolean} hideTriggerButton_=false
+         * @reactive
          */
         hideTriggerButton_: false,
         /**
@@ -38,6 +39,7 @@ class Split extends Button {
         /**
          * The CSS class to use for the SplitButton icon, e.g. 'fa fa-home'
          * @member {String} triggerButtonCls_='fa fa-caret-down'
+         * @reactive
          */
         triggerButtonIconCls_: 'fa fa-caret-down',
         /**
@@ -89,8 +91,10 @@ class Split extends Button {
      * @protected
      */
     afterSetAppName(value, oldValue) {
-        if (this.triggerButton) {
-            this.triggerButton.appName = value;
+        let {triggerButton} = this;
+
+        if (triggerButton) {
+            triggerButton.appName = value;
         }
 
         super.afterSetAppName(value, oldValue);
@@ -103,7 +107,7 @@ class Split extends Button {
      * @protected
      */
     afterSetDisabled(value, oldValue) {
-        let triggerButton = this.triggerButton;
+        let {triggerButton} = this;
 
         if (triggerButton) {
             triggerButton.disabled = value;
@@ -112,18 +116,7 @@ class Split extends Button {
         super.afterSetDisabled(value, oldValue);
     }
 
-    /**
-     * Triggered after the id config got changed
-     * @param {String} value
-     * @param {String} oldValue
-     * @protected
-     */
-    afterSetId(value, oldValue) {
-        this.vdom.id = value + '__wrapper';
 
-        // silent vdom update, the super call will trigger the engine
-        super.afterSetId(value, oldValue);
-    }
 
     /**
      * Triggered after the hideTriggerButton config got changed
@@ -132,7 +125,7 @@ class Split extends Button {
      * @protected
      */
     afterSetHideTriggerButton(value, oldValue) {
-        let triggerButton = this.triggerButton;
+        let {triggerButton} = this;
 
         if (triggerButton) {
             triggerButton.hidden = value;
@@ -146,7 +139,7 @@ class Split extends Button {
      * @protected
      */
     afterSetPressed(value, oldValue) {
-        let triggerButton = this.triggerButton;
+        let {triggerButton} = this;
 
         if (triggerButton) {
             triggerButton.pressed = value;
@@ -162,7 +155,7 @@ class Split extends Button {
      * @protected
      */
     afterSetTriggerButtonIconCls(value, oldValue) {
-        let triggerButton = this.triggerButton;
+        let {triggerButton} = this;
 
         if (triggerButton) {
             triggerButton.iconCls = value;
@@ -174,9 +167,8 @@ class Split extends Button {
      * @param {String|null} oldValue
      */
     afterSetUi(value, oldValue) {
-        let me            = this,
-            ntype         = me.ntype,
-            triggerButton = me.triggerButton;
+        let me                     = this,
+            {ntype, triggerButton} = me;
 
         if (triggerButton) {
             triggerButton.ui = value;
@@ -186,6 +178,22 @@ class Split extends Button {
         me.ntype = 'button';
         super.afterSetUi(value, oldValue);
         me.ntype = ntype;
+    }
+
+    /**
+     * Triggered after the windowId config got changed
+     * @param {Number|null} value
+     * @param {Number|null} oldValue
+     * @protected
+     */
+    afterSetWindowId(value, oldValue) {
+        let {triggerButton} = this;
+
+        if (triggerButton) {
+            triggerButton.appName = value;
+        }
+
+        super.afterSetWindowId(value, oldValue)
     }
 
     /**
@@ -220,6 +228,4 @@ class Split extends Button {
     }
 }
 
-Neo.applyClassConfig(Split);
-
-export default Split;
+export default Neo.setupClass(Split);

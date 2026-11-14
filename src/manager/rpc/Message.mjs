@@ -55,7 +55,6 @@ class Message extends Base {
     transactionId = 1
 
     /**
-     *
      * @param {Object} msg
      * @returns {Promise<any>}
      */
@@ -63,6 +62,32 @@ class Message extends Base {
         let api = Neo.manager.rpc.Api.get(`${msg.service}.${msg.method}`);
 
         return this[`onMessage${Neo.capitalize(api.type)}`](msg, api);
+    }
+
+    /**
+     * @param {Object} msg
+     * @param {Function} callback
+     */
+    onMessageStream(msg, callback) {
+        let api = Neo.manager.rpc.Api.get(`${msg.service}.${msg.method}`);
+
+        if (api.type !== 'websocket') {
+            console.error('onMessageStream is only supported for websocket connections', msg);
+            return
+        }
+
+        this.onMessageStreamWebsocket(msg, api, callback)
+    }
+
+    /**
+     * @param {Object} msg
+     */
+    onMessageStreamUnsubscribe(msg) {
+        let api = Neo.manager.rpc.Api.get(`${msg.service}.${msg.method}`);
+
+        if (api?.type === 'websocket') {
+            this.onMessageStreamUnsubscribeWebsocket(msg, api)
+        }
     }
 
     /**
@@ -74,8 +99,8 @@ class Message extends Base {
      */
     onMessageAjax(msg, api) {
         return new Promise((resolve, reject) => {
-            let me  = this,
-                url = api.url;
+            let me    = this,
+                {url} = api;
 
             me.register({
                 id           : me.messageId,
@@ -93,15 +118,14 @@ class Message extends Base {
             if (!me.endPointTimeouts.includes(url)) {
                 me.endPointTimeouts.push(url);
 
-                setTimeout(() => {
-                    me.resolveBufferTimeout(url);
-                }, me.requestBuffer)
+                me.timeout(me.requestBuffer).then(() => {
+                    me.resolveBufferTimeout(url)
+                })
             }
-        });
+        })
     }
 
     /**
-     *
      * @param {Object} msg
      * @param {Object} api
      * @protected
@@ -109,27 +133,60 @@ class Message extends Base {
      */
     async onMessageWebsocket(msg, api) {
         let me         = this,
-            url        = api.url,
+            {url}      = api,
             connection = me.socketConnections[url];
 
         if (!connection) {
             let module = await import('../../data/connection/WebSocket.mjs');
 
-            me.socketConnections[url] = connection = Neo.create(module.default, {serverAddress: url});
+            me.socketConnections[url] = connection = Neo.create(module.default, {serverAddress: url})
         }
 
-        return await connection.promiseMessage(msg);
+        return await connection.promiseMessage(msg)
+    }
+
+    /**
+     * @param {Object} msg
+     * @param {Object} api
+     * @param {Function} callback
+     * @protected
+     * @returns {Promise<any>}
+     */
+    async onMessageStreamWebsocket(msg, api, callback) {
+        let me         = this,
+            {url}      = api,
+            connection = me.socketConnections[url];
+
+        if (!connection) {
+            let module = await import('../../data/connection/WebSocket.mjs');
+
+            me.socketConnections[url] = connection = Neo.create(module.default, {serverAddress: url})
+        }
+
+        connection.registerStream(msg, callback)
+    }
+
+    /**
+     * @param {Object} msg
+     * @param {Object} api
+     * @protected
+     */
+    onMessageStreamUnsubscribeWebsocket(msg, api) {
+        let connection = this.socketConnections[api.url];
+        if (connection) {
+            connection.unregisterStream(msg)
+        }
     }
 
     /**
      * @param {String} url
      */
     async resolveBufferTimeout(url) {
-        let me            = this,
-            itemIds       = [],
-            processItems  = me.find({transactionId: 0, url}),
-            requests      = [],
-            transactionId = me.transactionId,
+        let me              = this,
+            itemIds         = [],
+            processItems    = me.find({transactionId: 0, url}),
+            requests        = [],
+            {transactionId} = me,
             response;
 
         processItems.forEach(item => {
@@ -142,7 +199,7 @@ class Message extends Base {
                 method : item.method,
                 params : item.params,
                 service: item.service
-            });
+            })
         });
 
         NeoArray.remove(me.endPointTimeouts, url);
@@ -155,14 +212,12 @@ class Message extends Base {
             // todo: pass the item which is included inside the response object
             // todo: reject the Promise in case the item is missing
 
-            item.resolve();
+            item.resolve()
         });
 
         // todo: remove only the items which are included inside the response
-        me.remove(itemIds);
+        me.remove(itemIds)
     }
 }
 
-let instance = Neo.applyClassConfig(Message);
-
-export default instance;
+export default Neo.setupClass(Message);

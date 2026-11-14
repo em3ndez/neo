@@ -19,6 +19,7 @@ class Picker extends Base {
         ntype: 'trigger-picker',
         /**
          * @member {String|null} iconCls='fa fa-caret-down'
+         * @reactive
          */
         iconCls: 'fa fa-caret-down',
         /**
@@ -33,10 +34,8 @@ class Picker extends Base {
      * @param {Object} data
      */
     onTriggerClick(data) {
-        this.field.onPickerTriggerClick();
+        this.field.onPickerTriggerClick()
     }
 }
 
-Neo.applyClassConfig(Picker);
-
-export default Picker;
+export default Neo.setupClass(Picker);

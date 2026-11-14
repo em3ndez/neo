@@ -1,8 +1,8 @@
-import Base from '../../core/Base.mjs';
+import Base from './Base.mjs';
 
 /**
  * @class Neo.data.connection.Xhr
- * @extends Neo.core.Base
+ * @extends Neo.data.connection.Base
  */
 class Xhr extends Base {
     static config = {
@@ -12,10 +12,10 @@ class Xhr extends Base {
          */
         className: 'Neo.data.connection.Xhr',
         /**
-         * @member {String} ntype='xhr'
+         * @member {String} ntype='connection-xhr'
          * @protected
          */
-        ntype: 'xhr-connection',
+        ntype: 'connection-xhr',
         /**
          * @member {Function} callback=null
          */
@@ -39,19 +39,60 @@ class Xhr extends Base {
     }
 
     /**
+     * @param {Object} [params]
+     * @returns {Promise<any>}
+     */
+    async read(params) {
+        return this.promiseJson({
+            url: this.url,
+            params
+        });
+    }
+
+    /**
+     * @summary Adds query params to a URL that may already carry a query or a fragment.
+     *
+     * The params go before a `#fragment` and join an existing query with `&`. An empty query (`/data?`) or one that
+     * ends in `&` gets no second separator; a `?` inside a query value (`/data?q=why?`) is part of that value, so
+     * the params still join with `&`. Empty params leave the URL as it is. String composition keeps relative URLs
+     * relative, which `new URL()` cannot do without a base.
+     * @param {String} url
+     * @param {Object} params
+     * @returns {String}
+     */
+    appendParams(url, params) {
+        let query      = new URLSearchParams(params).toString(),
+            hashIndex  = url.indexOf('#'),
+            base       = hashIndex > -1 ? url.substring(0, hashIndex) : url,
+            hash       = hashIndex > -1 ? url.substring(hashIndex)    : '',
+            queryIndex = base.indexOf('?'),
+            existing   = queryIndex > -1 ? base.substring(queryIndex + 1) : null,
+            separator;
+
+        if (!query) {
+            return url
+        }
+
+        separator = existing === null ? '?' : existing === '' || existing.endsWith('&') ? '' : '&';
+
+        return base + separator + query + hash
+    }
+
+    /**
      * We cannot clone event objects across messaging
      * @param {Object} event
      */
     getResponse(event) {
-        let target = event.target;
+        let {target} = event,
+            {readyState, response, status, statusText} = target;
 
         return {
-            readyState: target.readyState,
-            response  : target.response,
-            status    : target.status,
-            statusText: target.statusText,
-            headers   : target.getAllResponseHeaders()
-        };
+            readyState,
+            response,
+            status,
+            statusText,
+            headers: target.getAllResponseHeaders()
+        }
     }
 
     /**
@@ -69,7 +110,7 @@ class Xhr extends Base {
             request[key] = null;
         });
 
-        delete me.requests[id];
+        delete me.requests[id]
     }
 
     /**
@@ -84,10 +125,10 @@ class Xhr extends Base {
         cb?.apply(request.scope || me, [me.getResponse(e), true]);
 
         Object.entries(request).forEach(([key, value]) => {
-            request[key] = null;
+            request[key] = null
         });
 
-        delete me.requests[id];
+        delete me.requests[id]
     }
 
     /**
@@ -111,19 +152,20 @@ class Xhr extends Base {
                     try {
                         json = JSON.parse(data.response);
 
-                        resolve(Object.assign(data, { json }));
+                        resolve(Object.assign(data, { json }))
                     } catch(err) {
                         reject({
-                            reject : true,
-                            error  : err.message
-                        });
+                            reject: true,
+                            error : err.message
+                        })
                     }
                 } else {
-                    reject(data);
+                    reject(data)
                 }
             };
-            me.request(opts);
-        });
+
+            me.request(opts)
+        })
     }
 
     /**
@@ -136,16 +178,18 @@ class Xhr extends Base {
         return new Promise((resolve, reject) => {
             opts.callback = function(data, success) {
                 if (success) {
-                    resolve(data);
+                    resolve(data)
                 } else {
-                    reject(data);
+                    reject(data)
                 }
             };
-            me.request(opts);
-        });
+
+            me.request(opts)
+        })
     }
 
     /**
+     * @summary Dispatches Xhr after URL resolution, retaining the framework-scope bypass.
      * @param {Object} opts
      * @param {Function} opts.callback
      * @param {Object} opts.data
@@ -167,16 +211,12 @@ class Xhr extends Base {
             xhr     = new XMLHttpRequest();
 
         if (!opts.url) {
-            console.error('Neo.Xhr.request without a given url' + JSON.stringify(opts));
+            console.error('Neo.Xhr.request without a given url' + JSON.stringify(opts))
         } else {
-            if (!opts.insideNeo && location.href.includes('/node_modules/neo.mjs/') && !location.href.startsWith('https://neomjs.github.io/')) {
-                if (opts.url.startsWith('./') || opts.url.startsWith('../')) {
-                    opts.url = '../../' + opts.url;
-                }
-            }
+            opts.url = me.resolveUrl(opts.url, opts.insideNeo);
 
             if (opts.params) {
-                opts.url += ('?' + new URLSearchParams(opts.params).toString());
+                opts.url = me.appendParams(opts.url, opts.params)
             }
 
             xhr.neoId = id;
@@ -198,12 +238,12 @@ class Xhr extends Base {
             xhr.open(method, opts.url, true);
 
             Object.entries(headers).forEach(([key, value]) => {
-                xhr.setRequestHeader(key, value);
+                xhr.setRequestHeader(key, value)
             });
 
             xhr.send(opts.data);
 
-            return xhr;
+            return xhr
         }
     }
 
@@ -215,7 +255,7 @@ class Xhr extends Base {
     sendForm(form, opts) {
         opts.data = new FormData(form);
 
-        return this.request(opts);
+        return this.request(opts)
     }
 
     /**
@@ -224,10 +264,8 @@ class Xhr extends Base {
      * @param {Object} value
      */
     setDefaultHeaders(value) {
-        this.defaultHeaders = value;
+        this.defaultHeaders = value
     }
 }
 
-Neo.applyClassConfig(Xhr);
-
-export default Xhr;
+export default Neo.setupClass(Xhr);

@@ -20,6 +20,7 @@ class TagListComponent extends Component {
         className: 'RealWorld.view.article.TagListComponent',
         /**
          * @member {String|null} activeTag_
+         * @reactive
          */
         activeTag_: null,
         /**
@@ -28,6 +29,7 @@ class TagListComponent extends Component {
         baseCls: ['col-md-3'],
         /**
          * @member {String[]} tags_=[]
+         * @reactive
          */
         tags_: [],
         /**
@@ -36,7 +38,7 @@ class TagListComponent extends Component {
         _vdom:
         {cn: [
             {cls: ['sidebar'], cn: [
-                {tag: 'p', html: 'Popular Tags'},
+                {tag: 'p', text: 'Popular Tags'},
                 {cls: ['tag-list']}
             ]}
         ]}
@@ -48,12 +50,13 @@ class TagListComponent extends Component {
     construct(config) {
         super.construct(config);
 
-        Neo.main.DomEvents.registerPreventDefaultTargets({
-            name: 'click',
-            cls : 'tag-pill'
-        });
-
         let me = this;
+
+        Neo.main.DomEvents.registerPreventDefaultTargets({
+            name    : 'click',
+            cls     : 'tag-pill',
+            windowId: me.windowId
+        });
 
         me.addDomListeners({
             click: {
@@ -96,7 +99,7 @@ class TagListComponent extends Component {
                     tag : 'a',
                     cls : ['tag-pill', 'tag-default'],
                     href: '',
-                    html: item,
+                    text: item,
                     id  : me.getTagVdomId(item)
                 });
             });
@@ -129,6 +132,4 @@ class TagListComponent extends Component {
     }
 }
 
-Neo.applyClassConfig(TagListComponent);
-
-export default TagListComponent;
+export default Neo.setupClass(TagListComponent);

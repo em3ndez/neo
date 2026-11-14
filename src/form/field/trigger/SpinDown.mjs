@@ -19,10 +19,12 @@ class SpinDown extends Base {
         ntype: 'trigger-spindown',
         /**
          * @member {String} align_='start'
+         * @reactive
          */
         align: 'start',
         /**
          * @member {String|null} iconCls='fa fa-chevron-left'
+         * @reactive
          */
         iconCls: 'fa fa-chevron-left',
         /**
@@ -37,10 +39,8 @@ class SpinDown extends Base {
      * @param {Object} data
      */
     onTriggerClick(data) {
-        this.field.onSpinButtonDownClick();
+        this.field.onSpinButtonDownClick()
     }
 }
 
-Neo.applyClassConfig(SpinDown);
-
-export default SpinDown;
+export default Neo.setupClass(SpinDown);

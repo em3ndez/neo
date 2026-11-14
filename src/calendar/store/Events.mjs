@@ -19,6 +19,7 @@ class Events extends Store {
         keyProperty: 'id',
         /**
          * @member {Neo.data.Model} model=Event
+         * @reactive
          */
         model: Event,
         /**
@@ -26,8 +27,9 @@ class Events extends Store {
          * @member {Object[]} sorters
          */
         sorters: [{
-            property : 'startDate',
-            direction: 'ASC'
+            property             : 'startDate',
+            direction            : 'ASC',
+            reapplyOnRecordChange: true
         }]
     }
 
@@ -43,7 +45,7 @@ class Events extends Store {
             record;
 
         for (; i < len; i++) {
-            record = me.items[i];
+            record = me.getAt(i);
 
             if (DateUtil.matchDate(date, record.startDate)) {
                 if (DateUtil.matchDate(date, record.endDate)) {
@@ -56,6 +58,4 @@ class Events extends Store {
     }
 }
 
-Neo.applyClassConfig(Events);
-
-export default Events;
+export default Neo.setupClass(Events);

@@ -1,6 +1,6 @@
-import CellRowModel from './CellRowModel.mjs';
-import ColumnModel  from './ColumnModel.mjs';
-import VDomUtil     from '../../util/VDom.mjs';
+import {isDescriptor} from '../../core/ConfigSymbols.mjs';
+import CellRowModel   from './CellRowModel.mjs';
+import VDomUtil       from '../../util/VDom.mjs';
 
 /**
  * @class Neo.selection.table.CellColumnRowModel
@@ -29,19 +29,18 @@ class CellColumnRowModel extends CellRowModel {
          */
         selectedColumnCellCls: 'selected-column-cell',
         /**
-         * @member {Array|null} selectedColumnCellIds=null
+         * The column cell ids this model holds selected — a descriptor, so the default is per instance
+         * and the in-place writes land ({@link Neo.selection.grid.BaseModel#selectedRows_} says why).
+         * @member {String[]} selectedColumnCellIds_=[]
          * @protected
+         * @reactive
          */
-        selectedColumnCellIds: null
-    }
-
-    /**
-     * @param {Object} config
-     */
-    construct(config) {
-        super.construct(config);
-
-        this.selectedColumnCellIds = [];
+        selectedColumnCellIds_: {
+            [isDescriptor]: true,
+            clone         : 'shallow',
+            cloneOnGet    : 'none',
+            value         : []
+        }
     }
 
     /**
@@ -50,59 +49,73 @@ class CellColumnRowModel extends CellRowModel {
     deselectAllCells(silent) {
         let me      = this,
             cellIds = [...me.selectedColumnCellIds],
-            view    = me.view;
+            {view}  = me;
 
         cellIds.forEach(cellId => {
-            me.deselect(cellId, true, me.selectedColumnCellIds, me.selectedColumnCellCls);
+            me.deselect(cellId, true, me.selectedColumnCellIds, me.selectedColumnCellCls)
         });
 
-        !silent && view.update();
+        !silent && view.update()
     }
 
     /**
      * @param {Object} data
      */
     onCellClick(data) {
-        let me   = this,
-            id   = ColumnModel.getCellId(data.path),
-            columnNodeIds, index, tbodyNode;
+        let me     = this,
+            {view} = me,
+            cellId = data.data.currentTarget,
+            columnNodeIds, dataField, index;
 
-        if (id) {
-            index         = ColumnModel.getColumnIndex(id, me.view.items[0].items);
-            tbodyNode     = VDomUtil.findVdomChild(me.view.vdom, {tag: 'tbody'}).vdom;
-            columnNodeIds = VDomUtil.getColumnNodesIds(tbodyNode, index);
+        if (cellId) {
+            dataField     = view.getDataField(cellId);
+            index         = view.getColumn(dataField, true);
+            columnNodeIds = VDomUtil.getColumnNodesIds(view.vdom, index);
 
             me.deselectAllCells(true);
-            me.select(columnNodeIds, me.selectedColumnCellIds, me.selectedColumnCellCls);
+            me.select(columnNodeIds, me.selectedColumnCellIds, me.selectedColumnCellCls)
         }
 
-        super.onCellClick(data);
+        super.onCellClick(data)
     }
 
     /**
-     * @param {Object} data
      * @param {Number} step
      */
-    onNavKeyColumn(data, step) {
-        let me            = this,
-            idArray       = ColumnModel.getCellId(data.path).split('__'),
-            currentColumn = idArray[2],
-            view          = me.view,
-            dataFields    = view.columns.map(c => c.dataField),
-            newIndex      = (dataFields.indexOf(currentColumn) + step) % dataFields.length,
-            columnNodeIds, tbodyNode;
+    onNavKeyColumn(step) {
+        let me                 = this,
+            {dataFields, view} = me,
+            columnNodeIds, currentColumn, index;
 
-        while (newIndex < 0) {
-            newIndex += dataFields.length;
+        if (me.hasSelection()) {
+            currentColumn = view.getDataField(me.items[0])
+        } else {
+            currentColumn = dataFields[0]
         }
 
-        tbodyNode     = VDomUtil.findVdomChild(me.view.vdom, {tag: 'tbody'}).vdom;
-        columnNodeIds = VDomUtil.getColumnNodesIds(tbodyNode, newIndex);
+        index = (dataFields.indexOf(currentColumn) + step) % dataFields.length;
+
+        while (index < 0) {
+            index += dataFields.length
+        }
+
+        columnNodeIds = VDomUtil.getColumnNodesIds(view.vdom, index);
 
         me.deselectAllCells(true);
         me.select(columnNodeIds, me.selectedColumnCellIds, me.selectedColumnCellCls);
 
-        super.onNavKeyColumn(data, step);
+        super.onNavKeyColumn(step)
+    }
+
+    /**
+     * @returns {Object}
+     */
+    toJSON() {
+        return {
+            ...super.toJSON(),
+            selectedColumnCellCls: this.selectedColumnCellCls,
+            selectedColumnCellIds: this.selectedColumnCellIds
+        }
     }
 
     /**
@@ -110,10 +123,8 @@ class CellColumnRowModel extends CellRowModel {
      */
     unregister() {
         this.deselectAllCells();
-        super.unregister();
+        super.unregister()
     }
 }
 
-Neo.applyClassConfig(CellColumnRowModel);
-
-export default CellColumnRowModel;
+export default Neo.setupClass(CellColumnRowModel);

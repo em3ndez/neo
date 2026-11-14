@@ -30,6 +30,7 @@ class Time extends Picker {
         collection: null,
         /**
          * @member {String} inputType='time'
+         * @reactive
          */
         inputType: 'time',
         /**
@@ -37,6 +38,7 @@ class Time extends Picker {
          * @member {Object} keys
          */
         keys: {
+            'Down'  : 'onKeyDownDown',
             'Enter' : 'onKeyDownEnter',
             'Escape': 'onKeyDownEscape'
         },
@@ -51,10 +53,12 @@ class Time extends Picker {
         listConfig: null,
         /**
          * @member {String} maxValue_='16:00'
+         * @reactive
          */
         maxValue_: '16:00',
         /**
          * @member {String} minValue_='08:00'
+         * @reactive
          */
         minValue_: '08:00',
         /**
@@ -65,11 +69,13 @@ class Time extends Picker {
         /**
          * Value in seconds, defaults to 5min
          * @member {Number} stepSize_=60*5
+         * @reactive
          */
         stepSize_: 60 * 5, // 5min
         /**
          * @member {Object|Object[]} triggers=[{module: TimeTrigger}]
          * @protected
+         * @reactive
          */
         triggers: [{
             module: TimeTrigger
@@ -77,9 +83,17 @@ class Time extends Picker {
         /**
          * @member {Intl.DateTimeFormat|null} valueFormat_=null
          * @protected
+         * @reactive
          */
         valueFormat_: null
     }
+
+    /**
+     * Internal flag: a value picked in the list must not re-select that list item, which would scroll
+     * and focus the very item the user just clicked
+     * @member {Boolean} preventListSelect=false
+     */
+    preventListSelect = false
 
     /**
      * @param {Object} config
@@ -88,13 +102,12 @@ class Time extends Picker {
         super.construct(config);
 
         let me           = this,
-            clearTrigger = me.getTrigger('clear');
+            clearTrigger = me.getTrigger('clear'),
+            {windowId}   = me;
 
         me.originalConfig.value = me.formatTime(me.value);
 
-        if (clearTrigger) {
-            clearTrigger.onFieldChange();
-        }
+        clearTrigger?.onFieldChange();
 
         me.collection = Neo.create({
             module     : Collection,
@@ -103,9 +116,13 @@ class Time extends Picker {
         });
 
         me.list = Neo.create({
-            module      : List,
-            displayField: 'value',
-            store       : me.collection,
+            module        : List,
+            displayField  : 'value',
+            itemsFocusable: false,
+            navigator     : {eventSource: me.getInputElId(), windowId},
+            store         : me.collection,
+            useInternalId : false,
+            windowId,
             ...me.listConfig
         });
 
@@ -115,10 +132,9 @@ class Time extends Picker {
         );
 
         me.list.on({
-            itemClick   : me.onListItemClick,
-            itemNavigate: me.onListItemNavigate,
-            scope       : me
-        });
+            itemClick: me.onListItemClick,
+            scope    : me
+        })
     }
 
     /**
@@ -131,7 +147,7 @@ class Time extends Picker {
         this.changeInputElKey('max', value);
 
         if (oldValue !== undefined) {
-            this.recreateListItems();
+            this.recreateListItems()
         }
     }
 
@@ -145,7 +161,7 @@ class Time extends Picker {
         this.changeInputElKey('min', value);
 
         if (oldValue !== undefined) {
-            this.recreateListItems();
+            this.recreateListItems()
         }
     }
 
@@ -157,7 +173,7 @@ class Time extends Picker {
      */
     afterSetPickerIsMounted(value, oldValue) {
         if (value) {
-            this.selectCurrentListItem();
+            this.selectCurrentListItem()
         }
     }
 
@@ -168,7 +184,7 @@ class Time extends Picker {
      * @protected
      */
     afterSetStepSize(value, oldValue) {
-        this.changeInputElKey('step', value);
+        this.changeInputElKey('step', value)
 
         // todo: adjust min & max value => see: form.field.Number
     }
@@ -177,18 +193,17 @@ class Time extends Picker {
      * Triggered after the value config got changed
      * @param {String|null} value
      * @param {String|null} oldValue
-     * @param {Boolean} [preventListSelect=false]
      * @protected
      */
-    afterSetValue(value, oldValue, preventListSelect=false) {
+    afterSetValue(value, oldValue) {
         super.afterSetValue(value, oldValue);
 
         let me = this;
 
         me.getTrigger('time').value = value;
 
-        if (me.pickerIsMounted && !preventListSelect) {
-            me.selectCurrentListItem(true);
+        if (me.pickerIsMounted && !me.preventListSelect) {
+            me.selectCurrentListItem(true)
         }
     }
 
@@ -206,10 +221,10 @@ class Time extends Picker {
                 minute: '2-digit',
                 second: this.stepSize < 60 ? '2-digit' : undefined,
                 hour12: false
-            });
+            })
         }
 
-        return value;
+        return value
     }
 
     /**
@@ -222,11 +237,11 @@ class Time extends Picker {
     beforeSetMaxValue(value, oldValue) {
         if (value) {
             if (value.includes('24') || (value.startsWith('12') && value.includes('AM'))) {
-                return '23:59:00';
+                return '23:59:00'
             }
         }
 
-        return this.formatTime(value);
+        return this.formatTime(value)
     }
 
     /**
@@ -237,7 +252,7 @@ class Time extends Picker {
      * @returns {String}
      */
     beforeSetMinValue(value, oldValue) {
-        return this.formatTime(value);
+        return this.formatTime(value)
     }
 
     /**
@@ -248,7 +263,7 @@ class Time extends Picker {
      * @returns {String}
      */
     beforeSetValue(value, oldValue) {
-        return this.formatTime(value);
+        return this.formatTime(value)
     }
 
     /**
@@ -276,17 +291,17 @@ class Time extends Picker {
                 value: dt.format(currentDate)
             });
 
-            currentDate.setSeconds(currentDate.getSeconds() + me.stepSize);
+            currentDate.setSeconds(currentDate.getSeconds() + me.stepSize)
         }
 
-        return listItems;
+        return listItems
     }
 
     /**
      * @returns {Neo.component.DateSelector}
      */
     createPickerComponent() {
-        return this.list;
+        return this.list
     }
 
     /**
@@ -296,8 +311,9 @@ class Time extends Picker {
         let me = this;
 
         Neo.main.DomAccess.focus({
-            appName: me.appName,
-            id     : me.getInputElId()
+            appName : me.appName,
+            id      : me.getInputElId(),
+            windowId: me.windowId
         }).then(() => {
             callback?.apply(me)
         })
@@ -305,17 +321,19 @@ class Time extends Picker {
 
     /**
      * Transforms AM / PM based times into a 24h format.
-     * E.g. "08:00 AM" => "08:00"
+     * E.g. "08:00 AM" => "08:00". A value that does not parse as a time is no time, and returns null.
      * @param {String|null} value
      * @protected
      * @returns {String|null}
      */
     formatTime(value) {
         if (value) {
-            return this.valueFormat.format(new Date(`November 23, 2019  ${value}`));
+            const date = new Date(`November 23, 2019  ${value}`);
+
+            return isNaN(date) ? null : this.valueFormat.format(date)
         }
 
-        return value;
+        return value
     }
 
     /**
@@ -323,7 +341,7 @@ class Time extends Picker {
      * @protected
      */
     onContainerKeyDownEnter(data) {
-        this.hidePicker();
+        this.hidePicker()
     }
 
     /**
@@ -331,7 +349,7 @@ class Time extends Picker {
      * @protected
      */
     onContainerKeyDownEscape(data) {
-        this.focusInputEl(this.hidePicker);
+        this.focusInputEl(this.hidePicker)
     }
 
     /**
@@ -343,33 +361,28 @@ class Time extends Picker {
 
         if (me.pickerIsMounted) {
             super.onKeyDownEnter(data);
-            me.selectCurrentListItem();
+            me.selectCurrentListItem()
         } else {
-            super.onKeyDownEnter(data, me.selectCurrentListItem);
+            super.onKeyDownEnter(data, me.selectCurrentListItem)
         }
     }
 
     /**
-     * @param {Object} record
+     * Assigns the picked item through the value config, so subscribers and two-way bindings receive it
+     * and re-picking the current time is no change at all
+     * @param {Object} data
+     * @param {Object} data.record
      */
-    onListItemClick(record) {
-        let me       = this,
-            oldValue = me.value,
-            value    = record.value;
+    onListItemClick(data) {
+        let me = this;
 
-        if (me.value !== value) {
-            value = me.formatTime(value);
+        me.preventListSelect = true;
 
-            me._value = value;
-            me.afterSetValue(value, oldValue, true); // prevent the list from getting selected / focused
+        try {
+            me.value = data.record.value
+        } finally {
+            me.preventListSelect = false
         }
-    }
-
-    /**
-     * @param {Object} record
-     */
-    onListItemNavigate(record) {
-        this.onListItemClick(record);
     }
 
     /**
@@ -380,7 +393,7 @@ class Time extends Picker {
 
         me.collection.clear();
         me.collection.add(me.createCollectionItems());
-        me.list.createItems();
+        me.list.createItems()
     }
 
     /**
@@ -392,23 +405,40 @@ class Time extends Picker {
         let me = this;
 
         if (value && me.clearToOriginalValue) {
-            me.originalConfig.value = me.formatTime(value);
+            me.originalConfig.value = me.formatTime(value)
         }
 
-        me.value = me.clearToOriginalValue ? me.originalConfig.value : null;
+        me.value = me.clearToOriginalValue ? me.originalConfig.value : null
     }
 
     /**
      * @param {Boolean} [preventFocus=false]
      */
     selectCurrentListItem(preventFocus=false) {
-        let me   = this,
-            list = me.list,
-            id   = list.getItemId(me.value);
+        let me     = this,
+            {list} = me,
+            id;
+
+        // An empty field has no current item, and the list cannot build an item id for one
+        if (!me.value) {
+            list.selectionModel.deselectAll();
+            return
+        }
+
+        id = list.getItemId(me.value);
 
         list.selectionModel.select(id);
 
         if (!preventFocus) {
+
+            if (list.mounted) {
+                list.focus(id)
+            } else {
+                list.on('mounted', () => {
+                    list.focus(id)
+                }, me, {once: true})
+            }
+
             list.focus(id)
         } else {
             Neo.main.DomAccess.scrollIntoView({
@@ -419,6 +449,4 @@ class Time extends Picker {
     }
 }
 
-Neo.applyClassConfig(Time);
-
-export default Time;
+export default Neo.setupClass(Time);

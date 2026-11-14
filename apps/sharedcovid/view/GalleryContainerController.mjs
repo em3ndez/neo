@@ -14,6 +14,7 @@ class GalleryContainerController extends ComponentController {
         /**
          * @member {Neo.component.Gallery|null} gallery_=null
          * @protected
+         * @reactive
          */
         gallery_: null
     }
@@ -85,6 +86,4 @@ class GalleryContainerController extends ComponentController {
     }
 }
 
-Neo.applyClassConfig(GalleryContainerController);
-
-export default GalleryContainerController;
+export default Neo.setupClass(GalleryContainerController);

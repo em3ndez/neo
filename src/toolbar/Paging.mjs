@@ -1,5 +1,5 @@
 import ClassSystemUtil from '../util/ClassSystem.mjs';
-import SelectField     from '../form/field/Select.mjs';
+import ComboBox        from '../form/field/ComboBox.mjs';
 import Toolbar         from './Base.mjs';
 
 /**
@@ -24,32 +24,97 @@ class Paging extends Toolbar {
         baseCls: ['neo-paging-toolbar', 'neo-toolbar'],
         /**
          * @member {Number} currentPage_=1
+         * @reactive
          */
         currentPage_: 1,
         /**
          * @member {Number} pageSize_=30
+         * @reactive
          */
         pageSize_: 30,
         /**
          * @member {Function} pagesText_=me=>`Page: ${me.page} / ${me.getMaxPages()}`
+         * @reactive
          */
         pagesText_: me => `Page ${me.currentPage} / ${me.getMaxPages()}`,
         /**
          * @member {Neo.data.Store|null} store_=null
+         * @reactive
          */
         store_: null,
         /**
          * @member {Function} totalText_=count=>`Total: ${count} records`
+         * @reactive
          */
-        totalText_: count => `Total: ${count} rows`
-    }
+        totalText_: count => `Total: ${count} rows`,
+        /**
+         * @member {Object|Object[]} items
+         */
+        items: {
+            'nav-button-first': {
+                handler  : 'up.onFirstPageButtonClick',
+                iconCls  : 'fa fa-angles-left'
+            },
+            'nav-button-prev': {
+                handler  : 'up.onPrevPageButtonClick',
+                iconCls  : 'fa fa-angle-left',
+                style    : {marginLeft: '2px'}
+            },
+            'pages-text': {
+                ntype    : 'label',
+                style    : {marginLeft: '10px'}
+            },
+            'nav-button-next': {
+                handler  : 'up.onNextPageButtonClick',
+                iconCls  : 'fa fa-angle-right',
+                style    : {marginLeft: '10px'}
+            },
+            'nav-button-last': {
+                handler  : 'up.onLastPageButtonClick',
+                iconCls  : 'fa fa-angles-right',
+                style    : {marginLeft: '2px'}
+            },
+            label: {
+                ntype: 'label',
+                style: {marginLeft: '50px'},
+                text : 'Rows per page:'
+            },
+            rowsPerPage: {
+                module       : ComboBox,
+                clearable    : false,
+                hideLabel    : true,
+                listConfig   : {highlightFilterValue: false},
+                listeners    : {change: 'up.onPageSizeFieldChange'},
+                style        : {margin: 0},
+                triggerAction: 'all',
+                useFilter    : false,
+                value        : 30,
+                width        : 70,
 
-    /**
-     * @param config
-     */
-    construct(config) {
-        super.construct(config);
-        this.createToolbarItems();
+                store: {
+                    model: {
+                        fields: [
+                            {name: 'id',   type: 'Integer'},
+                            {name: 'name', type: 'Integer'}
+                        ]
+                    },
+                    data: [
+                        {id: 1, name:  10},
+                        {id: 2, name:  20},
+                        {id: 3, name:  30},
+                        {id: 4, name:  50},
+                        {id: 5, name: 100}
+                    ]
+                }
+            },
+            spacer: {
+                ntype: 'component',
+                flex : 1
+            },
+            'total-text': {
+                ntype: 'label'
+            }
+        }
     }
 
     /**
@@ -60,7 +125,7 @@ class Paging extends Toolbar {
      */
     afterSetCurrentPage(value, oldValue) {
         if (oldValue) {
-            this.store.currentPage = value;
+            this.store.currentPage = value
         }
     }
 
@@ -73,7 +138,7 @@ class Paging extends Toolbar {
     afterSetPageSize(value, oldValue) {
         if (oldValue) {
             this._currentPage = 1; // silent update
-            this.store.pageSize = value;
+            this.store.pageSize = value
         }
     }
 
@@ -84,7 +149,7 @@ class Paging extends Toolbar {
      * @protected
      */
     afterSetPagesText(value, oldValue) {
-        oldValue && this.updatePagesText();
+        oldValue && this.updatePagesText()
     }
 
     /**
@@ -94,7 +159,7 @@ class Paging extends Toolbar {
      * @protected
      */
     afterSetTotalText(value, oldValue) {
-        oldValue && this.updateTotalText();
+        oldValue && this.updateTotalText()
     }
 
     /**
@@ -112,96 +177,30 @@ class Paging extends Toolbar {
 
         oldValue?.un(listeners);
 
-        return ClassSystemUtil.beforeSetInstance(value, null, {listeners});
-    }
-
-    /**
-     *
-     */
-    createToolbarItems() {
-        let me = this;
-
-        me.items = [{
-            handler  : me.onFirstPageButtonClick.bind(me),
-            iconCls  : 'fa fa-angles-left',
-            reference: 'nav-button-first'
-        }, {
-            handler  : me.onPrevPageButtonClick.bind(me),
-            iconCls  : 'fa fa-angle-left',
-            reference: 'nav-button-prev',
-            style    : {marginLeft: '2px'}
-        }, {
-            ntype    : 'label',
-            reference: 'pages-text',
-            style    : {marginLeft: '10px'},
-            text     : me.pagesText(me)
-        }, {
-            handler  : me.onNextPageButtonClick.bind(me),
-            iconCls  : 'fa fa-angle-right',
-            reference: 'nav-button-next',
-            style    : {marginLeft: '10px'}
-        }, {
-            handler  : me.onLastPageButtonClick.bind(me),
-            iconCls  : 'fa fa-angles-right',
-            reference: 'nav-button-last',
-            style    : {marginLeft: '2px'}
-        }, {
-            ntype: 'label',
-            style: {marginLeft: '50px'},
-            text : 'Rows per page:'
-        }, {
-            module       : SelectField,
-            clearable    : false,
-            hideLabel    : true,
-            listConfig   : {highlightFilterValue: false},
-            listeners    : {change: me.onPageSizeFieldChange.bind(me)},
-            style        : {margin: 0},
-            triggerAction: 'all',
-            useFilter    : false,
-            value        : 30,
-            width        : 70,
-
-            store: {
-                model: {
-                    fields: [
-                        {name: 'id',   type: 'Integer'},
-                        {name: 'name', type: 'Integer'}
-                    ]
-                },
-                data: [
-                    {id: 1, name:  10},
-                    {id: 2, name:  20},
-                    {id: 3, name:  30},
-                    {id: 4, name:  50},
-                    {id: 5, name: 100}
-                ]
-            }
-        }, '->', {
-            ntype    : 'label',
-            reference: 'total-text',
-            text     : me.totalText(me.store.totalCount)
-        }];
+        return ClassSystemUtil.beforeSetInstance(value, null, {listeners})
     }
 
     /**
      * @returns {Number}
      */
     getMaxPages() {
-        return Math.ceil(this.store.totalCount / this.pageSize);
+        // An empty result is one empty page: keeps currentPage (1) === maxPages,
+        // so all four nav buttons disable and last can never land below page 1.
+        return Math.max(1, Math.ceil(this.store.totalCount / this.pageSize))
     }
 
     /**
      *
      */
     onFirstPageButtonClick() {
-        this.currentPage = 1;
+        this.currentPage = 1
     }
 
     /**
      *
      */
     onLastPageButtonClick() {
-        this.currentPage = this.getMaxPages();
+        this.currentPage = this.getMaxPages()
     }
 
     /**
@@ -211,7 +210,7 @@ class Paging extends Toolbar {
         let me = this;
 
         if (me.currentPage < me.getMaxPages()) {
-            me.currentPage++;
+            me.currentPage++
         }
     }
 
@@ -219,7 +218,7 @@ class Paging extends Toolbar {
      * @param {Object} data
      */
     onPageSizeFieldChange(data) {
-        this.pageSize = data.value;
+        this.pageSize = data.value
     }
 
     /**
@@ -227,7 +226,7 @@ class Paging extends Toolbar {
      */
     onPrevPageButtonClick() {
         if (this.currentPage > 1) {
-            this.currentPage--;
+            this.currentPage--
         }
     }
 
@@ -241,21 +240,21 @@ class Paging extends Toolbar {
 
         me.updateNavigationButtons();
         me.updatePagesText();
-        me.updateTotalText();
+        me.updateTotalText()
     }
 
     /**
      *
      */
     updateNavigationButtons() {
-        let me          = this,
-            currentPage = me.currentPage,
-            maxPages    = me.getMaxPages();
+        let me            = this,
+            {currentPage} = me,
+            maxPages      = me.getMaxPages();
 
         me.down({reference: 'nav-button-first'}).disabled = currentPage === 1;
         me.down({reference: 'nav-button-prev'}) .disabled = currentPage === 1;
         me.down({reference: 'nav-button-next'}) .disabled = currentPage === maxPages;
-        me.down({reference: 'nav-button-last'}) .disabled = currentPage === maxPages;
+        me.down({reference: 'nav-button-last'}) .disabled = currentPage === maxPages
     }
 
     /**
@@ -264,7 +263,7 @@ class Paging extends Toolbar {
     updatePagesText() {
         let me = this;
 
-        me.down({reference: 'pages-text'}).text = me.pagesText(me);
+        me.down({reference: 'pages-text'}).text = me.pagesText(me)
     }
 
     /**
@@ -273,10 +272,8 @@ class Paging extends Toolbar {
     updateTotalText() {
         let me = this;
 
-        me.down({reference: 'total-text'}).text = me.totalText(me.store.totalCount);
+        me.down({reference: 'total-text'}).text = me.totalText(me.store.totalCount)
     }
 }
 
-Neo.applyClassConfig(Paging);
-
-export default Paging;
+export default Neo.setupClass(Paging);

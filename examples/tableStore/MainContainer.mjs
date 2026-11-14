@@ -35,10 +35,11 @@ class MainContainer extends Viewport {
                 iconCls: 'fa fa-edit',
                 style  : {marginRight: '10px'},
                 text   : 'Change Cell Value',
-                handler: function () {
+
+                handler() {
                     let tabContainer = Neo.getComponent('myTableStoreContainer'),
                         store        = tabContainer.store,
-                        record       = store.items[0];
+                        record       = store.getAt(0);
 
                     record.firstname = record.firstname + '<span style="color:red;"> Foo</span>';
                 }
@@ -47,7 +48,8 @@ class MainContainer extends Viewport {
                 iconCls: 'fa fa-edit',
                 style  : {marginRight: '10px'},
                 text   : 'Update all cells 100x',
-                handler: function () {
+
+                handler() {
                     let tabContainer = Neo.getComponent('myTableStoreContainer'),
                         store        = tabContainer.store,
                         countRecords = store.getCount(),
@@ -59,8 +61,9 @@ class MainContainer extends Viewport {
 
                     for (; j < repeats; j++) {
                         for (i=0; i < countRecords; i++) {
-                            record = store.items[i];
-                            Object.entries(record).forEach(([field, value]) => {
+                            record = store.getAt(i);
+
+                            Object.entries(record.toJSON()).forEach(([field, value]) => {
                                 if (field !== 'githubId') {
                                     if (value.includes(string1)) {
                                         newValue = value.replace(string1, string2);
@@ -72,7 +75,7 @@ class MainContainer extends Viewport {
 
                                     record[field] = newValue; // triggers the change
                                 }
-                            });
+                            })
                         }
                     }
                 }
@@ -80,7 +83,8 @@ class MainContainer extends Viewport {
                 ntype  : 'button',
                 iconCls: 'fa fa-sync-alt',
                 text   : 'Reset Sorting',
-                handler: function () {
+
+                handler() {
                     Neo.getComponent('myTableStoreContainer').store.sort();
                 }
             }]
@@ -104,94 +108,55 @@ class MainContainer extends Viewport {
                 checked       : true,
                 hideLabel     : true,
                 hideValueLabel: false,
+                listeners     : {change: 'up.updateSelectionModel'},
                 name          : 'selectionModel',
                 value         : 'selection-table-cellmodel',
-                valueLabelText: 'Cell',
-                listeners: {
-                    change: function(data) {
-                        if (data.value) {
-                            Neo.getComponent('myTableStoreContainer').selectionModel = {
-                                ntype: this.value
-                            };
-                        }
-                    }
-                }
+                valueLabel    : 'Cell'
             }, {
                 ntype         : 'radiofield',
                 hideLabel     : true,
                 hideValueLabel: false,
+                listeners     : {change: 'up.updateSelectionModel'},
                 name          : 'selectionModel',
                 style         : {marginLeft: '20px'},
                 value         : 'selection-table-columnmodel',
-                valueLabelText: 'Column',
-                listeners: {
-                    change: function(data) {
-                        if (data.value) {
-                            Neo.getComponent('myTableStoreContainer').selectionModel = {
-                                ntype: this.value
-                            };
-                        }
-                    }
-                }
+                valueLabel    : 'Column'
             }, {
                 ntype         : 'radiofield',
                 hideLabel     : true,
                 hideValueLabel: false,
+                listeners     : {change: 'up.updateSelectionModel'},
                 name          : 'selectionModel',
                 style         : {marginLeft: '20px'},
                 value         : 'selection-table-rowmodel',
-                valueLabelText: 'Row',
-                listeners: {
-                    change: function(data) {
-                        if (data.value) {
-                            Neo.getComponent('myTableStoreContainer').selectionModel = {
-                                ntype: this.value
-                            };
-                        }
-                    }
-                }
+                valueLabel    : 'Row'
             }, {
                 ntype         : 'radiofield',
                 hideLabel     : true,
                 hideValueLabel: false,
+                listeners     : {change: 'up.updateSelectionModel'},
                 name          : 'selectionModel',
                 style         : {marginLeft: '20px'},
                 value         : 'selection-table-cellcolumnmodel',
-                valueLabelText: 'Cell & Column',
-                listeners: {
-                    change: function(data) {
-                        if (data.value) {
-                            Neo.getComponent('myTableStoreContainer').selectionModel = {
-                                ntype: this.value
-                            };
-                        }
-                    }
-                }
+                valueLabel    : 'Cell & Column'
             }, {
                 ntype         : 'radiofield',
                 hideLabel     : true,
                 hideValueLabel: false,
+                listeners     : {change: 'up.updateSelectionModel'},
                 name          : 'selectionModel',
                 style         : {marginLeft: '20px'},
                 value         : 'selection-table-cellrowmodel',
-                valueLabelText: 'Cell & Row',
-                listeners: {
-                    change: function(data) {
-                        if (data.value) {
-                            Neo.getComponent('myTableStoreContainer').selectionModel = {
-                                ntype: this.value
-                            };
-                        }
-                    }
-                }
+                valueLabel    : 'Cell & Row'
             }]
         }, {
-            module        : TableContainer,
-            id            : 'myTableStoreContainer',
-            selectionModel: CellModel,
-            store         : MainStore,
-            width         : '100%',
-            wrapperStyle  : {height: '300px'},
+            module      : TableContainer,
+            bodyConfig  : {selectionModel: CellModel},
+            id          : 'myTableStoreContainer',
+            reference   : 'table',
+            store       : MainStore,
+            width       : '100%',
+            wrapperStyle: {height: '300px'},
 
             columns: [{
                 dataField: 'firstname',
@@ -208,8 +173,17 @@ class MainContainer extends Viewport {
             }]
         }]
     }
+
+    /**
+     * @param {Object} data
+     */
+    updateSelectionModel(data) {
+        if (data.value) {
+            this.getReference('table').body.selectionModel = {
+                ntype: data.component.value
+            }
+        }
+    }
 }
 
-Neo.applyClassConfig(MainContainer);
-
-export default MainContainer;
+export default Neo.setupClass(MainContainer);

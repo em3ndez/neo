@@ -1,8 +1,105 @@
 import Base from '../../core/Base.mjs';
 
 /**
+ * @summary Mixin to enable and handle remote method access across threads (Workers and Main Threads).
+ *
+ * **What is Remote Method Access?**
+ * This pattern allows code running in one thread (e.g., an App Worker) to execute a method located in another thread
+ * (e.g., the Main Thread) as if it were a local function call. Since the threads are isolated, the execution is asynchronous:
+ * the caller invokes the method and awaits a `Promise` that resolves with the return value from the other thread.
+ *
+ * **Crucial Constraints:**
+ * - **Serialization:** All arguments passed to the method and the return value sent back MUST be **JSON-serializable**.
+ *   This means you cannot pass DOM nodes, DOM Events, or complex class instances directly.
+ * - **Transferables:** `ArrayBuffer`, `MessagePort` and `OffscreenCanvas` can be transferred (zero-copy) if explicitly handled.
+ *
+ * This mixin is the core mechanism for cross-thread communication in Neo.mjs. It is consumed by:
+ * - `Neo.worker.Base` (App, Data, VDom, Task, Canvas workers)
+ * - `Neo.worker.ServiceBase` (Service Worker)
+ * - `Neo.worker.Manager` (Main Thread)
+ *
+ * This broad usage ensures that **all** connected realms can communicate with each other. This includes
+ * Worker-to-Worker, Worker-to-Main, and even Main-to-Worker method calls.
+ *
+ * **Key Responsibilities:**
+ * 1. **Registration:** Registers methods defined in the `remote` config as callable endpoints.
+ * 2. **Proxy Generation:** Creates local proxy functions that send messages to the target thread when called.
+ * 3. **Routing:** Ensures messages are sent to the correct `windowId` in a multi-window environment.
+ * 4. **Interception:** Supports the `interceptRemotes` config to intercept calls before they are executed.
+ *    This is particularly critical for Main Thread Addons (Singletons). Calls arriving before an addon is
+ *    `isReady` (e.g., waiting for external libraries like Monaco Editor or Google Maps to load) can be
+ *    intercepted and queued, ensuring they execute only once the singleton is fully functional.
+ *
+ * **Synchronous vs. Asynchronous:**
+ * - **Definition:** Remote methods can be defined as synchronous or asynchronous functions in their origin class.
+ * - **Execution:** When called from a different thread, the execution is **ALWAYS asynchronous**. The proxy
+ *   function returns a `Promise` that resolves with the return value of the remote method. This is true even if
+ *   the original method is synchronous.
+ *
+ * **Routing Modes:**
+ * RMA supports two distinct routing modes for executing remote methods, orchestrated by `Neo.core.Base.initRemote`:
+ *
+ * 1. **Singleton Routing (Namespace-Driven):**
+ *    Historically, RMA was used exclusively for singletons. When a singleton class defines a `remote` config,
+ *    the framework broadcasts a `registerRemote` message. The target threads generate proxy functions and attach
+ *    them directly to the static namespace (e.g., `Neo.main.addon.LocalStorage.readLocalStorageItem`).
+ *    This mode supports an `interceptRemotes` config. Calls arriving before a singleton is `isReady`
+ *    can be intercepted and queued until the singleton is fully functional.
+ *
+ * 2. **Instance-to-Instance Routing (ID-Driven):**
+ *    RMA can also route messages to specific class instances across worker boundaries using `remoteId`.
+ *    Because each worker has an isolated memory space and its own `Neo.manager.Instance` registry, an ID
+ *    (like 'pipeline-1') only refers to an object within its local thread.
+ *    For non-singleton instances, `core.Base.initRemote` automatically generates proxy functions and attaches
+ *    them to a `this.remote` object on the instance itself (e.g., `this.remote.data.read()`), rather than
+ *    broadcasting globally.
+ *
+ *    To establish an instance-to-instance connection, instances must perform a **Handshake**:
+ *    - Thread A creates an instance in Thread B (via `worker.createInstance()`), passing its own local ID in the config.
+ *    - Thread B instantiates the object, registers it locally, and returns its new local ID to Thread A.
+ *    - Now, both instances can call their local `this.remote` proxies, which dynamically resolve the destination ID at execution time.
+ *    RMA intercepts messages with a `remoteId` and resolves them dynamically via `Neo.manager.Instance.get(remoteId)`.
+ *
+ * **Architectural Note:**
+ * To support the distributed multi-window architecture where one App Worker serves multiple connected Main Threads,
+ * **the first parameter of any remote method MUST be an object containing `windowId`**.
+ * This allows the sender to attach the `windowId` (and other metadata) to the payload, ensuring the message
+ * is routed to the correct browser window context. Calls passing arrays or primitive values as the first argument
+ * cannot be reliably routed in a shared-worker environment.
+ *
+ * @example
+ * // 1. Singleton Usage in Neo.component.wrapper.MonacoEditor
+ * // Calls the remote method 'setTheme' on the Main Thread addon 'Neo.main.addon.MonacoEditor'
+ * Neo.main.addon.MonacoEditor.setTheme({
+ *     id      : me.id,
+ *     value   : 'vs-dark',
+ *     windowId: me.windowId // Critical for routing!
+ * }).then(() => {
+ *     console.log('Theme updated');
+ * });
+ *
+ * @example
+ * // 2. Singleton Usage in a Controller accessing LocalStorage
+ * // Calls 'readLocalStorageItem' on the Main Thread addon 'Neo.main.addon.LocalStorage'
+ * const value = await Neo.main.addon.LocalStorage.readLocalStorageItem({
+ *     key     : 'mySettings',
+ *     windowId: this.windowId
+ * });
+ *
+ * @example
+ * // 3. Instance-to-Instance Usage
+ * // App Worker Pipeline calling `read()` on its Data Worker counterpart.
+ * // The proxy was pre-generated by `core.Base.initRemote` onto `this.remote`.
+ * let response = await this.remote.data.read({ page: 1 });
+ *
  * @class Neo.worker.mixin.RemoteMethodAccess
  * @extends Neo.core.Base
+ * @see Neo.worker.Base
+ * @see Neo.worker.ServiceBase
+ * @see Neo.worker.Manager
+ * @see Neo.main.addon.Base
+ * @see Neo.main.addon.MonacoEditor
+ * @see Neo.main.addon.LocalStorage
  */
 class RemoteMethodAccess extends Base {
     static config = {
@@ -10,24 +107,43 @@ class RemoteMethodAccess extends Base {
          * @member {String} className='Neo.worker.mixin.RemoteMethodAccess'
          * @protected
          */
-        className: 'Neo.worker.mixin.RemoteMethodAccess',
-        /**
-         * @member {Boolean} mixin=true
-         * @protected
-         */
-        mixin: true
+        className: 'Neo.worker.mixin.RemoteMethodAccess'
     }
 
     /**
-     * @param {Object} remote
-     * @param method
-     * @returns {function(*=, *=): Promise<any>}
+     * Helper method to copy routing information (appName, port, windowId) from a source message to a target message.
+     * This is crucial in SharedWorker environments to maintain the context of the original sender when formulating a reply or forwarding a message.
+     *
+     * @param {Object} source The source message object containing routing metadata.
+     * @param {Object} target The target message object to populate with routing metadata.
+     */
+    assignPort(source, target) {
+        if (source) {
+            const {appName, port, windowId} = source;
+            Object.assign(target, {appName, port, windowId})
+        }
+    }
+
+    /**
+     * Generates a proxy function for a remote method.
+     * When this proxy is called, it sends a message to the target thread to execute the real method.
+     *
+     * It handles:
+     * 1. Constructing the message payload with `action: 'remoteMethod'`.
+     * 2. determining the correct destination (e.g., using `windowId` from the data if targeting 'main').
+     * 3. Preserving routing context in SharedWorker environments.
+     * 4. Returning a Promise that resolves with the remote method's result.
+     *
+     * @param {Object} remote The remote configuration object.
+     * @param {String} method The name of the method to generate a proxy for.
+     * @returns {function(*=, *=): Promise<any>} The proxy function, carrying `remoteProvenance`
+     *     (`{className, origin}`) so {@link #onRegisterRemote} can tell a replay of this exact endpoint from a collision.
      */
     generateRemote(remote, method) {
-        let me     = this,
-            origin = remote.origin;
+        let me       = this,
+            {origin} = remote;
 
-        return function(data, buffer) {
+        const proxy = function(data, buffer) {
             let opts = {
                 action         : 'remoteMethod',
                 data,
@@ -36,115 +152,254 @@ class RemoteMethodAccess extends Base {
                 remoteMethod   : method
             };
 
-            if (me.isSharedWorker) {
-                opts.appName = data?.appName;
-                opts.port    = data?.port;
+            if (remote.id) {
+                opts.remoteId = remote.id;
             }
 
-            return me.promiseMessage(origin, opts, buffer);
-        }
+            if (origin === 'main' && data?.windowId) {
+                opts.destination = data.windowId
+            }
+
+            me.isSharedWorker && me.assignPort(data, opts);
+
+            // A canvas call is settled against its group's readiness BEFORE it is sent: `sendMessage` must return
+            // the Message it actually sent, so waiting can never be queued inside it. The wait is bound to the port
+            // generation the call carries, as a sent call's promise is. Once ready, straight through.
+            if (origin === 'canvas' && me.canvasGroups && !me.canvasGroups.isReadyFor(data?.windowId)) {
+                return me.canvasGroups.whenReady(data?.windowId, opts.port ? me.getPort({id: opts.port}) : null)
+                    .then(() => me.promiseMessage(opts.destination, opts, buffer))
+            }
+
+            return me.promiseMessage(opts.destination, opts, buffer)
+        };
+
+        proxy.remoteProvenance = {className: remote.className, origin};
+
+        return proxy
     }
 
     /**
-     * @param {Object} remote
+     * Handles the 'registerRemote' message action.
+     * It iterates over the list of methods provided in the remote config and generates local proxy functions
+     * for them in the appropriate namespace. This makes the remote methods available to be called as if they were local.
+     *
+     * A registration of the SAME endpoint — `className`, `method` and `origin` all equal — arriving again
+     * is a no-op that keeps the existing proxy: a SharedWorker replays every stored registration to each
+     * newly connected port, and the singleton's own startup registration also addresses the first window,
+     * so that window legitimately sees one endpoint twice. Anything else already occupying the slot — a
+     * proxy for a different origin, or a local member — is a collision and throws, so a wrong binding is
+     * never retained in silence.
+     *
+     * @param {Object} remote The remote configuration object containing className and methods list.
      */
     onRegisterRemote(remote) {
         if (remote.destination === Neo.workerId) {
-            let me        = this,
-                className = remote.className,
-                methods   = remote.methods,
-                pkg       = Neo.ns(className, true);
+            let me                   = this,
+                {className, methods} = remote,
+                pkg                  = Neo.ns(className, true);
 
             methods.forEach(method => {
-                if (remote.origin !== 'main' && pkg[method]) {
-                    throw new Error('Duplicate remote method definition ' + className + '.' + method);
+                const existing = pkg[method],
+                      repeat   = existing?.remoteProvenance?.className === className
+                              && existing.remoteProvenance.origin === remote.origin;
+
+                if (existing && !repeat) {
+                    throw new Error(
+                        `Remote method collision: ${className}.${method} is already bound to ` +
+                        (existing.remoteProvenance ? `origin "${existing.remoteProvenance.origin}"` : 'a local member') +
+                        `; a registration from "${remote.origin}" cannot replace it`
+                    )
                 }
 
-                if (!pkg[method] ) {
-                    pkg[method] = me.generateRemote(remote, method);
-                }
+                pkg[method] ??= me.generateRemote({className, origin: remote.origin}, method)
             });
+
+            if (remote.id) {
+                me.resolve(remote, true)
+            }
         }
     }
 
     /**
-     * @param {Object} msg
+     * Handles the execution of a requested remote method.
+     * Triggered when a worker receives a message with `action: 'remoteMethod'`.
+     *
+     * This method:
+     * 1. Resolves the target class and method from the namespace.
+     * 2. Checks if the call should be intercepted (e.g., if the target singleton is not ready).
+     * 3. Executes the method (handling both sync and async results).
+     * 4. Catches errors, thrown or rejected, and sends a rejection reply.
+     * 5. Resolves success and sends a reply with the result.
+     *
+     * Every executed call answers its caller exactly once: a rejection never follows with a resolve.
+     *
+     * @param {Object} msg The message payload containing remoteClassName, remoteMethod, and data.
      */
     onRemoteMethod(msg) {
         let me  = this,
-            pkg = Neo.ns(msg.remoteClassName),
+            pkg = msg.remoteId ? Neo.get(msg.remoteId) : Neo.ns(msg.remoteClassName),
             out, method;
 
         if (!pkg) {
-            throw new Error('Invalid remote namespace "' + msg.remoteClassName + '"');
+            throw new Error(msg.remoteId ?
+                `Invalid remote instance id "${msg.remoteId}"` :
+                `Invalid remote namespace "${msg.remoteClassName}"`
+            )
         }
 
         method = pkg[msg.remoteMethod];
 
         if (!method) {
-            throw new Error('Invalid remote method name "' + msg.remoteMethod + '"');
+            throw new Error(`Invalid remote method name "${msg.remoteMethod}" in ${msg.remoteId ? 'instance "'+msg.remoteId+'"' : 'namespace "'+msg.remoteClassName+'"'}`)
         }
 
-        if (Array.isArray(msg.data)) {
-            out = method.call(pkg, ...msg.data);
-        } else {
-            out = method.call(pkg, msg.data);
+        /*
+         * A failing remote method would not show its error inside the console, so it is logged here for
+         * debugging, and the rejection gives the caller the chance to recover.
+         *
+         * Example:
+         * Neo.vdom.Helper.update(opts).catch(err => {
+         *     me.isVdomUpdating = false;
+         *     reject?.()
+         * }).then(data => {...})
+         */
+        const fail = err => {
+            console.error(err);
+            me.reject(msg, err)
+        };
+
+        try {
+            // Check for interception
+            if (!pkg.isReady && pkg.interceptRemotes?.includes(msg.remoteMethod)) {
+                out = pkg.onInterceptRemotes(msg);
+            } else if (Array.isArray(msg.data)) {
+                out = method.call(pkg, ...msg.data)
+            } else {
+                out = method.call(pkg, msg.data)
+            }
+        } catch (err) {
+            fail(err);
+            return
         }
 
-        if (out instanceof Promise) {
-            out.then(data => {
-                me.resolve(msg, data);
-            })
-            .catch(err => {
-                me.reject(msg, err);
-            });
+        if (Neo.isPromise(out)) {
+            out.then(data => {me.resolve(msg, data)}, fail)
         } else {
-            me.resolve(msg, out);
+            me.resolve(msg, out)
         }
     }
 
     /**
-     * Gets called when promiseMessage gets rejected
-     * @param {Object} msg
-     * @param {Object} data
+     * @summary Sends a cloneable rejection reply back to the caller of a remote method.
+     * Used when the execution of the remote method fails or throws an error.
+     * The local destruction Symbol becomes an Error so a live remote caller can receive its cancellation.
+     * It ensures the reply is routed back to the correct origin (windowId or worker).
+     * Delivery is containment-guarded via sendReply() — a failed send cannot throw back
+     * into the execution path.
+     *
+     * @param {Object} msg The original message object.
+     * @param {Object} data The error data to send back.
      */
     reject(msg, data) {
-        let opts = {
+        if (data === Neo.isDestroyed) {
+            data = new Error('Remote method target was destroyed')
+        }
+
+        let me = this,
+
+        opts = {
             action : 'reply',
             data,
             reject : true,
             replyId: msg.id
         };
 
-        if (this.isSharedWorker) {
-            opts.appName = msg.appName;
-            opts.port    = msg.port;
+        if (me.isSharedWorker) {
+            me.assignPort(msg, opts);
+
+            if (msg.origin === 'main' && opts.windowId) {
+                msg.origin = opts.windowId
+            }
         }
 
-        this.sendMessage(msg.origin, opts);
+        me.sendReply(msg, opts)
     }
 
     /**
-     * Gets called when promiseMessage gets resolved
-     * @param {Object} msg
-     * @param {Object} data
+     * Sends a success reply back to the caller of a remote method.
+     * Used when the remote method executes successfully.
+     * It handles the transfer of transferable objects (like ArrayBuffers) and ensures correct routing.
+     * Delivery is containment-guarded via sendReply() — a failed send cannot throw back
+     * into the execution path.
+     *
+     * @param {Object} msg The original message object.
+     * @param {Object} data The result data to send back.
      */
     resolve(msg, data) {
-        let opts = {
+        let me       = this,
+            transfer = null,
+            opts;
+
+        if (Neo.isObject(data) && Array.isArray(data.transfer)) {
+            transfer = data.transfer;
+            data     = data.result || data
+        }
+
+        opts = {
             action : 'reply',
             data,
             replyId: msg.id
         };
 
-        if (this.isSharedWorker) {
-            opts.appName = msg.appName;
-            opts.port    = msg.port;
+        if (me.isSharedWorker) {
+            me.assignPort(msg, opts);
+
+            if (msg.origin === 'main' && opts.windowId) {
+                msg.origin = opts.windowId
+            }
         }
 
-        this.sendMessage(msg.origin, opts);
+        me.sendReply(msg, opts, transfer)
+    }
+
+    /**
+     * Posts a reply message with loss containment: a reply which cannot be routed or sent
+     * (disconnected port, clone error) must never throw back into the remote-method execution
+     * path — an escaped exception here makes replies vanish and wedges the caller-side promise
+     * forever (`isVdomUpdating` stuck `true`, `vnode: null`, blank app, zero errors).
+     * The failure is logged with its full routing context instead, so the update watchdog and
+     * the console make the loss diagnosable. A reply to a window whose port this worker retired is not logged: that
+     * window disconnected before its answer could reach it.
+     * @param {Object} msg The original message object
+     * @param {Object} opts The reply options (action, data, replyId, routing keys)
+     * @param {Array|null} [transfer=null] An optional array of Transferable objects
+     * @protected
+     */
+    sendReply(msg, opts, transfer=null) {
+        let message;
+
+        try {
+            message = this.sendMessage(msg.origin, opts, transfer)
+        } catch (err) {
+            console.error('[RemoteMethodAccess] Reply send failed — the caller-side promise will not settle', {
+                destination: msg.origin,
+                error      : err,
+                port       : opts.port,
+                replyId    : opts.replyId,
+                windowId   : opts.windowId
+            });
+            return
+        }
+
+        if (!message && !this.departedWindowIds?.has(opts.windowId)) {
+            console.error('[RemoteMethodAccess] Reply not routable (no live port) — the caller-side promise will not settle', {
+                destination: msg.origin,
+                port       : opts.port,
+                replyId    : opts.replyId,
+                windowId   : opts.windowId
+            })
+        }
     }
 }
 
-Neo.applyClassConfig(RemoteMethodAccess);
-
-export default RemoteMethodAccess;
+export default Neo.setupClass(RemoteMethodAccess);

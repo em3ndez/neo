@@ -27,7 +27,8 @@ class MainContainer extends ConfigurationViewport {
     }
 
     createConfigurationComponents() {
-        let me = this;
+        let me               = this,
+            {selectionModel} = me.exampleComponent.body;
 
         const selectionModelRadioDefaults = {
             module        : Radio,
@@ -47,49 +48,49 @@ class MainContainer extends ConfigurationViewport {
             value    : me.exampleComponent.height
         }, {
             ...selectionModelRadioDefaults,
-            checked       : me.exampleComponent.selectionModel.ntype === 'selection-table-cellmodel',
-            labelText     : 'selectionModel',
-            listeners     : {change: me.onRadioChange.bind(me, 'selectionModel', CellModel)},
-            style         : {marginTop: '10px'},
-            valueLabelText: 'Cell'
+            checked   : selectionModel.ntype === 'selection-table-cellmodel',
+            labelText : 'selectionModel',
+            listeners : {change: me.onRadioViewChange.bind(me, 'selectionModel', CellModel)},
+            style     : {marginTop: '10px'},
+            valueLabel: 'Cell'
         }, {
             ...selectionModelRadioDefaults,
-            checked       : me.exampleComponent.selectionModel.ntype === 'selection-table-columnmodel',
-            listeners     : {change: me.onRadioChange.bind(me, 'selectionModel', ColumnModel)},
-            valueLabelText: 'Column'
+            checked   : selectionModel.ntype === 'selection-table-columnmodel',
+            listeners : {change: me.onRadioViewChange.bind(me, 'selectionModel', ColumnModel)},
+            valueLabel: 'Column'
         }, {
             ...selectionModelRadioDefaults,
-            checked       : me.exampleComponent.selectionModel.ntype === 'selection-table-rowmodel',
-            listeners     : {change: me.onRadioChange.bind(me, 'selectionModel', RowModel)},
-            valueLabelText: 'Row'
+            checked   : selectionModel.ntype === 'selection-table-rowmodel',
+            listeners : {change: me.onRadioViewChange.bind(me, 'selectionModel', RowModel)},
+            valueLabel: 'Row'
         }, {
             ...selectionModelRadioDefaults,
-            checked       : me.exampleComponent.selectionModel.ntype === 'selection-table-cellcolumnmodel',
-            listeners     : {change: me.onRadioChange.bind(me, 'selectionModel', CellColumnModel)},
-            valueLabelText: 'Cell & Column'
+            checked   : selectionModel.ntype === 'selection-table-cellcolumnmodel',
+            listeners : {change: me.onRadioViewChange.bind(me, 'selectionModel', CellColumnModel)},
+            valueLabel: 'Cell & Column'
         }, {
             ...selectionModelRadioDefaults,
-            checked       : me.exampleComponent.selectionModel.ntype === 'selection-table-cellrowmodel',
-            listeners     : {change: me.onRadioChange.bind(me, 'selectionModel', CellRowModel)},
-            valueLabelText: 'Cell & Row'
+            checked   : selectionModel.ntype === 'selection-table-cellrowmodel',
+            listeners : {change: me.onRadioViewChange.bind(me, 'selectionModel', CellRowModel)},
+            valueLabel: 'Cell & Row'
         }, {
             ...selectionModelRadioDefaults,
-            checked       : me.exampleComponent.selectionModel.ntype === 'selection-table-cellcolumnrowmodel',
-            listeners     : {change: me.onRadioChange.bind(me, 'selectionModel', CellColumnRowModel)},
-            valueLabelText: 'Cell & Column & Row'
+            checked   : selectionModel.ntype === 'selection-table-cellcolumnrowmodel',
+            listeners : {change: me.onRadioViewChange.bind(me, 'selectionModel', CellColumnRowModel)},
+            valueLabel: 'Cell & Column & Row'
         }, {
             module   : Checkbox,
-            checked  : me.exampleComponent.sortable,
-            labelText: 'sortable',
-            listeners: {change: me.onConfigChange.bind(me, 'sortable')},
+            checked  : me.exampleComponent.dragResortable,
+            labelText: 'dragResortable',
+            listeners: {change: me.onConfigChange.bind(me, 'dragResortable')},
             style    : {marginTop: '10px'}
         }, {
             module   : Checkbox,
             checked  : false,
             labelText: 'Fit width',
             listeners: {
-                change({ value }) {
-                    const { style } = me.exampleComponent;
+                change({value}) {
+                    const {style} = me.exampleComponent;
 
                     if (value) {
                         style.width = '100%';
@@ -99,12 +100,11 @@ class MainContainer extends ConfigurationViewport {
                         style.tableLayout = '';
                     }
 
-                    me.exampleComponent.style = style;
-                    me.exampleComponent.update();
+                    me.exampleComponent.style = style
                 }
             },
-            style    : {marginTop: '10px'}
-        }];
+            style: {marginTop: '10px'}
+        }]
     }
 
     /**
@@ -112,9 +112,12 @@ class MainContainer extends ConfigurationViewport {
      */
     createExampleComponent() {
         return Neo.create(TableContainer, {
-            id            : 'myTableStoreContainer',
-            selectionModel: CellModel,
-            store         : MainStore,
+            id   : 'myTableStoreContainer',
+            store: MainStore,
+
+            bodyConfig: {
+                selectionModel: CellModel
+            },
 
             columns: [
                 {dataField: 'firstname', text: 'Firstname'},
@@ -122,30 +125,36 @@ class MainContainer extends ConfigurationViewport {
                 {dataField: 'githubId',  text: 'Github Id'},
                 {dataField: 'country',   text: 'Country'},
                 {
-                    text: 'Edit Action',
-                    renderer: ({ column, index }) => {
+                    dataField: 'edit',
+                    text     : 'Edit Action',
+                    renderer({column, rowIndex}) {
                         const
-                            widgetId = `${column.id}-widget-${index}`,
-                            button = (column.widgetMap || (column.widgetMap = {}))[widgetId] || (column.widgetMap[widgetId] = Neo.create({
+                            me       = this,
+                            widgetId = `${column.id}-widget-${rowIndex}`,
+                            button   = (column.widgetMap || (column.widgetMap = {}))[widgetId] || (column.widgetMap[widgetId] = Neo.create({
                                 module  : Button,
-                                appName : this.appName,
-                                handler : this.editButtonHandler,
+                                appName : me.appName,
+                                handler : 'up.editButtonHandler',
                                 parentId: 'myTableStoreContainer',
                                 text    : 'Edit'
                             }));
 
-                        return button.vdom;
+                        me.body.updateDepth = -1;
+
+                        return button.createVdomReference()
                     }
-                },
-                {
-                    text : 'Menu',
-                    renderer({ column, record, index }) {
+                }, {
+                    dataField: 'menu',
+                    text     : 'Menu',
+                    renderer({column, record, rowIndex}) {
                         const
-                            widgetId = `${column.id}-widget-${index}`,
-                            button = (column.widgetMap || (column.widgetMap = {}))[widgetId] || (column.widgetMap[widgetId] = Neo.create('Neo.button.Base', {
+                            me       = this,
+                            widgetId = `${column.id}-widget-${rowIndex}`,
+                            button   = (column.widgetMap || (column.widgetMap = {}))[widgetId] || (column.widgetMap[widgetId] = Neo.create('Neo.button.Base', {
                                 ntype   : 'button',
-                                appName : this.appName,
+                                appName : me.appName,
                                 text    : '\u22ee',
+                                windowId: me.windowId,
                                 menu    : {
                                     items : [{
                                         text : 'Menu option 1'
@@ -159,11 +168,13 @@ class MainContainer extends ConfigurationViewport {
                                 }
                             }));
 
-                            return button.vdom;
+                        me.body.updateDepth = -1;
+
+                        return button.createVdomReference()
                     }
                 }
             ]
-        });
+        })
     }
 
     /**
@@ -172,8 +183,17 @@ class MainContainer extends ConfigurationViewport {
     editButtonHandler(data) {
         console.log(data)
     }
+
+    /**
+     * @param {String} config
+     * @param {String} value
+     * @param {Object} opts
+     */
+    onRadioViewChange(config, value, opts) {
+        if (opts.value === true) { // we only want to listen to check events, not uncheck
+            this.exampleComponent.body[config] = value
+        }
+    }
 }
 
-Neo.applyClassConfig(MainContainer);
-
-export default MainContainer;
+export default Neo.setupClass(MainContainer);

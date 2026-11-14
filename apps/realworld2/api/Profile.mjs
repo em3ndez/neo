@@ -3,6 +3,7 @@ import Base from './Base.mjs';
 /**
  * @class RealWorld2.api.Profile
  * @extends RealWorld2.api.Base
+ * @singleton
  */
 class Profile extends Base {
     static config = {
@@ -14,7 +15,12 @@ class Profile extends Base {
         /**
          * @member {String} resource='/profiles'
          */
-        resource: '/profiles'
+        resource: '/profiles',
+        /**
+         * @member {Boolean} singleton=true
+         * @protected
+         */
+        singleton: true
     }
 
     /**
@@ -36,10 +42,4 @@ class Profile extends Base {
     }
 }
 
-Neo.applyClassConfig(Profile);
-
-let instance = Neo.create(Profile);
-
-Neo.applyToGlobalNs(instance);
-
-export default instance;
+export default Neo.setupClass(Profile);

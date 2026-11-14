@@ -13,14 +13,17 @@ class FooterContainer extends Container {
         className: 'Covid.view.FooterContainer',
         /**
          * @member {Number} height=20
+         * @reactive
          */
         height: 25,
         /**
          * @member {Object} layout={ntype: 'hbox'}
+         * @reactive
          */
         layout: {ntype: 'hbox'},
         /**
          * @member {String} reference='footer'
+         * @reactive
          */
         reference: 'footer',
         /**
@@ -62,6 +65,4 @@ class FooterContainer extends Container {
     }
 }
 
-Neo.applyClassConfig(FooterContainer);
-
-export default FooterContainer;
+export default Neo.setupClass(FooterContainer);

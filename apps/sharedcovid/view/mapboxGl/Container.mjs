@@ -22,6 +22,7 @@ class Container extends BaseContainer {
         ntype: 'covid-mapboxgl-container',
         /**
          * @member {Neo.controller.Component} controller=ContainerController
+         * @reactive
          */
         controller: ContainerController,
         /**
@@ -85,6 +86,7 @@ class Container extends BaseContainer {
         }],
         /**
          * @member {Object} layout={ntype: 'fit'}
+         * @reactive
          */
         layout: {ntype: 'fit'},
 
@@ -117,8 +119,8 @@ class Container extends BaseContainer {
             parentId : me.id,
             reference: 'mapboxglmap',
 
-            model: {
-                parent: me.getModel()
+            stateProvider: {
+                parent: me.getStateProvider()
             }
         });
 
@@ -140,6 +142,4 @@ class Container extends BaseContainer {
     }
 }
 
-Neo.applyClassConfig(Container);
-
-export default Container;
+export default Neo.setupClass(Container);

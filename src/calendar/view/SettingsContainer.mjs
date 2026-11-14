@@ -24,6 +24,7 @@ class SettingsContainer extends Container {
         /**
          * @member {Object} layout={ntype:'vbox',align:'stretch'}
          * @protected
+         * @reactive
          */
         layout: {ntype: 'vbox', align: 'stretch'},
         /**
@@ -42,7 +43,7 @@ class SettingsContainer extends Container {
         let me = this;
 
         if (me.collapsed) {
-            me.vdom.removeDom = true;
+            me.vdom.removeDom = true
         }
     }
 
@@ -54,19 +55,21 @@ class SettingsContainer extends Container {
             style = me.style || {};
 
         style.marginRight = `-${width}px`;
-        me._style      = style; // silent update
-        me._vdom.style = style; // silent update
+        me._style         = style; // silent update
+        me._vdom.style    = style; // silent update
 
-        Neo.getComponent(me.parentId).promiseUpdate().then(() => {
-            setTimeout(() => {
+        me.parent.updateDepth = -1;
+
+        me.parent.promiseUpdate().then(() => {
+            me.timeout(400).then(() => {
                 me.collapsed = true;
 
                 me.vdom.removeDom = true;
                 me.update();
 
-                me.mounted = false;
-            }, 400);
-        });
+                me.mounted = false
+            })
+        })
     }
 
     /**
@@ -87,44 +90,29 @@ class SettingsContainer extends Container {
             items: [{
                 module: () => import('./settings/GeneralContainer.mjs'),
                 flag  : 'general',
-                style : {padding: '20px'},
-
-                tabButtonConfig: {
-                    text: 'General'
-                }
+                header: {text: 'General'},
+                style : {padding: '20px'}
             }, {
-                ntype: 'component',
-                flag : 'day',
-                html : 'Day',
-                style: {padding: '20px'},
-
-                tabButtonConfig: {
-                    text: 'Day'
-                }
+                ntype : 'component',
+                flag  : 'day',
+                header: {text: 'Day'},
+                style : {padding: '20px'},
+                test  : 'Day'
             }, {
                 module: () => import('./settings/WeekContainer.mjs'),
                 flag  : 'week',
-                style : {padding: '20px'},
-
-                tabButtonConfig: {
-                    text: 'Week'
-                }
+                header: {text: 'Week'},
+                style : {padding: '20px'}
             }, {
                 module: () => import('./settings/MonthContainer.mjs'),
                 flag  : 'month',
-                style : {padding: '20px'},
-
-                tabButtonConfig: {
-                    text: 'Month'
-                }
+                header: {text: 'Month'},
+                style : {padding: '20px'}
             }, {
                 module: () => import('./settings/YearContainer.mjs'),
                 flag  : 'year',
-                style : {padding: '20px'},
-
-                tabButtonConfig: {
-                    text: 'Year'
-                }
+                header: {text: 'Year'},
+                style : {padding: '20px'}
             }],
 
             listeners: {
@@ -133,7 +121,7 @@ class SettingsContainer extends Container {
             }
         }];
 
-        super.createItems();
+        super.createItems()
     }
 
     /**
@@ -145,23 +133,25 @@ class SettingsContainer extends Container {
 
         delete me.vdom.removeDom;
 
-        Neo.getComponent(me.parentId).promiseUpdate().then(() => {
+        me.parent.updateDepth = -1;
+
+        me.parent.promiseUpdate().then(() => {
             me.collapsed = false;
             me.mounted   = true;
 
-            setTimeout(() => {
+            me.timeout(50).then(() => {
                 style = me.style || {}
                 style.marginRight = '0px';
-                me.style = style;
-            }, 50);
-        });
+                me.style = style
+            })
+        })
     }
 
     /**
      * @returns {Neo.calendar.view.MainContainer}
      */
     getMainContainer() {
-        return this.up('calendar-maincontainer');
+        return this.up('calendar-maincontainer')
     }
 
     /**
@@ -170,28 +160,24 @@ class SettingsContainer extends Container {
     onCardIndexChange(data) {
         let me            = this,
             container     = data.item,
-            mainContainer = me.getMainContainer(),
-            listenerId;
+            mainContainer = me.getMainContainer();
 
         if (mainContainer) {
             if (Neo.isFunction(container.createContent) && container.items.length < 1) {
                 if (Neo.typeOf(mainContainer[`${container.flag}Component`]) !== 'NeoInstance') {
-                    listenerId = mainContainer.on('cardLoaded', () => {
-                        mainContainer.un('cardLoaded', listenerId);
-                        setTimeout(() => {container.createContent();}, 30);
-                    });
+                    mainContainer.on('cardLoaded', () => {
+                        me.timeout(30).then(() => {container.createContent()})
+                    }, me, {once: true})
                 } else {
-                    setTimeout(() => {container.createContent();}, 30);
+                    me.timeout(30).then(() => {container.createContent()})
                 }
             }
 
             if (container.flag !== 'general') {
-                mainContainer.activeView = container.flag;
+                mainContainer.activeView = container.flag
             }
         }
     }
 }
 
-Neo.applyClassConfig(SettingsContainer);
-
-export default SettingsContainer;
+export default Neo.setupClass(SettingsContainer);

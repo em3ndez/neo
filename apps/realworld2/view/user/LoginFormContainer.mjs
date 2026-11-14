@@ -70,13 +70,11 @@ class LoginFormContainer extends Container {
      *
      */
     onLoginButtonClick() {
-        let values = this.getValues();
+        let values = this.getSubmitValues();
 
         console.log(values);
         console.log(this.isValid());
     }
 }
 
-Neo.applyClassConfig(LoginFormContainer);
-
-export default LoginFormContainer;
+export default Neo.setupClass(LoginFormContainer);

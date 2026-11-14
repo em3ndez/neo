@@ -1,14 +1,28 @@
-import Base       from '../../core/Base.mjs';
+import Base       from './Base.mjs';
 import DomAccess  from '../DomAccess.mjs';
 import DomEvents  from '../DomEvents.mjs';
 import Observable from '../../core/Observable.mjs';
 
 /**
+ * The global the Maps bootstrap invokes once `google.maps` is populated. Google resolves this
+ * parameter as a path on `globalThis`, so it must be a real name rather than a function reference.
+ * @type {String}
+ */
+const readyCallbackName = 'neoGoogleMapsApiLoaded';
+
+/**
  * @class Neo.main.addon.GoogleMaps
- * @extends Neo.core.Base
- * @singleton
+ * @extends Neo.main.addon.Base
+ * @mixes Neo.core.Observable
  */
 class GoogleMaps extends Base {
+    /**
+     * True automatically applies the core.Observable mixin
+     * @member {Boolean} observable=true
+     * @static
+     */
+    static observable = true
+
     static config = {
         /**
          * @member {String} className='Neo.main.addon.GoogleMaps'
@@ -16,9 +30,21 @@ class GoogleMaps extends Base {
          */
         className: 'Neo.main.addon.GoogleMaps',
         /**
-         * @member {Neo.core.Base[]} mixins=[Observable]
+         * Remote calls arriving before `isReady` are cached instead of executed, which is what keeps
+         * them from touching `google` before `loadFiles()` has populated it.
+         *
+         * Only methods that dereference the `google` global on entry belong here. `create` and
+         * `geocode` both do (`new google.maps.Map`, `new google.maps.Geocoder`). `addMarker` also
+         * names `google.maps.Marker`, but reaches it only after its own `mapCreated` listener has
+         * fired, so it already waits; the rest operate on `me.maps[mapId]`, which cannot exist before
+         * `create` has run.
+         *
+         * `Neo.main.addon.OpenStreetMaps` declares `['create']` for the same reason — its `geocode`
+         * is an unimplemented stub, so it is silent on that method rather than excluding it.
+         * @member {String[]} interceptRemotes
+         * @protected
          */
-        mixins: [Observable],
+        interceptRemotes: ['create', 'geocode'],
         /**
          * @member {Object} remote
          * @protected
@@ -37,12 +63,7 @@ class GoogleMaps extends Base {
                 'setZoom',
                 'showMarker'
             ]
-        },
-        /**
-         * @member {Boolean} singleton=true
-         * @protected
-         */
-        singleton: true
+        }
     }
 
     /**
@@ -52,21 +73,14 @@ class GoogleMaps extends Base {
     /**
      * @member {Object} maps={}
      */
-    maps     = {}
+    maps = {}
     /**
      * @member {Object} markers={}
      */
-    markers  = {}
+    markers = {}
 
     /**
-     * @param {Object} config
-     */
-    construct(config) {
-        super.construct(config);
-        this.loadApi();
-    }
-
-    /**
+     * @summary Adds or replaces a marker on the specified map, deferring until `mapCreated` if the map is not yet initialized.
      * @param {Object} data
      * @param {Object} [data.anchorPoint] x & y
      * @param {String} [data.icon]
@@ -77,19 +91,21 @@ class GoogleMaps extends Base {
      * @param {String} [data.title]
      */
     addMarker(data) {
-        let me    = this,
-            mapId = data.mapId,
+        let me      = this,
+            {mapId} = data,
             listenerId, marker;
 
         if (!me.maps[mapId]) {
             listenerId = me.on('mapCreated', id => {
                 if (mapId === id) {
                     me.un(listenerId);
-                    me.addMarker(data);
+                    me.addMarker(data)
                 }
             })
         } else {
             Neo.ns(`${mapId}`, true, me.markers);
+
+            me.markers[mapId][data.id]?.setMap(null);
 
             me.markers[mapId][data.id] = marker = new google.maps.Marker({
                 icon    : data.icon,
@@ -101,7 +117,7 @@ class GoogleMaps extends Base {
                 title   : data.title,
             });
 
-            marker.addListener('click', me.onMarkerClick.bind(me, marker));
+            marker.addListener('click', me.onMarkerClick.bind(me, marker))
         }
     }
 
@@ -117,8 +133,8 @@ class GoogleMaps extends Base {
      * @param {Boolean} data.zoomControl
      */
     create(data) {
-        let me = this,
-            id = data.id,
+        let me   = this,
+            {id} = data,
             map;
 
         me.maps[id] = map = new google.maps.Map(DomAccess.getElement(id), {
@@ -133,20 +149,22 @@ class GoogleMaps extends Base {
 
         map.addListener('zoom_changed', me.onMapZoomChange.bind(me, map, id));
 
-        me.fire('mapCreated', id);
+        me.fire('mapCreated', id)
     }
 
     /**
-     * Destroys all markers for the specified map ID.
+     * @summary Destroys all markers for the specified map ID.
      * @param {Object} data
-     * @param {String} data.mapId
+     * @param {String} [data.id]
+     * @param {String} [data.mapId]
      */
     destroyMarkers(data) {
         let me      = this,
-            markers = me.markers[data.mapId] || {};
+            mapId   = data.mapId || data.id,
+            markers = me.markers[mapId] || {};
 
         Object.values(markers).forEach(marker => marker.setMap(null));
-        delete me.markers[data.mapId];
+        delete me.markers[mapId]
     }
 
     /**
@@ -162,12 +180,12 @@ class GoogleMaps extends Base {
             response;
 
         if (!me.geoCoder) {
-            me.geoCoder = new google.maps.Geocoder();
+            me.geoCoder = new google.maps.Geocoder()
         }
 
         response = await me.geoCoder.geocode(data);
 
-        return JSON.parse(JSON.stringify(response));
+        return JSON.parse(JSON.stringify(response))
     }
 
     /**
@@ -176,18 +194,54 @@ class GoogleMaps extends Base {
      * @param {String} data.mapId
      */
     hideMarker(data) {
-        this.markers[data.mapId][data.id].setMap(null);
+        this.markers[data.mapId][data.id].setMap(null)
     }
 
     /**
+     * @summary Loads the Maps API and resolves only once `google.maps` is populated.
+     *
+     * The URL returns a BOOTSTRAP STUB, not the API. The script's `load` event fires when that stub
+     * finishes downloading, while `google.maps` appears only after the stub's own asynchronous fetch
+     * completes and calls the function named by `callback`. Awaiting `DomAccess.loadScript` alone
+     * therefore resolves too early, `Base#executeLoadFiles` marks the addon ready, and the first
+     * `create()` throws `ReferenceError: google is not defined`.
+     *
+     * So the awaited promise is settled by the callback, and `loadScript` contributes only its
+     * rejection path — a dead network still fails rather than hanging.
+     *
+     * One callback name for the window is enough, and does not need sharing machinery around it.
+     * `Main#registerAddon` keys its single-instance guard on `className`, so even a `WS/` workspace
+     * copy of this addon collapses onto the one instance; `Base#executeLoadFiles` then calls this
+     * once. Reaching a second waiter would take a `mainThreadAddons` list naming both this addon and
+     * a differently-named one that also loads Maps, which is not a configuration anyone writes.
      * @protected
+     * @returns {Promise<void>}
      */
-    loadApi() {
+    async loadFiles() {
         let key = Neo.config.googleMapsApiKey,
-            url = ' https://maps.googleapis.com/maps/api/js';
+            url = 'https://maps.googleapis.com/maps/api/js';
 
-        DomAccess.loadScript(`${url}?key=${key}&v=weekly&callback=Neo.emptyFn`).then(() => {
-            console.log('GoogleMaps API loaded');
+        if (!key) {
+            console.warn(
+                'Neo.main.addon.GoogleMaps: Neo.config.googleMapsApiKey is not set. Google will reject the ' +
+                'request and render its own error surface. See ' +
+                'https://developers.google.com/maps/documentation/javascript/get-api-key'
+            )
+        }
+
+        await new Promise((resolve, reject) => {
+            const cleanup = () => {delete globalThis[readyCallbackName]};
+
+            globalThis[readyCallbackName] = () => {
+                cleanup();
+                resolve()
+            };
+
+            DomAccess.loadScript(`${url}?key=${key}&loading=async&v=weekly&callback=${readyCallbackName}`)
+                .catch(error => {
+                    cleanup();
+                    reject(error)
+                })
         })
     }
 
@@ -226,7 +280,7 @@ class GoogleMaps extends Base {
      * @param {Object} data.position
      */
     panTo(data) {
-        this.maps[data.mapId].panTo(data.position);
+        this.maps[data.mapId].panTo(data.position)
     }
 
     /**
@@ -235,7 +289,7 @@ class GoogleMaps extends Base {
      */
     removeMap(data) {
         delete this.maps[data.mapId];
-        delete this.markers[data.mapId];
+        delete this.markers[data.mapId]
     }
 
     /**
@@ -247,7 +301,7 @@ class GoogleMaps extends Base {
         let markers = this.markers[data.mapId];
 
         markers[data.id].setMap(null);
-        delete markers[data.id];
+        delete markers[data.id]
     }
 
     /**
@@ -256,7 +310,7 @@ class GoogleMaps extends Base {
      * @param {Object} data.value
      */
     setCenter(data) {
-        this.maps[data.id].setCenter(data.value);
+        this.maps[data.id].setCenter(data.value)
     }
 
     /**
@@ -265,7 +319,7 @@ class GoogleMaps extends Base {
      * @param {Number} data.value
      */
     setZoom(data) {
-        this.maps[data.id].setZoom(data.value);
+        this.maps[data.id].setZoom(data.value)
     }
 
     /**
@@ -274,10 +328,8 @@ class GoogleMaps extends Base {
      * @param {String} data.mapId
      */
     showMarker(data) {
-        this.markers[data.mapId][data.id].setMap(this.maps[data.mapId]);
+        this.markers[data.mapId][data.id].setMap(this.maps[data.mapId])
     }
 }
 
-let instance = Neo.applyClassConfig(GoogleMaps);
-
-export default instance;
+export default Neo.setupClass(GoogleMaps);

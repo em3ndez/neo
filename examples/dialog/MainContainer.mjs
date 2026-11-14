@@ -1,8 +1,8 @@
 import Button     from '../../src/button/Base.mjs';
 import CheckBox   from '../../src/form/field/CheckBox.mjs';
+import DemoDialog from './DemoDialog.mjs';
 import NeoArray   from '../../src/util/Array.mjs';
 import Toolbar    from '../../src/toolbar/Base.mjs';
-import DemoDialog from './DemoDialog.mjs';
 import Viewport   from '../../src/container/Viewport.mjs';
 
 /**
@@ -11,86 +11,136 @@ import Viewport   from '../../src/container/Viewport.mjs';
  */
 class MainContainer extends Viewport {
     static config = {
+        /**
+         * @member {String} className='Neo.examples.dialog.MainContainer'
+         * @protected
+         */
         className: 'Neo.examples.dialog.MainContainer',
-        layout   : 'base',
-        style    : {padding: '20px'},
         /**
-         * Custom config which gets passed to the dialog
-         * Either a dom node id, 'document.body' or null
-         * @member {String|null} boundaryContainerId='document.body'
+         * We are not using a container layout here
+         * @member {String} layout='base'
+         * @reactive
          */
-        boundaryContainerId: 'document.body',
+        layout: 'base',
         /**
-         * Custom config
-         * @member {Neo.dialog.Base|null} dialog=null
+         * @member {Object} style={padding:'20px'}
          */
-        dialog: null
-    }
-
-    /**
-     * @param {Object} config
-     */
-    construct(config) {
-        super.construct(config);
-
-        let me = this;
-
-        me.items = [{
+        style: {padding: '20px'},
+        /**
+         * @member {Object[]} items
+         */
+        items: [{
+            html: [
+                '<h3>The dialog is invoked from the "Create Dialog" button</h3>',
+                '<h1>Hide it by pressing the ESCAPE key. The button will be refocused</h1>'
+            ].join('')
+        }, {
             module: Toolbar,
-            items :[{
-                module : Button,
-                handler: me.createDialog.bind(me),
-                iconCls: 'fa fa-window-maximize',
-                text   : 'Create Dialog',
+            items : [{
+                module   : Button,
+                handler  : 'up.createDialog',
+                iconCls  : 'fa fa-window-maximize',
+                reference: 'create-dialog-button',
+                text     : 'Create Dialog',
             }, {
                 module        : CheckBox,
                 checked       : true,
                 hideLabel     : true,
                 hideValueLabel: false,
-                listeners     : {change: me.onDragLimitChange, scope: me},
+                listeners     : {change: 'up.onBoundaryContainerIdChange'},
                 style         : {marginLeft: '3em'},
-                valueLabelText: 'Limit Drag&Drop to the document.body'
+                valueLabel    : 'Limit Drag&Drop to the document.body'
+            }, {
+                module        : CheckBox,
+                checked       : true,
+                hideLabel     : true,
+                hideValueLabel: false,
+                listeners     : {change: 'up.onConfigChange'},
+                style         : {marginLeft: '3em'},
+                targetConfig  : 'animated',
+                valueLabel    : 'Animated'
+            }, {
+                module        : CheckBox,
+                checked       : true,
+                hideLabel     : true,
+                hideValueLabel: false,
+                listeners     : {change: 'up.onConfigChange'},
+                style         : {marginLeft: '1em'},
+                targetConfig  : 'modal',
+                valueLabel    : 'Modal'
             }, '->', {
                 module : Button,
-                handler: me.switchTheme.bind(me),
+                handler: 'up.switchTheme',
                 iconCls: 'fa fa-moon',
                 text   : 'Theme Dark'
             }]
-        }];
+        }]
     }
+
+    /**
+     * Custom class field which gets passed to the dialog. Either a dom node id, 'document.body' or null
+     * @member {String|null} boundaryContainerId='document.body'
+     */
+    boundaryContainerId = 'document.body'
+    /**
+     * Custom class field to store the created dialog.Base instance
+     * @member {Neo.dialog.Base|null} dialog=null
+     */
+    dialog = null
 
     /**
      * @param {Object} data
      */
     createDialog(data) {
-        let me = this;
+        let me                                       = this,
+            button                                   = data.component,
+            {appName, boundaryContainerId, windowId} = me;
 
-        data.component.disabled = true;
+        button.disabled = true;
 
         me.dialog = Neo.create(DemoDialog, {
-            animateTargetId    : data.component.id,
-            appName            : me.appName,
-            boundaryContainerId: me.boundaryContainerId,
-            listeners          : {close: me.onWindowClose, scope: me}
-        });
+            animated               : me.down({valueLabel: 'Animated'}).checked,
+            appName,
+            boundaryContainerId,
+            listeners              : {close: me.onWindowClose, scope: me},
+            modal                  : me.down({valueLabel: 'Modal'}).checked,
+            trapFocus              : true,
+            optionalAnimateTargetId: button.id,
+            title                  : 'Dialog 1',
+            windowId
+        })
     }
 
     /**
-     * @param {Object} data
+     * @param {Object} opts
      */
-    onDragLimitChange(data) {
-        this.dialog.boundaryContainerId = data.value ? 'document.body' : null
+    onBoundaryContainerIdChange(opts) {
+        let me                  = this,
+            {dialog}            = me,
+            boundaryContainerId = opts.value ? 'document.body' : null;
+
+        me.boundaryContainerId = boundaryContainerId
+
+        if (dialog) {
+            dialog.boundaryContainerId = boundaryContainerId
+        }
+    }
+
+    /**
+     * @param {Object} opts
+     */
+    onConfigChange(opts) {
+        if (this.dialog) {
+            this.dialog[opts.component.targetConfig] = opts.value
+        }
     }
 
     /**
      *
      */
     onWindowClose() {
-        let button = this.down({
-            text: 'Create Dialog'
-        });
-
-        button.disabled = false;
+        this.dialog = null;
+        this.getReference('create-dialog-button').disabled = false
     }
 
     /**
@@ -113,8 +163,9 @@ class MainContainer extends Viewport {
         }
 
         Neo.main.DomAccess.setBodyCls({
-            add   : [theme],
-            remove: [oldTheme]
+            add     : [theme],
+            remove  : [oldTheme],
+            windowId: this.windowId
         });
 
         button.set({
@@ -125,11 +176,9 @@ class MainContainer extends Viewport {
         if (dialog) {
             cls = dialog.cls;
             NeoArray.removeAdd(cls, oldTheme, theme);
-            dialog.cls = cls;
+            dialog.cls = cls
         }
     }
 }
 
-Neo.applyClassConfig(MainContainer);
-
-export default MainContainer;
+export default Neo.setupClass(MainContainer);

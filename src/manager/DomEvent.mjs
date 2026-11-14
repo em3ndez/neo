@@ -4,6 +4,7 @@ import FocusManager     from './Focus.mjs';
 import Logger           from '../util/Logger.mjs';
 import NeoArray         from '../util/Array.mjs';
 import VDomUtil         from '../util/VDom.mjs';
+import VNodeUtil        from '../util/VNode.mjs';
 
 const eventConfigKeys = [
     'bubble',
@@ -13,29 +14,58 @@ const eventConfigKeys = [
     'vnodeId'
 ];
 
+const handlerMap = {
+    change     : 'onChange',
+    click      : 'onClick',
+    contextmenu: 'onContextMenu',
+    dblclick   : 'onDoubleClick',
+    focusin    : 'onFocusIn',
+    focusout   : 'onFocusOut',
+    input      : 'onChange',
+    keydown    : 'onKeyDown',
+    keyup      : 'onKeyUp',
+    mousedown  : 'onMouseDown',
+    mouseenter : 'onMouseEnter',
+    mouseleave : 'onMouseLeave',
+    mousemove  : 'onMouseMove',
+    mouseup    : 'onMouseUp',
+    scroll     : 'onScroll',
+    wheel      : 'onWheel'
+};
+
 const globalDomEvents = [
     'change',
     'click',
     'contextmenu',
     'dblclick',
+    'drag:cancel',
     'drag:end',
     'drag:move',
     'drag:start',
     'focusin',
     'focusout',
     'input',
+    'intersect',
     'keydown',
     'keyup',
     'mousedown',
     'mouseenter',
     'mouseleave',
     'mouseup',
+    'neonavigate',
     'scroll',
     'selectionchange',
+    'touchmove',
+    'touchstart',
     'wheel'
 ];
 
 /**
+ * The DomEvent Manager is responsible for distributing DOM events to the matching components.
+ * It supports event delegation and "Logical Component Bubbling", allowing events to bubble up
+ * the logical component hierarchy (e.g. `component.parent`) even if the DOM hierarchy is
+ * disconnected (e.g. Portals, DragProxies, Multi-Window setups).
+ *
  * @class Neo.manager.DomEvent
  * @extends Neo.core.Base
  * @singleton
@@ -65,61 +95,119 @@ class DomEvent extends Base {
     }
 
     /**
+     * @member {Object} mountTimeouts={}
+     * @private
+     */
+    mountTimeouts = {}
+
+    /**
+     * Registers a native ResizeObserver for a specific component listener.
+     *
+     * **Architectural Note on Delegation:**
+     * Unlike standard DOM events (click, mouseenter) which support full CSS-selector delegation
+     * (e.g., `delegate: '.my-class'`), `resize` event delegation is strictly limited to exact Node IDs
+     * (e.g., `delegate: '#my-id'`).
+     *
+     * **The Intent:**
+     * A native `ResizeObserver` must be attached to a specific, existing physical DOM node. If we allowed
+     * CSS selectors, the manager would have to recursively scan the DOM on every mutation to find new
+     * matching nodes and dynamically attach/detach observers. For highly permutable DOM structures
+     * (like virtualized grids or dynamic lists), this continuous polling and observer thrashing
+     * would destroy performance. Therefore, observing dynamic children requires manual iteration
+     * and explicit ID registration by the parent component.
      *
      * @param {Neo.component.Base} component
-     * @param {data} event
+     * @param {Object} event
      */
-    addResizeObserver(component, event) {
-        if (!Neo.main.addon.ResizeObserver) {
-            console.error('For using resize domListeners, you must include main.addon.ResizeObserver.', event)
+    async addResizeObserver(component, event) {
+        let {windowId}     = component,
+            targetId       = component.id,
+            ResizeObserver = await Neo.currentWorker.getAddon('ResizeObserver', windowId);
+
+        // ResizeObservers need to get registered to a specific target id
+        if (event.delegate?.startsWith('#')) {
+            targetId = event.delegate.substring(1)
         }
 
-        Neo.main.addon.ResizeObserver.register({
-            appName: component.appName,
-            id     : component.id
-        })
+        ResizeObserver.register({componentId: component.id, id: targetId, windowId})
     }
 
     /**
+     * Iterates the event path to find matching listeners on components.
+     * It utilizes `ComponentManager.getParentPath()` to construct a logical component path,
+     * ensuring events bubble to logical ancestors (like a Dashboard owning a DragProxy)
+     * even if they are not physical ancestors in the DOM.
+     *
      * @param {Object} event
+     * @param {String} event.windowId Originating document from the Main-to-App message envelope
      * @protected
      */
     fire(event) {
-        let me         = this,
-            bubble     = true,
-            data       = event.data || {},
-            eventName  = event.eventName,
-            i          = 0,
-            listeners  = null,
-            pathIds    = data.path.map(e => e.id),
-            path       = ComponentManager.getParentPath(pathIds),
-            len        = path.length,
+        let me          = this,
+            bubble      = true,
+            data        = event.data || {},
+            {eventName} = event;
+
+        // Bypass standard bubbling for explicitly mapped resize events from the Main Thread registry
+        if (eventName === 'resize' && Array.isArray(data.componentIds)) {
+            data.componentIds.forEach(cmpId => {
+                let component = Neo.getComponent(cmpId),
+                    listeners = me.items[cmpId]?.[eventName];
+
+                if (component && listeners) {
+                    listeners.forEach(listener => {
+                        let eventData = Neo.clone(data, true, true);
+                        eventData.component = component;
+                        eventData.currentTarget = data.id;
+
+                        if (Neo.isString(listener.fn)) {
+                            me.bindCallback(listener.fn, 'fn', listener.scope, listener)
+                        }
+                        listener.fn.apply(listener.scope || globalThis, [eventData]);
+                    });
+                }
+            });
+            return
+        }
+
+        let i           = 0,
+            listeners   = null,
+            pathIds     = data.path ? data.path.map(e => e.id) : [],
+            path        = ComponentManager.getParentPath(pathIds),
+            len         = path.length,
             component, delegationTargetId, id, preventFire;
 
         for (; i < len; i++) {
             id        = path[i];
             component = Neo.getComponent(id);
 
-            if (!component || component.disabled) {
-                break;
+            if (!component || (eventName !== 'resize' && component.disabled)) {
+                break
+            }
+
+            if (eventName === 'scroll') {
+                if (component.saveScrollPosition && typeof component.onScrollCapture === 'function') {
+                    component.onScrollCapture(data)
+                }
             }
 
             listeners = me.items[id]?.[eventName];
 
             if (listeners) {
-                // console.log('fire', eventName, data, listeners, path);
-
                 if (Array.isArray(listeners)) {
-                    listeners.forEach(listener => {
+                    // Stop iteration if a handler returns false
+                    listeners.every(listener => {
+                        let result;
+
                         if (listener && listener.fn) {
-                            delegationTargetId = me.verifyDelegationPath(listener, data.path);
+                            delegationTargetId = me.verifyDelegationPath(listener, data.path, path);
 
                             if (delegationTargetId !== false) {
                                 preventFire = false;
 
                                 // we only want mouseenter & leave to fire on their top level nodes, not for children
                                 if (eventName === 'mouseenter' || eventName === 'mouseleave') {
-                                    preventFire = !DomEvent.verifyMouseEnterLeave(component, data, delegationTargetId, eventName);
+                                    preventFire = !DomEvent.verifyMouseEnterLeave(component, data, delegationTargetId, eventName)
                                 }
 
                                 if (!preventFire) {
@@ -127,15 +215,25 @@ class DomEvent extends Base {
                                     data = Neo.clone(data, true, true);
 
                                     data.component = component;
-                                    listener.fn.apply(listener.scope || globalThis, [data]);
 
-                                    if (!listener.bubble) {
-                                        bubble = false;
+                                    // Handler needs to know which actual target matched the delegate
+                                    data.currentTarget = delegationTargetId;
+
+                                    if (Neo.isString(listener.fn)) {
+                                        me.bindCallback(listener.fn, 'fn', listener.scope, listener)
+                                    }
+
+                                    result = listener.fn.apply(listener.scope || globalThis, [data]);
+
+                                    if (listener.bubble === false) {
+                                        bubble = false
                                     }
                                 }
                             }
                         }
-                    });
+                        // If a listener returns false, we stop iterating the listeners
+                        return result !== false
+                    })
                 }
             }
 
@@ -143,27 +241,42 @@ class DomEvent extends Base {
             if (eventName === 'focusin' || eventName === 'focusout') {
                 FocusManager['on' + Neo.capitalize(eventName)]({
                     componentPath: path,
-                    data
+                    data,
+                    windowId     : event.windowId
                 });
 
-                break;
+                break
             }
 
-            if (!bubble) {
-                break;
+            // Honor the Event cancelBubble property
+            if (!bubble || data.cancelBubble) {
+                break
             }
         }
 
-        if (eventName.startsWith('drop')) {
+        if (eventName === 'contextmenu' && data.ctrlKey) {
+            Neo.util?.Logger?.onContextMenu(data)
+        } else if (eventName.startsWith('drag:') || eventName.startsWith('drop')) {
             let dragZone = data.dragZoneId && Neo.get(data.dragZoneId);
 
             if (dragZone) {
-                dragZone.fire(eventName, data);
-                dragZone[{
-                    'drop'      : 'onDrop',
-                    'drop:enter': 'onDropEnter',
-                    'drop:leave': 'onDropLeave',
-                }[eventName]].call(dragZone, data);
+                if (eventName.startsWith('drag:')) {
+                    dragZone[{
+                        'drag:cancel': 'onDragCancel',
+                        'drag:end'   : 'onDragEnd',
+                        'drag:move'  : 'onDragMove'
+                    }[eventName]]?.(data)
+                } else {
+                    dragZone.fire(eventName, data);
+                    dragZone[{
+                        'drop'      : 'onDrop',
+                        'drop:enter': 'onDropEnter',
+                        'drop:leave': 'onDropLeave',
+                    }[eventName]].call(dragZone, data)
+                }
+            } else if (eventName === 'drag:cancel' && data.crossWindow) {
+                // Escape in a window that owns no gesture: a cross-window drag may belong to another one
+                Neo.manager.DragCoordinator?.cancelCrossWindowGesture({windowId: event.windowId})
             }
         }
     }
@@ -175,12 +288,14 @@ class DomEvent extends Base {
      */
     generateListenerConfig(config, scope) {
         return {
+            bubble   : config.bubble,
             delegate : config.delegate,
             eventName: config.eventName,
             id       : scope.id,
             opts     : config,
+            priority : config.priority,
             scope    : config.scope   || scope,
-            vnodeId  : config.vnodeId || scope.id
+            vnodeId  : config.vnodeId || scope.vdom.id
         };
     }
 
@@ -190,16 +305,17 @@ class DomEvent extends Base {
         if (Neo.isObject(config)) {
             Object.keys(config).forEach(key => {
                 if (!eventConfigKeys.includes(key)) {
-                    eventName = key;
+                    eventName = key
                 }
-            });
+            })
         }
 
-        return eventName;
+        return eventName
     }
 
     /**
      * @param {Object} config
+     * @param {Boolean} config.bubble
      * @param {String} config.delegate
      * @param {String} config.eventName
      * @param {String} config.id
@@ -215,18 +331,76 @@ class DomEvent extends Base {
         if (listeners?.[config.id]) {
             event = listeners[config.id][config.eventName];
 
-            return event || null;
+            return event || null
         }
     }
 
     /**
+     * @summary Matches a bracketed attribute selector (`[attr=value]` or `[attr]`) against a serialized DOM path node.
+     * Supports `data-*` (`node.data`), `aria-*` (`node.aria`), `role` (`node.role`), and `tabindex` (`node.tabIndex`).
+     * @param {Object} node     Serialized event path node from `Neo.main.DomEvents#getTargetData`
+     * @param {String} selector Bracketed attribute selector, e.g. `'[data-ref=foo]'` or `'[role=button]'`
+     * @returns {Boolean}
+     */
+    matchesAttributeTarget(node, selector) {
+        let content  = selector.slice(1, -1).trim(),
+            eqIndex  = content.indexOf('='),
+            hasValue = eqIndex !== -1,
+            attrName = (hasValue ? content.slice(0, eqIndex) : content).trim(),
+            expected = hasValue ? content.slice(eqIndex + 1).trim().replace(/^['"]|['"]$/g, '') : null,
+            actual, camelKey, rawKey;
+
+        if (!attrName || !node) {
+            return false
+        }
+
+        if (attrName.startsWith('data-')) {
+            rawKey   = attrName.substring(5);
+            camelKey = Neo.camel(rawKey);
+            actual   = node.data?.[camelKey] ?? node.data?.[rawKey] ?? node.data?.[attrName]
+        } else if (attrName.startsWith('aria-')) {
+            rawKey   = attrName.substring(5);
+            camelKey = Neo.camel(rawKey);
+            actual   = node.aria?.[rawKey] ?? node.aria?.[camelKey] ?? node.aria?.[attrName]
+        } else if (attrName === 'role') {
+            actual = node.role
+        } else if (attrName === 'tabindex') {
+            actual = node.tabIndex
+        } else {
+            return false
+        }
+
+        if (hasValue) {
+            return actual !== undefined && actual !== null && String(actual) === expected
+        }
+
+        return actual !== undefined && actual !== null
+    }
+
+    /**
      * Mounts local domEvent listeners for a given component
+     *
+     * Every caller reaches this after a delay — `updateDomListeners()` defers 50ms, `mixin.DomEvents`
+     * 150ms — so the window can close between the decision to mount and this. `component.mounted`
+     * cannot report that: the App Worker's model outlives its window's port and stays `true`. The
+     * check therefore belongs HERE, at the single point both schedulers funnel through, rather than
+     * at each of them; a third scheduler inherits it instead of having to remember it.
+     *
+     * Failing toward mounting is deliberate. A worker without the predicate behaves exactly as it did
+     * before this guard existed — absence must never silently skip a mount, which is the opposite
+     * direction from a release guard, where absence must never skip the release.
+     *
      * @param {Neo.component.Base} component
      * @protected
      */
     mountDomListeners(component) {
-        let listeners   = this.items[component.id],
+        let me          = this,
+            listeners   = me.items[component.id],
             localEvents = [];
+
+        if (Neo.currentWorker?.isWindowDeparted?.(component.windowId)) {
+            return
+        }
 
         if (listeners) {
             Object.entries(listeners).forEach(([eventName, value]) => {
@@ -234,11 +408,28 @@ class DomEvent extends Base {
                     eventName = event.eventName;
 
                     if (eventName === 'resize') {
-                        this.addResizeObserver(component, event)
-                    } else if (eventName && (event.local || !globalDomEvents.includes(eventName))) {
+                        me.addResizeObserver(component, event)
+                    } else if (eventName && !event.mounted && (event.local || !globalDomEvents.includes(eventName))) {
+                        event.mounted = true;
+
+                        let options = {};
+
+                        if (event.opts) {
+                            if (Object.hasOwn(event.opts, 'capture')) {
+                                options.capture = event.opts.capture
+                            }
+                            if (Object.hasOwn(event.opts, 'once')) {
+                                options.once = event.opts.once
+                            }
+                            if (Object.hasOwn(event.opts, 'passive')) {
+                                options.passive = event.opts.passive
+                            }
+                        }
+
                         localEvents.push({
                             name   : eventName,
-                            handler: 'domEventListener',
+                            handler: handlerMap[eventName] || 'domEventListener',
+                            options,
                             vnodeId: event.vnodeId
                         })
                     }
@@ -246,7 +437,7 @@ class DomEvent extends Base {
             });
 
             if (localEvents.length > 0) {
-                Neo.worker.App.promiseMessage('main', {
+                Neo.worker.App.promiseMessage(component.windowId, {
                     action : 'addDomListener',
                     appName: component.appName,
                     events : localEvents
@@ -260,38 +451,42 @@ class DomEvent extends Base {
     }
 
     /**
-     * @param {Object} config
-     * @param {String} config.delegate
-     * @param {String} config.eventName
-     * @param {String} config.id
+     * @param {Object}  config
+     * @param {Boolean} config.bubble
+     * @param {String}  config.delegate
+     * @param {String}  config.eventName
+     * @param {String}  config.id
      * @param {Boolean} config.local
-     * @param {Number} config.opts
-     * @param {Number} config.originalConfig
-     * @param {String} config.ownerId
-     * @param {Number} config.priority
-     * @param {Object} config.scope
-     * @param {String} config.vnodeId
+     * @param {Number}  config.opts
+     * @param {Number}  config.originalConfig
+     * @param {String}  config.ownerId
+     * @param {Number}  config.priority=1
+     * @param {Object}  config.scope
+     * @param {String}  config.vnodeId
      * @returns {Boolean} true if the listener got registered successfully (false in case it was already there)
      */
     register(config) {
-        let alreadyRegistered = false,
-            eventName         = config.eventName,
-            id                = config.id,
-            listeners         = this.items,
-            opts              = config.opts,
-            scope             = config.scope,
-            fnType            = typeof opts,
+        let me                           = this,
+            alreadyRegistered            = false,
+            {eventName, id, opts, scope} = config,
+            listeners                    = me.items,
+            fnType                       = typeof opts,
             fn, listener, listenerConfig, listenerId;
 
+        // Ensure we register the listener under the component ID, even if it is a wrapper node
+        if (config.ownerId) {
+            id = config.ownerId
+        }
+
         if (fnType === 'function' || fnType === 'string') {
-            fn = opts;
+            fn = opts
         } else {
             fn    = opts.fn;
-            scope = opts.scope || scope;
+            scope = opts.scope || scope
         }
 
         if (!listeners[id]) {
-            listeners[id] = {};
+            listeners[id] = {}
         }
 
         if (listeners[id][eventName]) {
@@ -303,48 +498,72 @@ class DomEvent extends Base {
                     listener[key].scope         === scope &&
                     listener[key].delegate      === config.delegate
                 ) {
-                    alreadyRegistered = true;
+                    alreadyRegistered = true
                 }
             })
         } else {
-            listeners[id][eventName] = [];
+            listeners[id][eventName] = []
         }
 
         if (alreadyRegistered === true) {
             return false
         }
 
-        // console.log('manager.DomEvent register', eventName, config);
-
         listenerId = Neo.getId('dom-event');
 
         config.listenerId = listenerId;
 
+        let local = config.local || (Neo.isObject(opts) && opts.local) || false;
+
         listenerConfig = {
-            bubble        : config.hasOwnProperty('bubble') ? config.bubble : opts.hasOwnProperty('bubble') ? opts.bubble : true,
+            bubble        : Object.hasOwn(config, 'bubble') ? config.bubble : Object.hasOwn(opts, 'bubble') ? opts.bubble : true,
             delegate      : config.delegate,
             eventName,
             fn,
             id            : listenerId,
-            mounted       : !config.local && globalDomEvents.includes(eventName),
+            local,
+            mounted       : !local && globalDomEvents.includes(eventName),
             originalConfig: config.originalConfig,
             ownerId       : config.ownerId,
-            priority      : config.priority || 1,
+            priority      : config.priority || opts.priority || 1,
             scope,
-            vnodeId       : config.vnodeId
+            vnodeId       : config.vnodeId || opts.vnodeId || config.id
         };
 
-        this.map[listenerId] = listenerConfig;
+        me.map[listenerId] = listenerConfig;
 
         listeners[id][eventName].push(listenerConfig);
 
-        listeners[id][eventName].sort((a, b) => a.priority > b.priority);
+        listeners[id][eventName].sort((a, b) => b.priority - a.priority);
 
         return true
     }
 
     /**
+     * Resets the mounted flag for local domEvent listeners
+     * @param {Neo.component.Base} component
+     * @protected
+     */
+    resetMountedDomListeners(component) {
+        let me        = this,
+            listeners = me.items[component.id];
+
+        if (listeners) {
+            Object.entries(listeners).forEach(([eventName, value]) => {
+                value.forEach(event => {
+                    eventName = event.eventName;
+
+                    if (eventName !== 'resize' && eventName && (event.local || !globalDomEvents.includes(eventName))) {
+                        event.mounted = false
+                    }
+                })
+            })
+        }
+    }
+
+    /**
      * @param {Object} config
+     * @param {Boolean} config.bubble
      * @param {String} config.eventName
      * @param {String} config.id
      * @param {Object} config.opts
@@ -362,7 +581,7 @@ class DomEvent extends Base {
         let listener = this.getListener(config);
 
         if (listener) {
-            console.log('listener found', listener);
+            console.log('listener found', listener)
         }
     }
 
@@ -388,7 +607,7 @@ class DomEvent extends Base {
                         for (; i < len; i++) {
                             if (listeners[i].originalConfig === oldDomListener) {
                                 NeoArray.remove(listeners, listeners[i]);
-                                break;
+                                break
                             }
                         }
                     }
@@ -400,70 +619,131 @@ class DomEvent extends Base {
                 Object.entries(domListener).forEach(([key, value]) => {
                     if (!eventConfigKeys.includes(key)) {
                         me.register({
-                            delegate      : domListener.delegate || value.delegate || '#' + component.id,
+                            bubble        : Object.hasOwn(domListener, 'bubble') ? domListener.bubble : (value && Object.hasOwn(value, 'bubble')) ? value.bubble : true,
+                            delegate      : domListener.delegate || value.delegate || '#' + (component.vdom.id || component.id),
                             eventName     : key,
-                            id            : component.id,
+                            id            : component.vdom.id || component.id, // honor wrapper nodes
                             opts          : value,
                             originalConfig: domListener,
                             ownerId       : component.id,
-                            scope         : domListener.scope || component,
-                            vnodeId       : domListener.vnodeId || value.vnodeId || component.id
+                            priority      : domListener.priority || value.priority || 1,
+                            scope         : domListener.scope    || component,
+                            vnodeId       : domListener.vnodeId  || value.vnodeId  || component.vdom?.id || component.id
                         })
                     }
                 })
             });
 
-            if (component.mounted) {
-                setTimeout(() => {
+            if (component.mounted && domListeners?.length > 0) {
+                if (me.mountTimeouts[component.id]) {
+                    clearTimeout(me.mountTimeouts[component.id])
+                }
+
+                me.mountTimeouts[component.id] = setTimeout(() => {
+                    // Freed before the work, not after: the slot describes a PENDING mount, and a
+                    // mount that declines to run still ends the pending state.
+                    delete me.mountTimeouts[component.id];
+
                     me.mountDomListeners(component)
-                }, 100)
+                }, 50)
             }
         } else {
-            Logger.logError('Component.domListeners have to be an array', component);
+            Logger.logError('Component.domListeners have to be an array', component)
         }
     }
 
     /**
+     * @summary Matches delegates within physical/logical ancestry; ID-only paths need no class data.
+     * This check supports two modes:
+     * 1. **DOM Ancestry (Standard):** Checks if the target is physically inside the listener's DOM node.
+     * 2. **Logical Ancestry (Fallback):** If the DOM check fails, it checks the `componentPath` to see if the
+     *    target belongs to a component that is logically a descendant of the listener component.
+     *    This is crucial for handling events from detached components (Portals/Proxies).
+     *
+     * String `delegate` grammar: space-separated tokens, each one simple selector (`#id`, `.cls`, a bare class name,
+     * `[attr]`, or `[attr=value]` with an optionally quoted value that may contain spaces but not `]`). Supported
+     * attribute names are `data-*`, `aria-*`, `role`, and `tabindex`. Compound selectors on a single node (such as
+     * `.btn[data-ref=foo]`) are not supported and will not match.
+     *
      * @param {Object} listener
-     * @param {Array} path
-     * @returns {Boolean|String} true in case the delegation string matches the event path
+     * @param {Array} path            The raw DOM path from the event
+     * @param {Array} [componentPath] The logical component ID path
+     * @returns {Boolean|String} true/targetId in case the delegation string matches the event path
      */
-    verifyDelegationPath(listener, path) {
-        let delegationArray = listener.delegate.split(' '),
-            j               = 0,
-            len             = delegationArray.length,
-            pathLen         = path.length,
-            hasMatch, i, item, isId, targetId;
+    verifyDelegationPath(listener, path, componentPath) {
+        let {delegate} = listener,
+            j          = 0,
+            pathLen    = path.length,
+            targetId;
 
-        for (i=len-1; i >= 0; i--) {
-            hasMatch = false;
-            item     = delegationArray[i];
-            isId     = item.startsWith('#');
+        if (typeof delegate === 'function') {
+            j = delegate(path);
 
-            if (isId || item.startsWith('.')) {
-                item = item.substr(1);
+            if (j != null) {
+                targetId = path[j].id
             }
+        } else {
+            let delegationArray = delegate.match(/\[[^\]]+\]|\S+/g) || [],
+                len             = delegationArray.length,
+                hasMatch, i, isAttribute, isId, item, matchNode;
 
-            for (; j < pathLen; j++) {
-                if (
-                    (isId && path[j].id === item) ||
-                    path[j].cls.includes(item)
-                ) {
-                    hasMatch = true;
-                    targetId = path[j].id;
-                    break
+            for (i=len-1; i >= 0; i--) {
+                hasMatch    = false;
+                item        = delegationArray[i];
+                isAttribute = item.startsWith('[') && item.endsWith(']');
+                isId        = !isAttribute && item.startsWith('#');
+
+                if (isId || (!isAttribute && item.startsWith('.'))) {
+                    item = item.substring(1)
                 }
-            }
 
-            if (!hasMatch) {
-                return false
+                for (; j < pathLen; j++) {
+                    matchNode = isAttribute
+                        ? this.matchesAttributeTarget(path[j], item)
+                        : isId
+                            ? path[j].id === item
+                            : path[j].cls?.includes(item);
+
+                    if (matchNode) {
+                        hasMatch = true;
+                        targetId = path[j].id;
+                        break
+                    }
+                }
+
+                if (!hasMatch) {
+                    return false
+                }
             }
         }
 
-        // ensure the delegation path is a child of the owner components root node
-        for (; j < pathLen; j++) {
-            if (path[j].id === listener.vnodeId) {
-                return targetId;
+        // Phase 1: Physical Boundary Check (The Fast Path)
+        // Ensure the delegation path is a child of the owner component's root node in the physical DOM.
+        // This covers standard inline components and is O(N).
+        for (let k = j; k < pathLen; k++) {
+            if (path[k].id === listener.vnodeId) {
+                return targetId
+            }
+        }
+
+        // Phase 2: Physical Anchor Verification (The Logical Fallback)
+        // If the physical check fails (listener not in path), we check the logical `componentPath`.
+        // The `componentPath` starts with the "Anchor Component" - the first component found in the physical path.
+        // We must verify that our `targetId` is physically inside this Anchor Component.
+        // If it is, and the Anchor is logically below the Listener (guaranteed if we are here), then the delegation is valid.
+        //
+        // This handles:
+        // - Portals: Anchor is the Portal Child. Target is inside Portal Child. Anchor -> Parent (Listener). Valid.
+        // - Menus: Anchor is SubMenu. Target is inside SubMenu. Anchor -> Menu (Listener). Valid.
+        // - Multi-Window: Anchor is ViewB. Target is inside ViewB. Anchor -> ViewA (Listener). Valid.
+        if (componentPath?.length > 0) {
+            let anchorId = componentPath[0];
+
+            // Verify target is physically inside the Anchor
+            for (let k = j; k < pathLen; k++) {
+                if (path[k].id === anchorId) {
+                    return targetId
+                }
             }
         }
 
@@ -482,11 +762,11 @@ class DomEvent extends Base {
             delegationVdom;
 
         if (targetId && targetId !== delegationTargetId) {
-            delegationVdom = VDomUtil.findVdomChild(component.vdom, delegationTargetId);
+            delegationVdom = VDomUtil.find(component.vdom, delegationTargetId);
 
             // delegationVdom can be undefined when dragging a proxy over the node.
             // see issues/1137 for details.
-            if (!delegationVdom || delegationVdom.vdom && VDomUtil.findVdomChild(delegationVdom.vdom, targetId)) {
+            if (!delegationVdom || delegationVdom.vdom && VDomUtil.find(delegationVdom.vdom, targetId)) {
                 return false
             }
         }
@@ -495,6 +775,4 @@ class DomEvent extends Base {
     }
 }
 
-let instance = Neo.applyClassConfig(DomEvent);
-
-export default instance;
+export default Neo.setupClass(DomEvent);

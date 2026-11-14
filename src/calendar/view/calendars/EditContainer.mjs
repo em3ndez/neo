@@ -36,6 +36,7 @@ class EditContainer extends FormContainer {
         owner: null,
         /**
          * @member {Neo.calendar.model.Calendar|null} record_=null
+         * @reactive
          */
         record_: null,
         /**
@@ -64,7 +65,9 @@ class EditContainer extends FormContainer {
     afterSetMounted(value, oldValue) {
         super.afterSetMounted(value, oldValue);
 
-        value && this.getField('name').focus();
+        value && this.getField('name').then(field => {
+            field.focus()
+        })
     }
 
     /**
@@ -110,13 +113,12 @@ class EditContainer extends FormContainer {
      *
      */
     createItems() {
-        let me     = this,
-            record = me.record;
+        let me       = this,
+            {record} = me;
 
         if (record) {
             me.colorsList = Neo.create({
                 module      : ColorsList,
-                appName     : me.appName,
                 listeners   : {change: me.onColorChange, scope: me},
                 parentId    : me.parentId,
                 value       : record.color,
@@ -165,7 +167,7 @@ class EditContainer extends FormContainer {
 
         // todo: we could add a confirm dialog
 
-        me.getModel().getStore('calendars').remove(me.record);
+        me.getStateProvider().getStore('calendars').remove(me.record);
         me.unmount();
     }
 
@@ -192,6 +194,4 @@ class EditContainer extends FormContainer {
     }
 }
 
-Neo.applyClassConfig(EditContainer);
-
-export default EditContainer;
+export default Neo.setupClass(EditContainer);

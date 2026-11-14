@@ -1,5 +1,4 @@
 import Component from '../Base.mjs';
-import Logger    from '../../util/Logger.mjs';
 
 /**
  * Convenience class to render an amChart
@@ -22,11 +21,13 @@ class AmChart extends Component {
         /**
          * See: https://www.amcharts.com/docs/v4/
          * @member {Object} chartConfig_=null
+         * @reactive
          */
         chartConfig_: null,
         /**
          * Stores the chart data
          * @member {Array|null} chartData_=null
+         * @reactive
          */
         chartData_: null,
         /**
@@ -51,14 +52,15 @@ class AmChart extends Component {
          * @member {String} package='am4charts'
          */
         package: 'am4charts',
+        style: {
+            height: '100%'
+        },
         /**
          * @member {Object} _vdom
          */
         _vdom:
-        {style: {position: 'relative', height: '100%', width: '100%'}, cn: [
-            {style: {position: 'absolute', height: '100%', width: '100%'}, cn: [
-                {style: {color:'red',height: '100%'}}
-            ]}
+        {style: {position: 'relative'}, cn: [
+            {style: {position: 'absolute', height: '100%', width: '100%'}, cn: [{}]}
         ]}
     }
 
@@ -69,15 +71,17 @@ class AmChart extends Component {
      * @protected
      */
     afterSetChartData(value, oldValue) {
-        let me = this;
+        let me = this,
+            {appName, dataPath, id, windowId} = me;
 
         if (value) {
             Neo.main.addon.AmCharts.updateData({
-                appName : me.appName,
-                data    : value,
-                dataPath: me.dataPath,
-                id      : me.id
-            });
+                appName,
+                data: value,
+                dataPath,
+                id,
+                windowId
+            })
         }
     }
 
@@ -88,23 +92,21 @@ class AmChart extends Component {
      * @protected
      */
     afterSetMounted(value, oldValue) {
-        let me = this;
+        let me                      = this,
+            {appName, id, windowId} = me,
+            opts                    = {appName, id, windowId};
 
         if (value === false && oldValue !== undefined) {
-            Neo.main.addon.AmCharts.destroy({
-                appName: me.appName,
-                id     : me.id
-            });
+            Neo.main.addon.AmCharts.destroy(opts)
         }
 
         super.afterSetMounted(value, oldValue);
 
         if (value) {
-            let opts = {
-                appName             : me.appName,
+            opts = {
+                ...opts,
                 combineSeriesTooltip: me.combineSeriesTooltip,
                 config              : me.chartConfig,
-                id                  : me.id,
                 package             : me.package,
                 type                : me.chartType
             };
@@ -114,9 +116,9 @@ class AmChart extends Component {
                 opts.dataPath = me.dataPath;
             }
 
-            setTimeout(() => {
-                Neo.main.addon.AmCharts.create(opts).then(me.onChartMounted);
-            }, 50);
+            me.timeout(50).then(() => {
+                Neo.main.addon.AmCharts.create(opts).then(me.onChartMounted)
+            })
         }
     }
 
@@ -129,25 +131,33 @@ class AmChart extends Component {
      */
     beforeSetChartConfig(value, oldValue) {
         if (!value) {
-            console.error('wrapper.AmChart defined without a chartConfig', this.id);
+            console.error('wrapper.AmChart defined without a chartConfig', this.id)
         }
 
         this.parseItemConfigs(value);
-        return value;
+        return value
+    }
+
+    destroy(...args) {
+        let {appName, id, windowId} = this;
+
+        Neo.main.addon.AmCharts.destroy({appName, id, windowId})
+
+        super.destroy(...args)
     }
 
     /**
      *
      */
     getVdomRoot() {
-        return this.vdom.cn[0].cn[0];
+        return this.vdom.cn[0].cn[0]
     }
 
     /**
      *
      */
     getVnodeRoot() {
-        return this.vnode.childNodes[0].childNodes[0];
+        return this.vnode.childNodes[0].childNodes[0]
     }
 
     /**
@@ -156,8 +166,24 @@ class AmChart extends Component {
     onChartMounted() {
 
     }
+
+    /**
+     * Serializes the AmChart into a JSON-compatible object.
+     * @returns {Object}
+     */
+    toJSON() {
+        let me = this;
+
+        return {
+            ...super.toJSON(),
+            chartConfig         : me.serializeConfig(me.chartConfig),
+            chartData           : me.serializeConfig(me.chartData),
+            chartType           : me.chartType,
+            combineSeriesTooltip: me.combineSeriesTooltip,
+            dataPath            : me.dataPath,
+            package             : me.package
+        }
+    }
 }
 
-Neo.applyClassConfig(AmChart);
-
-export default AmChart;
+export default Neo.setupClass(AmChart);

@@ -15,6 +15,7 @@ class PreviewComponent extends Component {
         className: 'RealWorld2.view.article.PreviewComponent',
         /**
          * @member {String|null} author_=null
+         * @reactive
          */
         author_: null,
         /**
@@ -24,34 +25,42 @@ class PreviewComponent extends Component {
         /**
          * ISO 8601 timestamp
          * @member {String|null} createdAt_=null
+         * @reactive
          */
         createdAt_: null,
         /**
          * @member {String|null} description_=null
+         * @reactive
          */
         description_: null,
         /**
          * @member {Boolean} favorited_=false
+         * @reactive
          */
         favorited_: false,
         /**
          * @member {Number|null} favoritesCount_=null
+         * @reactive
          */
         favoritesCount_: null,
         /**
          * @member {String|null} slug_=null
+         * @reactive
          */
         slug_: null,
         /**
          * @member {Array|null} tagList_=null
+         * @reactive
          */
         tagList_: null,
         /**
          * @member {String|null} title_=null
+         * @reactive
          */
         title_: null,
         /**
          * @member {String|null} userImage_=null
+         * @reactive
          */
         userImage_: null,
         /**
@@ -85,7 +94,7 @@ class PreviewComponent extends Component {
                 cn  : [
                     {tag: 'h1',   flag: 'title'},
                     {tag: 'p',    flag: 'description'},
-                    {tag: 'span', html: 'Read more...'}
+                    {tag: 'span', text: 'Read more...'}
                 ]
             }]
         }
@@ -120,7 +129,7 @@ class PreviewComponent extends Component {
 
         // todo: disabled until the new profile view is ready
         //node.href = href;
-        node.html = value;
+        node.text = value;
 
         //VDomUtil.getByFlag(vdom, 'userImageLink').href = href;
 
@@ -134,7 +143,7 @@ class PreviewComponent extends Component {
      * @protected
      */
     afterSetCreatedAt(value, oldValue) {
-        VDomUtil.getByFlag(this.vdom, 'createdAt').html = new Intl.DateTimeFormat('en-US', {
+        VDomUtil.getByFlag(this.vdom, 'createdAt').text = new Intl.DateTimeFormat('en-US', {
             day  : 'numeric',
             month: 'long',
             year : 'numeric'
@@ -150,7 +159,7 @@ class PreviewComponent extends Component {
      * @protected
      */
     afterSetDescription(value, oldValue) {
-        VDomUtil.getByFlag(this.vdom, 'description').html = value;
+        VDomUtil.getByFlag(this.vdom, 'description').text = value;
         this.update();
     }
 
@@ -182,7 +191,7 @@ class PreviewComponent extends Component {
      * @protected
      */
     afterSetFavoritesCount(value, oldValue) {
-        VDomUtil.getByFlag(this.vdom, 'favoritesCount').html = ' ' + value;
+        VDomUtil.getByFlag(this.vdom, 'favoritesCount').text = ' ' + value;
         this.update();
     }
 
@@ -225,7 +234,7 @@ class PreviewComponent extends Component {
                 tagList.cn.push({
                     tag : 'li',
                     cls : ['tag-default', 'tag-pill', 'tag-outline'],
-                    html: item
+                    text: item
                 })
             });
 
@@ -242,7 +251,7 @@ class PreviewComponent extends Component {
      * @protected
      */
     afterSetTitle(value, oldValue) {
-        VDomUtil.getByFlag(this.vdom, 'title').html = value;
+        VDomUtil.getByFlag(this.vdom, 'title').text = value;
         this.update();
     }
 
@@ -271,6 +280,4 @@ class PreviewComponent extends Component {
     }
 }
 
-Neo.applyClassConfig(PreviewComponent);
-
-export default PreviewComponent;
+export default Neo.setupClass(PreviewComponent);

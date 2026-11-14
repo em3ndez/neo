@@ -1,5 +1,4 @@
-import StringUtil from '../../util/String.mjs';
-import Text       from './Text.mjs';
+import Text from './Text.mjs';
 
 /**
  *
@@ -28,18 +27,32 @@ class TextArea extends Text {
          */
         ntype: 'textarea',
         /**
+         * Set this to `true` to have the text area grow and shrink to accommodate
+         * any height of text. Bounds can be set using the `minHeight` and `maxHeight` settings.
+         * @member {Boolean} autoGrow=false
+         */
+        autoGrow_: false,
+        /**
          * @member {String[]} baseCls=['neo-textarea','neo-textfield']
          */
         baseCls: ['neo-textarea', 'neo-textfield'],
+        /**
+         * True shows a clear trigger in case the field has a non-empty value.
+         * @member {Boolean} clearable=false
+         * @reactive
+         */
+        clearable: false,
         /**
          * The visible width of the text control, in average character widths.
          * If it is specified, it must be a positive integer.
          * If it is not specified, the default value is 20.
          * @member {Number|null} cols_=null
+         * @reactive
          */
         cols_: null,
         /**
          * @member {String} inputTag_='textarea'
+         * @reactive
          */
         inputTag_: 'textarea',
         /**
@@ -47,16 +60,19 @@ class TextArea extends Text {
          * See: inputTag_
          * @member {String|null} inputType=null
          * @protected
+         * @reactive
          */
         inputType: null,
         /**
          * Use false to disable the browsers default resizing feature
          * @member {Boolean} resizable_=false
+         * @reactive
          */
         resizable_: false,
         /**
          * An integer > 0 or null
          * @member {Number|null} rows_=3
+         * @reactive
          */
         rows_: 3,
         /**
@@ -64,8 +80,26 @@ class TextArea extends Text {
          * If this attribute is not specified, soft is its default value.
          * https://developer.mozilla.org/en-US/docs/Web/HTML/Element/textarea
          * @member {String|null} wrap_=null
+         * @reactive
          */
         wrap_: null
+    }
+
+    /**
+     * Triggered after the autoGrow config got changed
+     * @param {Boolean} value
+     * @param {Boolean} oldValue
+     * @protected
+     */
+    afterSetAutoGrow(value, oldValue) {
+        let me = this;
+
+        value && me.syncAutoGrowMonitor();
+
+        // Restore any configured height if autoGrow turned off
+        if (!value) {
+            me.afterSetHeight(me._height)
+        }
     }
 
     /**
@@ -75,7 +109,7 @@ class TextArea extends Text {
      * @protected
      */
     afterSetCols(value, oldValue) {
-        this.changeInputElKey('cols', value);
+        this.changeInputElKey('cols', value)
     }
 
     /**
@@ -85,7 +119,18 @@ class TextArea extends Text {
      * @protected
      */
     afterSetInputTag(value, oldValue) {
-        this.changeInputElKey('tag', value);
+        this.changeInputElKey('tag', value)
+    }
+
+    /**
+     * Triggered after the mounted config got changed
+     * @param {Boolean} value
+     * @param {Boolean} oldValue
+     * @protected
+     */
+    afterSetMounted(value, oldValue) {
+        super.afterSetMounted(value, oldValue);
+        this.syncAutoGrowMonitor()
     }
 
     /**
@@ -99,7 +144,7 @@ class TextArea extends Text {
             style = this.getInputEl().style;
 
         style.resize = value ? null : 'none';
-        me.update();
+        me.update()
     }
 
     /**
@@ -109,7 +154,7 @@ class TextArea extends Text {
      * @protected
      */
     afterSetRows(value, oldValue) {
-        this.changeInputElKey('rows', value);
+        this.changeInputElKey('rows', value)
     }
 
     /**
@@ -119,13 +164,23 @@ class TextArea extends Text {
      * @protected
      */
     afterSetValue(value, oldValue) {
-        let inputEl = this.getInputEl();
+        let me      = this,
+            inputEl = me.getInputEl();
 
         if (inputEl) {
-            inputEl.html = StringUtil.escapeHtml(value);
+            inputEl.text = value
         }
 
         super.afterSetValue(value, oldValue);
+
+        if (me.autoGrow && me.mounted && me.readOnly) {
+            me.timeout(50).then(() => {
+                Neo.main.DomAccess.monitorAutoGrowHandler({
+                    id      : inputEl.id,
+                    windowId: me.windowId
+                })
+            })
+        }
     }
 
     /**
@@ -135,7 +190,7 @@ class TextArea extends Text {
      * @protected
      */
     afterSetWrap(value, oldValue) {
-        this.changeInputElKey('wrap', value);
+        this.changeInputElKey('wrap', value)
     }
 
     /**
@@ -146,10 +201,24 @@ class TextArea extends Text {
      * @protected
      */
     beforeSetWrap(value, oldValue) {
-        return this.beforeSetEnumValue(value, oldValue, 'wrap', 'wrapValues');
+        return this.beforeSetEnumValue(value, oldValue, 'wrap', 'wrapValues')
+    }
+
+    /**
+     *
+     */
+    async syncAutoGrowMonitor() {
+        let me = this;
+
+        if (me.mounted && me.autoGrow) {
+            // Delegate monitoring of sizes to the main thread.
+            Neo.main.DomAccess.monitorAutoGrow({
+                id       : me.getInputElId(),
+                autoGrow : me.autoGrow,
+                windowId : me.windowId
+            })
+        }
     }
 }
 
-Neo.applyClassConfig(TextArea);
-
-export default TextArea;
+export default Neo.setupClass(TextArea);

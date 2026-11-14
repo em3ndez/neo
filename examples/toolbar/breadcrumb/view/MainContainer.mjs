@@ -15,6 +15,7 @@ class MainContainer extends Viewport {
         className: 'Neo.examples.toolbar.breadcrumb.view.MainContainer',
         /**
          * @member {Neo.controller.Component} controller=MainContainerController
+         * @reactive
          */
         controller: MainContainerController,
         /**
@@ -102,6 +103,7 @@ class MainContainer extends Viewport {
         }],
         /**
          * @member {Object} layout={ntype:'vbox',align:'stretch'}
+         * @reactive
          */
         layout: {ntype: 'vbox', align: 'start'},
         /**
@@ -111,6 +113,4 @@ class MainContainer extends Viewport {
     }
 }
 
-Neo.applyClassConfig(MainContainer);
-
-export default MainContainer;
+export default Neo.setupClass(MainContainer);

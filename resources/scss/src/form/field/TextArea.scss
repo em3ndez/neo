@@ -2,6 +2,7 @@
     align-items   : stretch;
     display       : flex;
     flex-direction: column;
+    height        : auto;
 
     .neo-input-wrapper {
         flex: 1 0 auto;
@@ -12,7 +13,7 @@
     }
 
     .neo-field-trigger {
-        border-bottom: 1px solid var(--textfield-border-color);
+        height : inherit;
     }
 
     .neo-textfield-error {
@@ -37,5 +38,9 @@
         .neo-label-wrapper {
             height: calc(100% - 1.5em);
         }
+    }
+
+    &.neo-has-character-count.label-inline > .neo-label-wrapper {
+        height: 100%;
     }
 }

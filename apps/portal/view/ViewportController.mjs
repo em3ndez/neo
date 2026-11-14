@@ -1,0 +1,438 @@
+import Controller        from '../../../src/controller/Component.mjs';
+import CubeLayout        from '../../../src/layout/Cube.mjs';
+import NeoArray          from '../../../src/util/Array.mjs';
+import SeoService        from '../service/Seo.mjs';
+
+/**
+ * @summary The main controller for the portal's viewport.
+ *
+ * This controller is the central hub for the portal application. It is responsible for:
+ * - **Top-Level Routing:** It uses the `routes` config to map the main URL hash changes (e.g., /home, /learn, /blog) to specific methods, which in turn control which main view is active. It's important to note that while this controller handles the top-level navigation, child views can implement their own nested routing logic (see `Portal.view.learn.MainContainerController` for an example).
+ * - **Layout Management:** It manages the main content area's layout, including the "mixed" mode which uses a CubeLayout for slick transitions between views.
+ * - **SEO:** It coordinates with the `DocumentHead` main thread addon to update the document's title and meta tags on each route change, ensuring the application is SEO-friendly.
+ * - **Multi-Window Coordination:** It handles the disconnection of child windows, such as the live code example previews.
+ *
+ * @class Portal.view.ViewportController
+ * @extends Neo.controller.Component
+ */
+class ViewportController extends Controller {
+    /**
+     * Valid values for mainContentLayout
+     * @member {String[]} mainContentLayouts=['card','cube','mixed']
+     * @protected
+     * @static
+     */
+    static mainContentLayouts = ['card', 'cube', 'mixed']
+
+    static config = {
+        /**
+         * @member {String} className='Portal.view.ViewportController'
+         * @protected
+         */
+        className: 'Portal.view.ViewportController',
+        /**
+         * @member {String} ntype='viewport-controller'
+         * @protected
+         */
+        ntype: 'viewport-controller',
+        /**
+         * @member {Number|null} activeIndex_=null
+         * @reactive
+         */
+        activeIndex_: null,
+        /**
+         * @member {String|null} defaultHash='/home'
+         */
+        defaultHash: '/home',
+        /**
+         * @member {String} mainContentLayout_='card'
+         * @reactive
+         */
+        mainContentLayout_: 'card',
+        /**
+         * @member {Object} routes
+         */
+        routes: {
+            '/about-us'         : 'onAboutUsRoute',
+            '/docs'             : 'onDocsRoute',
+            '/examples'         : 'onExamplesRoute',
+            '/examples/{itemId}': 'onExamplesRoute',
+            '/home'             : 'onHomeRoute',
+            '/learn'            : 'onLearnRoute',
+            '/learn/{*itemId}'  : 'onLearnRoute',
+            '/news'             : 'onNewsRoute',
+            '/news/{*itemId}'   : 'onNewsRoute',
+            '/services'         : 'onServicesRoute'
+        },
+        /**
+         * Values are: large, medium, small, xSmall
+         * @member {String|null} size_=null
+         * @reactive
+         */
+        size_: null
+    }
+
+    /**
+     * @member {String[]} connectedApps=[]
+     */
+    connectedApps = []
+    /**
+     * Internal flag to store the amount of main navigation changes
+     * @member {Number} #transitionId=0
+     * @private
+     */
+    #transitionId = 0
+
+    /**
+     * Triggered after the size activeIndex got changed
+     * @param {Number|null} value
+     * @param {Number|null} oldValue
+     * @protected
+     */
+    afterSetActiveIndex(value, oldValue) {
+        value !== null && this.updateHeaderToolbar()
+    }
+
+    /**
+     * Triggered after the mainContentLayout config got changed
+     * @param {String} value
+     * @param {String} oldValue
+     * @protected
+     */
+    afterSetMainContentLayout(value, oldValue) {
+        let me                      = this,
+            {activeIndex, windowId} = me,
+            container               = me.component.getItem('main-content'); // happens before instantiation
+
+        if (oldValue === undefined) {
+            // We can not turn this method itself into async and await the addon response,
+            // since the container needs its layout right away
+            Neo.main.addon.LocalStorage.readLocalStorageItem({
+                key: 'mainContentLayout',
+                windowId
+            }).then(({value}) => {
+                if (value && value !== 'card') {
+                    me.mainContentLayout = value
+                }
+            })
+        }
+
+        if (value === 'cube') {
+            container.layout = {ntype: 'cube', activeIndex, fitContainer: true, hideInactiveCardsOnDestroy: true}
+        } else {
+            container.layout = {ntype: 'card', activeIndex}
+        }
+
+        Neo.main.addon.LocalStorage.updateLocalStorageItem({key: 'mainContentLayout', value, windowId})
+    }
+
+    /**
+     * Triggered after the size config got changed
+     * @param {String|null} value
+     * @param {String|null} oldValue
+     * @protected
+     */
+    afterSetSize(value, oldValue) {
+        value && this.updateHeaderToolbar()
+    }
+
+    /**
+     * Triggered before the mainContentLayout config gets changed
+     * @param {String} value
+     * @param {String} oldValue
+     * @protected
+     */
+    beforeSetMainContentLayout(value, oldValue) {
+        return this.beforeSetEnumValue(value, oldValue, 'mainContentLayout')
+    }
+
+    /**
+     * The route handlers (e.g., onAboutUsRoute, onBlogRoute) are now only responsible for
+     * setting the main content index. The logic for updating the document head is centralized
+     * in the onHashChange method.
+     * @param {Object} params
+     * @param {Object} value
+     * @param {Object} oldValue
+     */
+    onAboutUsRoute(params, value, oldValue) {
+        this.setMainContentIndex(5)
+    }
+
+    /**
+     * @param {Object} data
+     * @param {String} data.appName
+     * @param {Number} data.windowId
+     */
+    async onAppDisconnect({appName, windowId}) {
+        // Close popup windows when closing or reloading the main window
+        if (appName === 'Portal') {
+            Neo.Main.windowCloseAll({windowId})
+        }
+    }
+
+    /**
+     * @param {Object} data
+     */
+    onMediumSearchFieldChange(data) {
+        this.getReference('medium-list').filterItems(data)
+    }
+
+    /**
+     *
+     */
+    onConstructed() {
+        super.onConstructed();
+
+        let me = this;
+
+        Neo.currentWorker.on({
+            disconnect: me.onAppDisconnect,
+            scope     : me
+        });
+
+        Neo.main.addon.LocalStorage.readLocalStorageItem({
+            key     : 'portalTheme',
+            windowId: me.windowId
+        }).then(({value}) => {
+            if (value) {
+                me.setTheme(value, false)
+            } else if (Neo.config.prefersDarkTheme) {
+                me.setTheme('neo-theme-neo-dark', false)
+            } else {
+                // Nothing stored and no dark preference: the Portal keeps the theme it booted with
+                // (`themes[0]` in neo-config.json). The button's static icon does not know that
+                // theme, so sync it here without setting a theme or writing to storage.
+                me.updateThemeSwitchIcon(me.component.getTheme())
+            }
+        })
+    }
+
+    /**
+     * @param {Object} params
+     * @param {Object} value
+     * @param {Object} oldValue
+     */
+    onDocsRoute(params, value, oldValue) {
+        this.setMainContentIndex(6)
+    }
+
+    /**
+     * @param {Object} params
+     * @param {Object} value
+     * @param {Object} oldValue
+     */
+    onExamplesRoute(params, value, oldValue) {
+        this.setMainContentIndex(4)
+    }
+
+    /**
+     * This is the central handler for all route changes. It is now responsible for delegating
+     * the document's head metadata (title and description) updates to the `Portal.service.Seo` service.
+     * @param {Object} value               The new route object.
+     * @param {String} value.hashString    The new hash string.
+     * @param {Object} oldValue            The previous route object.
+     * @param {String} oldValue.hashString The previous hash string.
+     * @returns {Promise<void>}
+     */
+    async onHashChange(value, oldValue) {
+        await super.onHashChange(value, oldValue);
+        SeoService.onRouteChanged(value)
+    }
+
+    /**
+     * @param {Object} params
+     * @param {Object} value
+     * @param {Object} oldValue
+     */
+    onHomeRoute(params, value, oldValue) {
+        this.setMainContentIndex(0)
+    }
+
+    /**
+     * @param {Object} params
+     * @param {Object} value
+     * @param {Object} oldValue
+     */
+    onLearnRoute(params, value, oldValue) {
+        this.setMainContentIndex(1)
+    }
+
+    /**
+     * @param {Object} params
+     * @param {Object} value
+     * @param {Object} oldValue
+     */
+    onNewsRoute(params, value, oldValue) {
+        this.setMainContentIndex(2)
+    }
+
+    /**
+     * @param {Object} params
+     * @param {Object} value
+     * @param {Object} oldValue
+     */
+    onServicesRoute(params, value, oldValue) {
+        this.setMainContentIndex(3)
+    }
+
+    /**
+     * @param {Object} data
+     */
+    async onSwitchTheme(data) {
+        // `viewport.theme` stays null until the first switch, while the screen already shows the boot
+        // theme (`themes[0]`). `getTheme()` answers what is actually on screen, so the first click
+        // toggles away from it instead of assuming light and "switching" to the dark theme already shown.
+        let me       = this,
+            viewport = me.component,
+            oldTheme = viewport.getTheme(),
+            newTheme = oldTheme === 'neo-theme-neo-light' ? 'neo-theme-neo-dark' : 'neo-theme-neo-light';
+
+        // The reveal geometry belongs to the realm that owns the DOM: the App worker knows where
+        // the pointer was, not how a pseudo-element resolves a length. Passing the raw coordinates
+        // keeps the unit decision in one engine place instead of one copy per app.
+        //
+        // The catch is the decorative promise kept. The engine resolves rather than rejects — no
+        // API returns false, a failed reveal is caught inside — but this is a REMOTE method, and
+        // the transport can reject for reasons the callee never sees. Without this, a rejected
+        // round trip would skip the theme change entirely and leave the button doing nothing at
+        // all, which is a worse outcome than the missing animation it was meant to guard.
+        await Neo.main.DomAccess.startViewTransition({
+            delay   : 100,
+            reveal  : {x: data?.clientX, y: data?.clientY},
+            windowId: me.windowId
+        }).catch(() => {});
+
+        me.setTheme(newTheme)
+    }
+
+    /**
+     * This method orchestrates the visual transition between the main content cards.
+     * It uses a "mixed" layout mode, which temporarily switches to a CubeLayout for
+     * a 3D transition effect, and then back to a CardLayout for performance.
+     * @param {Number} index
+     */
+    async setMainContentIndex(index) {
+        let me                               = this,
+            {activeIndex, mainContentLayout} = me,
+            container                        = me.getReference('main-content'),
+            updateLayout                     = true,
+            transitionId;
+
+        if (index !== activeIndex) {
+            me.activeIndex = index;
+
+            if (
+                mainContentLayout === 'mixed' &&
+                // skip the initial layout-switch, since we do not need a transition
+                Neo.isNumber(activeIndex) &&
+                // also skip the layout switch in case the index >= 6, since a cube only has 6 faces
+                index < 6 &&
+                // also skip the layout switch in case we navigate back from a non-cube item
+                activeIndex < 6
+            ) {
+                me.#transitionId++;
+
+                transitionId = me.#transitionId;
+                updateLayout = false;
+
+                // enable "fast clicking" on main nav items => do not replace a cube layout with a new instance of cube
+                if (container.layout.ntype !== 'layout-cube') {
+                    await container.set({
+                        layout: {ntype: 'cube', activeIndex, fitContainer: true, hideInactiveCardsOnDestroy: true}
+                    });
+                    await me.timeout(20)
+                }
+
+                container.layout.activeIndex = index;
+
+                await me.timeout(1100);
+
+                if (transitionId === me.#transitionId) {
+                    await container.set({
+                        layout: {ntype: 'card', activeIndex: index}
+                    });
+                    await me.timeout(20)
+                }
+            }
+
+            if (updateLayout) {
+                container.layout.activeIndex = index
+            }
+        }
+    }
+
+    /**
+     * @param {String} theme
+     * @param {Boolean} [updateStorage=true]
+     */
+    setTheme(theme, updateStorage=true) {
+        let me = this;
+
+        me.component.theme = theme;
+
+        me.updateThemeSwitchIcon(theme);
+
+        if (updateStorage) {
+            Neo.main.addon.LocalStorage.updateLocalStorageItem({
+                key     : 'portalTheme',
+                value   : theme,
+                windowId: me.windowId
+            })
+        }
+    }
+
+    /**
+     *
+     */
+    async updateHeaderToolbar() {
+        let me                  = this,
+            {activeIndex, size} = me;
+
+        if (Neo.isNumber(activeIndex) && size) {
+            let headerSocialIcons = me.getReference('header-social-icons'),
+                {cls}             = headerSocialIcons,
+                vertical          = size === 'x-small',
+                hidden            = activeIndex !== 0 && vertical;
+
+            NeoArray.toggle(cls, 'hide-sidebar', hidden);
+
+            if (!hidden) {
+                NeoArray.toggle(cls, 'separate-bar', vertical)
+            }
+
+            headerSocialIcons.cls = cls;
+
+
+            if (hidden && vertical) {
+                await me.timeout(200)
+            }
+
+            headerSocialIcons.hidden = hidden
+        }
+
+        if (Neo.isNumber(activeIndex)) {
+            let headerCanvas = me.getReference('header-canvas'),
+                refs         = ['home-button', 'learn-button', 'news-header-button', 'services-button', 'examples-button'],
+                activeBtn    = me.getReference(refs[activeIndex]);
+
+            if (headerCanvas) {
+                headerCanvas.activeId = activeBtn?.id || null
+            }
+        }
+    }
+
+    /**
+     * Shows the icon for the theme the button switches to: a sun while the dark theme is on screen,
+     * a moon while the light theme is.
+     * @param {String} theme The theme currently on screen
+     */
+    updateThemeSwitchIcon(theme) {
+        let btn = this.getReference('theme-switch-button');
+
+        if (btn) {
+            btn.iconCls = theme === 'neo-theme-neo-dark' ? 'fa-solid fa-sun' : 'fa-solid fa-moon'
+        }
+    }
+}
+
+export default Neo.setupClass(ViewportController);

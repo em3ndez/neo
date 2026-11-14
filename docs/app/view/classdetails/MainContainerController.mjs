@@ -19,22 +19,9 @@ class MainContainerController extends Component {
      * @param {Object} data
      */
     onHeaderClick(data) {
-        let me                  = this,
-            record              = me.component.structureData,
-            mainContainer       = me.component.up('main-container'),
-            contentTabContainer = mainContainer.down('docs-content-tabcontainer'),
-            className           = (record.path ? record.path + '.' : '') + record.name;
-
-        contentTabContainer.add({
-            module       : SourceViewComponent,
-            id           : className + '__source',
-            structureData: record,
-
-            tabButtonConfig: {
-                iconCls: 'fa fa-code',
-                text   : className
-            }
-        });
+        Neo.Main.setRoute({
+            value: `/viewSource/${this.component.structureData.className}`
+        })
     }
 
     /**
@@ -50,23 +37,23 @@ class MainContainerController extends Component {
             countProtecteds = 0,
             countStatics    = 0;
 
-        store.items.forEach(item => {
+        store.forEach(item => {
             if (item.kind === 'function') {
-                countMethods++;
+                countMethods++
             } else if (item.kind === 'member') {
-                countConfigs++;
+                countConfigs++
             } else {
-                countEvents++;
+                countEvents++
             }
 
             if (item.access === 'private') {
-                countPrivates++;
+                countPrivates++
             } else if (item.access === 'protected') {
-                countProtecteds++;
+                countProtecteds++
             }
 
             if (item.scope === 'static') {
-                countStatics++;
+                countStatics++
             }
         });
 
@@ -75,7 +62,7 @@ class MainContainerController extends Component {
         me.getReference('showEvents')          .text = 'Events '    + countEvents;
         me.getReference('showPrivateMembers')  .text = 'Private '   + countPrivates;
         me.getReference('showProtectedMembers').text = 'Protected ' + countProtecteds;
-        me.getReference('showStaticMembers')   .text = 'Static '    + countStatics;
+        me.getReference('showStaticMembers')   .text = 'Static '    + countStatics
     }
 
     /**
@@ -89,7 +76,7 @@ class MainContainerController extends Component {
         Neo.main.addon.HighlightJS.scrollIntoView({
             text   : button.reference.substr(4),
             vnodeId: me.component.vdom.id
-        });
+        })
     }
 
     /**
@@ -97,7 +84,7 @@ class MainContainerController extends Component {
      * @param {Object} data
      */
     onSearchFieldChange(data) {
-        this.getReference('classdetails-memberslist').filterMembersQuery = data.value;
+        this.getReference('classdetails-memberslist').filterMembersQuery = data.value
     }
 
     /**
@@ -111,10 +98,8 @@ class MainContainerController extends Component {
         button.iconCls = button.checked ? 'fa fa-square' : 'fa fa-check-square';
         button.checked = !button.checked;
 
-        membersList[button.reference] = button.checked;
+        membersList[button.reference] = button.checked
     }
 }
 
-Neo.applyClassConfig(MainContainerController);
-
-export default MainContainerController;
+export default Neo.setupClass(MainContainerController);

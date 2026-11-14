@@ -1,5 +1,5 @@
-import UserModel from '../model/User.mjs';
 import Store     from '../../../../src/data/Store.mjs';
+import UserModel from '../model/User.mjs';
 
 /**
  * @class Neo.examples.toolbar.paging.store.Users
@@ -27,6 +27,7 @@ class Users extends Store {
         autoSort: false,
         /**
          * @member {Neo.data.Model} model=UserModel
+         * @reactive
          */
         model: UserModel,
         /**
@@ -47,6 +48,4 @@ class Users extends Store {
     }
 }
 
-Neo.applyClassConfig(Users);
-
-export default Users;
+export default Neo.setupClass(Users);

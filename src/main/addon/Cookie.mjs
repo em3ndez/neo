@@ -1,10 +1,9 @@
-import Base from '../../core/Base.mjs';
+import Base from './Base.mjs';
 
 /**
  * Basic Read and write access for document.cookie
  * @class Neo.main.addon.Cookie
- * @extends Neo.core.Base
- * @singleton
+ * @extends Neo.main.addon.Base
  */
 class Cookie extends Base {
     static config = {
@@ -17,6 +16,7 @@ class Cookie extends Base {
          * Remote method access for other workers
          * @member {Object} remote={app: [//...]}
          * @protected
+         * @reactive
          */
         remote: {
             app: [
@@ -24,41 +24,37 @@ class Cookie extends Base {
                 'getCookies',
                 'setCookie'
             ]
-        },
-        /**
-         * @member {Boolean} singleton=true
-         * @protected
-         */
-        singleton: true
+        }
     }
 
     /**
-     * @param {String} name
+     * @param {Object} data
+     * @param {String} data.name
      * @returns {String}
      */
-    getCookie(name) {
-        let cookie = document.cookie
+    getCookie({name}) {
+        let {cookie} = document
             .split('; ')
             .find(row => row.startsWith(name));
 
-        return cookie ? cookie.split('=')[1] : null;
+        return cookie ? cookie.split('=')[1] : null
     }
 
     /**
+     * @param {Object} [data]
      * @returns {String}
      */
-    getCookies() {
-        return document.cookie;
+    getCookies(data) {
+        return document.cookie
     }
 
     /**
-     * @param {String} value
+     * @param {Object} data
+     * @param {String} data.value
      */
-    setCookie(value) {
-        document.cookie = value;
+    setCookie({value}) {
+        document.cookie = value
     }
 }
 
-let instance = Neo.applyClassConfig(Cookie);
-
-export default instance;
+export default Neo.setupClass(Cookie);

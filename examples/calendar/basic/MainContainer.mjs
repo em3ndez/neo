@@ -61,12 +61,10 @@ class MainContainer extends Viewport {
             },
 
             modelData: {
-                currentDate: new Date('2021-07-20')
+                currentDate: new Date('2024-07-21')
             }
         }]
     }
 }
 
-Neo.applyClassConfig(MainContainer);
-
-export default MainContainer;
+export default Neo.setupClass(MainContainer);

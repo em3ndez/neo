@@ -14,10 +14,12 @@ class MainContainer extends Viewport {
         className: 'Neo.examples.core.config.MainContainer',
         /**
          * @member {Number|null} a_=null
+         * @reactive
          */
         a_: null,
         /**
          * @member {Number|null} b_=null
+         * @reactive
          */
         b_: null,
         /**
@@ -66,7 +68,7 @@ class MainContainer extends Viewport {
                 ntype: 'label',
                 text : 'Click the change configs button!'
             }]
-        }];
+        }]
     }
 
     /**
@@ -76,7 +78,7 @@ class MainContainer extends Viewport {
         this.set({
             a: 10,
             b: 10
-        });
+        })
     }
 
     /**
@@ -87,7 +89,7 @@ class MainContainer extends Viewport {
      */
     afterSetA(value, oldValue) {
         if (oldValue !== undefined) {
-            this.down({flag: 'label1'}).text = value + this.b;
+            this.down({flag: 'label1'}).text = value + this.b
         }
     }
 
@@ -99,7 +101,7 @@ class MainContainer extends Viewport {
      */
     afterSetB(value, oldValue) {
         if (oldValue !== undefined) {
-            this.down({flag: 'label2'}).text = value + this.a;
+            this.down({flag: 'label2'}).text = value + this.a
         }
     }
 
@@ -112,10 +114,8 @@ class MainContainer extends Viewport {
         this.set({
             a: 5,
             b: 5
-        });
+        })
     }
 }
 
-Neo.applyClassConfig(MainContainer);
-
-export default MainContainer;
+export default Neo.setupClass(MainContainer);

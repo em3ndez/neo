@@ -1,75 +1,30 @@
 .neo-grid-view {
-    .neo-center {
-        justify-content: center;
+    height         : 100%;
+    min-width      : 0;
+    overflow-anchor: none;
+    overflow-x     : hidden;
+    overflow-y     : scroll;
+    position       : relative;
+
+    // grid.View owns a single focus state for the multi-body grid, and the selection shows where that focus is: the
+    // selected cell, row or column, or an open editor. So the View paints no ring around the whole viewport, neither a
+    // default keyboard ring nor the user agent's, which an editor handing focus back would otherwise get.
+    // DomAccess.focus still stamps `neo-focus-keyboard` or `neo-focus-pointer`, because :focus-visible cannot survive
+    // the async worker→main programmatic focus. An app that wants a keyboard frame sets `--grid-view-focus-outline`.
+    &:focus {
+        outline: none;
     }
 
-    .neo-right {
-        justify-content: right;
+    &.neo-focus-keyboard:focus {
+        outline: var(--grid-view-focus-outline, none);
     }
 
-    .neo-grid-row {
-             &:hover {
-                 .neo-grid-cell {
-                     background-color: var(--grid-cell-background-color-hover);
-                 }
-             }
+    &.neo-hide-scrollbar {
+        -ms-overflow-style: none; /* IE, Edge */
+        scrollbar-width   : none; /* Firefox */
 
-             // selection.RowModel
-             &.neo-selected {
-                 .neo-grid-cell {
-                     background-color: var(--grid-rowmodel-selected-cell-background-color);
-                     color           : var(--grid-rowmodel-selected-cell-color);
-                 }
-             }
-
-             // selection.CellModel
-             .neo-grid-cell {
-                 &.neo-selected {
-                     background-color: var(--grid-cellmodel-selected-cell-background-color) !important;
-                     color           : var(--grid-cellmodel-selected-cell-color) !important;
-                 }
-
-                 &.selected-column-cell {
-                     background-color: var(--grid-cellmodel-selected-column-cell-background-color);
-                     color           : var(--grid-cellmodel-selected-column-cell-color);
-                 }
-             }
-         }
-}
-
-.neo-selection-cellrowmodel,
-.neo-selection-cellcolumnrowmodel{
-    .neo-grid-row {
-        &.neo-selected {
-            .neo-grid-cell {
-                background-color: var(--grid-cellrowmodel-selected-row-cell-background-color);
-                color           : var(--grid-cellrowmodel-selected-row-cell-color);
-            }
-        }
-
-        .neo-grid-cell {
-            &.neo-selected {
-                background-color: var(--grid-cellrowmodel-selected-cell-background-color);
-                color           : var(--grid-cellrowmodel-selected-cell-color);
-            }
-        }
-    }
-}
-
-.neo-selection-cellcolumnmodel,
-.neo-selection-cellcolumnrowmodel,
-.neo-selection-cellmodel,
-.neo-selection-cellrowmodel,
-.neo-selection-columnmodel,
-.neo-selection-rowmodel {
-    .neo-grid-row {
-        &:focus {
-            outline: 0;
-        }
-        .neo-grid-cell {
-            &:focus {
-                outline: 0;
-            }
+        &::-webkit-scrollbar {
+            display: none;        /* Chrome, Safari, Edge */
         }
     }
 }

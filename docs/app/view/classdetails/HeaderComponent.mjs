@@ -23,6 +23,7 @@ class HeaderComponent extends Component {
         baseCls: ['neo-docs-classdetails-headercomponent'],
         /**
          * @member {Object|null} record_=null
+         * @reactive
          */
         record_: null,
         /**
@@ -38,9 +39,9 @@ class HeaderComponent extends Component {
          * @member {Object} _vdom
          */
         _vdom:
-            {cn: [
-                    {tag: 'span', cls: ['neo-docs-header-text']}
-                ]}
+        {cn: [
+            {tag: 'span', cls: ['neo-docs-header-text']}
+        ]}
     }
 
     /**
@@ -60,23 +61,21 @@ class HeaderComponent extends Component {
         for (; i < len; i++) {
             if (record.tags[i].title === 'singleton') {
                 singleton = true;
-                break;
+                break
             }
         }
 
-        me.vdom.cn[0].innerHTML = singleton ? (className + ' → Singleton') : className;
+        me.vdom.cn[0].html = singleton ? (className + ' → Singleton') : className;
 
-        if (record.description) {
+        if (record?.description) {
             me.vdom.cn.push({
-                cls      : ['neo-docs-header-description'],
-                innerHTML: record.description
-            });
+                cls : ['neo-docs-header-description'],
+                html: record.description
+            })
         }
 
-        me.update();
+        me.update()
     }
 }
 
-Neo.applyClassConfig(HeaderComponent);
-
-export default HeaderComponent;
+export default Neo.setupClass(HeaderComponent);

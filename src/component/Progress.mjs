@@ -23,37 +23,48 @@ class Progress extends Base {
         baseCls: ['neo-progress'],
         /**
          * @member {String|null} labelText_=null
+         * @reactive
          */
         labelText_: null,
         /**
          * @member {Number} max_=100
+         * @reactive
          */
         max_: 100,
         /**
          * @member {Number|null} value_=null
+         * @reactive
          */
         value_: null,
         /**
          * @member {Object} _vdom
          */
         _vdom:
-        {tag: 'div', cls: ['neo-progress'], cn: [
+        {tag: 'div', cls: ['neo-progress-wrapper'], cn: [
             {tag: 'label'},
             {tag: 'progress'}
         ]}
     }
 
     /**
-     * Triggered after the id config got changed
-     * @param {String} value
-     * @param {String} oldValue
+     * @member {Object} label
+     */
+    get label() {
+        return this.vdom.cn[0]
+    }
+    /**
+     * @member {Object} progress
+     */
+    get progress() {
+        return this.vdom.cn[1]
+    }
+
+    /**
      * @protected
      */
-    afterSetId(value, oldValue) {
-        super.afterSetId(value, oldValue);
-
-        this.vdom.cn[0].for = value;
-        this.update()
+    ensureStableIds() {
+        super.ensureStableIds();
+        this.label.for = this.id
     }
 
     /**
@@ -63,7 +74,15 @@ class Progress extends Base {
      * @protected
      */
     afterSetLabelText(value, oldValue) {
-        this.vdom.cn[0].html = value;
+        let {label} = this;
+
+        if (!value) {
+            label.removeDom = true
+        } else {
+            delete label.removeDom
+        }
+
+        label.text = value;
         this.update()
     }
 
@@ -74,7 +93,7 @@ class Progress extends Base {
      * @protected
      */
     afterSetMax(value, oldValue) {
-        this.vdom.cn[1].max = value;
+        this.progress.max = value;
         this.update()
     }
 
@@ -85,7 +104,7 @@ class Progress extends Base {
      * @protected
      */
     afterSetValue(value, oldValue) {
-        this.vdom.cn[1].value = value;
+        this.progress.value = value;
         this.update()
     }
 
@@ -108,6 +127,4 @@ class Progress extends Base {
     }
 }
 
-Neo.applyClassConfig(Progress);
-
-export default Progress;
+export default Neo.setupClass(Progress);

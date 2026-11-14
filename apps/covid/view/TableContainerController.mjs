@@ -17,6 +17,14 @@ class TableContainerController extends ComponentController {
          */
         apiBaseUrl: 'https://disease.sh/',
         /**
+         * @member {String} apiBaseUrl='https://raw.githubusercontent.com/neomjs/pages/main/resources_pub/data/'
+         */
+        apiFallbackBaseUrl: 'https://raw.githubusercontent.com/neomjs/pages/main/resources_pub/data/',
+        /**
+         * @member {String} apiHistoricalDataEndpoint='cvid_static/historical/'
+         */
+        apiFallbackHistoricalDataEndpoint: 'cvid_static/historical/',
+        /**
          * @member {String} apiHistoricalDataEndpoint='v3/covid-19/historical/'
          */
         apiHistoricalDataEndpoint: 'v3/covid-19/historical/',
@@ -37,6 +45,7 @@ class TableContainerController extends ComponentController {
         /**
          * @member {Neo.table.Container|null} table_=null
          * @protected
+         * @reactive
          */
         table_: null
     }
@@ -65,7 +74,7 @@ class TableContainerController extends ComponentController {
 
             Object.entries(timeline.deaths || {}).forEach(([key, value]) => {
                 if (key !== 'undefined') {
-                    if (map.hasOwnProperty(key)) {
+                    if (Object.hasOwn(map, key)) {
                         map[key].deaths = value;
                     } else {
                         map[key] = {date: new Date(key).toISOString(), deaths: value};
@@ -75,7 +84,7 @@ class TableContainerController extends ComponentController {
 
             Object.entries(timeline.recovered || {}).forEach(([key, value]) => {
                 if (key !== 'undefined') {
-                    if (map.hasOwnProperty(key)) {
+                    if (Object.hasOwn(map, key)) {
                         map[key].recovered = value;
                     } else {
                         map[key] = {date: new Date(key).toISOString(), recovered: value};
@@ -83,7 +92,7 @@ class TableContainerController extends ComponentController {
                 }
             });
 
-            Object.entries(map).forEach(([key, value]) => {
+            Object.values(map).forEach(value => {
                 value.active = value.cases - value.deaths - value.recovered;
                 dataArray.push(value);
             });
@@ -97,7 +106,7 @@ class TableContainerController extends ComponentController {
             }
 
             // the array is sorted by date ASC
-            Object.assign(dataArray[0], {
+            dataArray[0] && Object.assign(dataArray[0], {
                 dailyActive   : dataArray[0].active,
                 dailyCases    : dataArray[0].cases,
                 dailyDeaths   : dataArray[0].deaths,
@@ -158,8 +167,17 @@ class TableContainerController extends ComponentController {
      * @param {String} countryName
      */
     loadHistoricalData(countryName) {
-        let me      = this,
-            apiPath = me.apiBaseUrl + me.apiHistoricalDataEndpoint + countryName + '?lastdays=' + me.apiHistoricalDataTimeRange;
+        let me               = this,
+            {useFallbackApi} = Neo.config,
+            apiPath = useFallbackApi ?
+                (me.apiFallbackBaseUrl + me.apiFallbackHistoricalDataEndpoint) :
+                (me.apiBaseUrl         + me.apiHistoricalDataEndpoint);
+
+        if (useFallbackApi) {
+            apiPath += (countryName + '.json')
+        } else {
+            apiPath += (countryName + '?lastdays=' + me.apiHistoricalDataTimeRange)
+        }
 
         fetch(apiPath)
             .then(response => response.json())
@@ -205,18 +223,19 @@ class TableContainerController extends ComponentController {
             me.selectedRecord = null;
         }
 
-        // removed optional chaining for now, see: https://github.com/neomjs/neo/issues/467
         me.loadHistoricalData(record?.countryInfo?.iso2 || 'all');
 
-        me.getReference('historical-data-label').html = 'Historical Data (' + (record?.country || 'World') + ')';
+        me.getReference('historical-data-label').text = 'Historical Data (' + (record?.country || 'World') + ')';
     }
 
     /**
      * {Object} data
      */
     onDailyValuesChange(data) {
-        let chartId     = this.getReference('line-chart').id,
-            logCheckbox = this.getReference('logarithmic-scale-checkbox'),
+        let me          = this,
+            {windowId}  = me,
+            chartId     = me.getReference('line-chart').id,
+            logCheckbox = me.getReference('logarithmic-scale-checkbox'),
             value       = data.value;
 
         if (value) {
@@ -235,12 +254,14 @@ class TableContainerController extends ComponentController {
                 'series.values.1.dataFields.valueY' : value ? 'dailyCases'     : 'cases',
                 'series.values.2.dataFields.valueY' : value ? 'dailyDeaths'    : 'deaths',
                 'series.values.3.dataFields.valueY' : value ? 'dailyRecovered' : 'recovered'
-            }
+            },
+            windowId
         });
 
         Neo.main.addon.AmCharts.callMethod({
-            id  : chartId,
-            path: 'invalidateData'
+            id      : chartId,
+            path    : 'invalidateData',
+            windowId
         });
     }
 
@@ -249,9 +270,10 @@ class TableContainerController extends ComponentController {
      */
     onLogarithmicScaleChange(data) {
         Neo.main.addon.AmCharts.setProperty({
-            id   : this.getReference('line-chart').id,
-            path : 'yAxes.values.0.logarithmic',
-            value: data.value
+            id      : this.getReference('line-chart').id,
+            path    : 'yAxes.values.0.logarithmic',
+            value   : data.value,
+            windowId: this.windowId
         });
     }
 
@@ -282,6 +304,4 @@ class TableContainerController extends ComponentController {
     }
 }
 
-Neo.applyClassConfig(TableContainerController);
-
-export default TableContainerController;
+export default Neo.setupClass(TableContainerController);

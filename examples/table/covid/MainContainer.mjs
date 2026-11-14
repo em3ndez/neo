@@ -14,10 +14,12 @@ class MainContainer extends Viewport {
         className: 'Neo.examples.table.covid.MainContainer',
         /**
          * @member {Object[]} items=[TableContainer]
+         * @reactive
          */
         items: [TableContainer],
         /**
          * @member {Object} layout={ntype:'fit'}
+         * @reactive
          */
         layout: {ntype: 'fit'},
         /**
@@ -27,6 +29,4 @@ class MainContainer extends Viewport {
     }
 }
 
-Neo.applyClassConfig(MainContainer);
-
-export default MainContainer;
+export default Neo.setupClass(MainContainer);

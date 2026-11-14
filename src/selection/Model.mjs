@@ -1,10 +1,12 @@
-import Base       from '../core/Base.mjs';
-import NeoArray   from '../util/Array.mjs';
-import Observable from '../core/Observable.mjs';
+import Base           from '../core/Base.mjs';
+import NeoArray       from '../util/Array.mjs';
+import Observable     from '../core/Observable.mjs';
+import {isDescriptor} from '../core/ConfigSymbols.mjs';
 
 /**
  * @class Neo.selection.Model
  * @extends Neo.core.Base
+ * @mixes Neo.core.Observable
  */
 class Model extends Base {
     /**
@@ -32,10 +34,17 @@ class Model extends Base {
          */
         cls: null,
         /**
-         * @member {Array} items_=null
+         * @member {Array} items_
          * @protected
+         * @reactive
          */
-        items_: null,
+        items_: {
+            [isDescriptor]: true,
+            clone         : 'shallow',
+            cloneOnGet    : 'none',
+            isEqual       : () => false,
+            value         : []
+        },
         /**
          * @member {String} selectedCls='selected'
          */
@@ -48,21 +57,40 @@ class Model extends Base {
          * Internally saves the view id, but the getter will return the matching instance
          * @member {Object} view_=null
          * @protected
+         * @reactive
          */
-        view_: null
+        view_: null,
+        /**
+         * The window the registered view renders into. {@link #register} takes it from the view and follows it.
+         * @member {Number|String|null} windowId_=null
+         * @protected
+         * @reactive
+         */
+        windowId_: null
     }
 
     /**
-     * Gets triggered before getting the value of the items config
-     * @param {Array|null} value
-     * @returns {Array}
+     * Ends the subscription to the registered view's `windowId`
+     * @member {Function|null} #unfollowWindow=null
+     * @private
      */
-    beforeGetItems(value) {
-        if (!value) {
-            this._items = value = [];
-        }
+    #unfollowWindow = null
 
-        return value;
+    /**
+     * Triggered after the windowId config got changed.
+     *
+     * A selection model is not a component, but it hooks into the theme engine like one (the pattern of
+     * {@link Neo.grid.column.Base#afterSetWindowId}): a model class that ships SCSS theme files gets them
+     * inserted into the window of its view. The engine's own models ship none.
+     *
+     * A model renders no node of its own and its stylesheet is global once loaded, so every rule in such a
+     * file MUST sit under the model's {@link #cls}, which {@link #register} puts on the view's wrapper.
+     * @param {Number|String|null} value
+     * @param {Number|String|null} oldValue
+     * @protected
+     */
+    afterSetWindowId(value, oldValue) {
+        value && Neo.currentWorker.insertThemeFiles(value, this.__proto__)
     }
 
     /**
@@ -71,7 +99,7 @@ class Model extends Base {
      * @returns {Neo.component.Base}
      */
     beforeGetView(value) {
-        return Neo.getComponent(this._view);
+        return Neo.getComponent(this._view)
     }
 
     /**
@@ -79,7 +107,7 @@ class Model extends Base {
      * @returns {String} the view id
      */
     beforeSetView(value) {
-        return value && value.id;
+        return value && value.id
     }
 
     /**
@@ -88,65 +116,174 @@ class Model extends Base {
     addDomListener() {}
 
     /**
+     * @summary Writes the selection annotations onto one resolved vdom node.
+     *
+     * The single place that knows what "selected" looks like in the vdom, so that
+     * {@link Neo.selection.Model#select select()} and {@link Neo.selection.Model#restoreSelection restoreSelection()}
+     * cannot drift apart. Tolerates a null node: an id can be tracked while its item is not currently rendered.
+     *
+     * @param {Object|null} node a vdom node resolved via `view.getVdomChild()`
+     * @param {String} [selectedCls]
+     * @protected
+     */
+    annotateItem(node, selectedCls) {
+        if (node) {
+            node.cls = NeoArray.add(node.cls || [], selectedCls || this.selectedCls);
+            node['aria-selected'] = true
+        }
+    }
+
+    /**
+     * @summary Removes the selection annotations from one resolved vdom node.
+     *
+     * The inverse of {@link Neo.selection.Model#annotateItem annotateItem}, and the other half of the
+     * single annotation owner: a subclass that adds the class through its own delta must remove it
+     * through this, or select and deselect drift into different notions of "selected".
+     *
+     * @param {Object|null} node a vdom node resolved via `view.getVdomChild()`
+     * @param {String} [selectedCls]
+     * @protected
+     */
+    deannotateItem(node, selectedCls) {
+        if (node) {
+            node.cls = NeoArray.remove(node.cls || [], selectedCls || this.selectedCls);
+            delete node['aria-selected']
+        }
+    }
+
+    /**
      * @param {Object} item
      * @param {Boolean} [silent] true to prevent a vdom update
      * @param {Object[]|String[]} itemCollection=this.items
      * @param {String} [selectedCls]
      */
     deselect(item, silent, itemCollection=this.items, selectedCls) {
-        let me   = this,
-            view = me.view,
-            node = view.getVdomChild(item), // todo: support for nodes (right now limited to ids)
-            cls;
+        let me     = this,
+            {view} = me;
 
-        if (node) {
-            cls = node.cls || [];
-            NeoArray.remove(cls, selectedCls || me.selectedCls);
-            node.cls = cls;
+        // We hold vdom ids for now, so all incoming selections must be converted.
+        item = me.getSelectionItemId(item);
+
+        if (itemCollection.includes(item)) {
+            // Through getItemVdomId, exactly as select() and restoreSelection() do. A subclass whose
+            // items are not their own vdom ids (Gallery, Helix: the vnode id is prefixed) resolved
+            // correctly on the way in and, before this, raw on the way out — so the lookup missed, the
+            // node came back null, and the deannotation was a silent no-op that left the item styled
+            // and aria-selected while the collection said it was gone.
+            me.deannotateItem(view.getVdomChild(me.getItemVdomId(item)), selectedCls);
+
+            NeoArray.remove(itemCollection, item);
+
+            if (!silent) {
+                !view.silentSelect && view.update();
+
+                view.parent?.onDeselect?.(); // grid.Container & table.Container
+                view.onDeselect?.();
+
+                me.fire('selectionChange', {
+                    deselected: [item],
+                    selection : itemCollection
+                })
+            }
+        } else if (!silent) {
+            me.fire('noChange')
         }
-
-        NeoArray.remove(itemCollection, item);
-
-        !silent && view.update();
     }
 
     /**
      * @param {Boolean} [silent] true to prevent a vdom update
+     * @param {Object[]|String[]} itemCollection=this.items
      */
-    deselectAll(silent) {
-        let me    = this,
-            items = [...me.items],
-            view  = me.view;
+    deselectAll(silent, itemCollection=this.items) {
+        let me     = this,
+            items  = [...itemCollection],
+            {view} = me;
 
-        items.forEach(item => {
-            me.deselect(item, true);
-        });
+        if (items.length) {
+            items.forEach(item => {
+                me.deselect(item, true)
+            });
 
-        if (!silent && items.length > 0) {
-            view.update();
+            // Emptiness is already decided by the branch above: nothing selected fires `noChange` instead. What is
+            // left to ask is whether the view renders its own selection — a grid repaints the cells it changed.
+            if (!silent && !view.silentSelect) {
+                view.update()
+            }
+
+            me.fire('selectionChange', {
+                selection: this.items
+            })
+        } else if (!silent) {
+            me.fire('noChange')
         }
     }
 
     /**
      *
      */
-    destroy() {
+    destroy(...args) {
         this.unregister();
-        super.destroy();
+        super.destroy(...args)
+    }
+
+    /**
+     * Important for mapping listeners to view controllers
+     * @returns {Neo.controller.Component|null}
+     */
+    getController() {
+        return this.view.getController()
     }
 
     /**
      * @returns {Array} this.items
      */
     getSelection() {
-        return this.items;
+        return this.items
     }
 
     /**
-     * @returns {Boolean} true in case there is a selection
+     * @returns {Boolean}
      */
     hasSelection() {
-        return this.items.length > 0;
+        return this.items.length > 0
+    }
+
+    /**
+     * @summary Resolves an incoming selection token into the record payload used by selection events.
+     * @param {Object|Number|String} item
+     * @returns {Object|Number|String}
+     */
+    getSelectionRecord(item) {
+        if (item?.isRecord || Neo.isObject(item)) {
+            return item
+        }
+
+        let {view}   = this,
+            recordId = view.getItemRecordId?.(item);
+
+        return recordId && view.store?.get(recordId) || item
+    }
+
+    /**
+     * @summary Converts record, collection item, and vnode id inputs into the stored selection id.
+     * @param {Object|Number|String} item
+     * @returns {Number|String}
+     */
+    getSelectionItemId(item) {
+        if (item?.isRecord) {
+            return this.view.getItemId(item)
+        }
+
+        if (Neo.isObject(item)) {
+            let {view}   = this,
+                recordId = view.getRecordId?.(item);
+
+            return recordId === undefined || recordId === null
+                ? item.id
+                : view.getItemId(recordId)
+        }
+
+        return item
     }
 
     /**
@@ -154,23 +291,34 @@ class Model extends Base {
      * @returns {Boolean} true in case the item is selected
      */
     isSelected(id) {
-        return this.items.includes(id);
+        return this.items.includes(id)
     }
 
     /**
+     * @summary Binds this model to its view: the model's `cls` on the view's wrapper, the view's window
+     * (see {@link #afterSetWindowId}) and the DOM listeners.
      * @param {Neo.component.Base} component
      */
     register(component) {
         let me  = this,
-            cls = component.cls || [];
+            cls = component.wrapperCls || [];
 
         if (me.cls && !cls.includes(me.cls)) {
             cls.push(me.cls);
-            component.cls = cls;
+            component.wrapperCls = cls
         }
 
         me.view = component;
+
+        me.#unfollowWindow?.();
+        me.#unfollowWindow = me.observeConfig(component, 'windowId', value => {me.windowId = value});
+        me.windowId        = component.windowId;
+
         me.addDomListener();
+
+        component.fire('selectionModelChange', {
+            value: me
+        })
     }
 
     /**
@@ -183,11 +331,70 @@ class Model extends Base {
 
         component.domListeners.forEach(listener => {
             if (listener.scope === me) {
-                NeoArray.remove(domListeners, listener);
+                NeoArray.remove(domListeners, listener)
             }
         });
 
-        component.domListeners = domListeners;
+        component.domListeners = domListeners
+    }
+
+    /**
+     * @summary Maps a tracked item id to the vdom node id that carries its annotation.
+     *
+     * Identity here, because this model tracks ids that already ARE vdom ids —
+     * {@link Neo.selection.Model#select select()} maps through `getSelectionItemId` before tracking.
+     *
+     * A subclass that tracks a **logical** id while its view keys item nodes by a **prefixed** vnode id
+     * MUST override this. `selection.GalleryModel` and `selection.HelixModel` are both that shape: they
+     * store the record id, while their views build node ids as `${view.id}__${recordId}`. Without the
+     * override the lookup misses, `annotateItem` receives null, and the restore is a **silent no-op** —
+     * invisible precisely because a missed lookup and a legitimately unrendered item are the same value.
+     *
+     * @param {String} item A tracked item id
+     * @returns {String} The id to resolve against the view's vdom
+     * @protected
+     */
+    getItemVdomId(item) {
+        return item
+    }
+
+    /**
+     * @summary Re-applies the selection annotations onto the view's current vdom nodes.
+     *
+     * {@link Neo.selection.Model#select select()} annotates the nodes it resolves *at call time*, and it
+     * early-exits when the incoming ids already equal the tracked ones — so it cannot repair a view whose
+     * item nodes were replaced. A component that rebuilds its items from a template
+     * ({@link Neo.component.Gallery#onStoreLoad}, {@link Neo.component.Helix#onStoreLoad}) discards the
+     * annotated nodes while this model still tracks the ids, which leaves `hasSelection()` reporting a
+     * selection that nothing renders and drops `aria-selected` with it.
+     *
+     * **This only restores what `select()` established.** The concrete `GalleryModel` / `HelixModel`
+     * additionally push a DOM delta for immediacy, but the vdom annotation written through
+     * {@link Neo.selection.Model#annotateItem annotateItem} is the one this reads — so a subclass whose
+     * `select()` writes ONLY a delta leaves nothing to restore, and a restore here would be inventing an
+     * annotation rather than preserving one. That is why both concrete models annotate the vdom too.
+     *
+     * Call this after such a rebuild. It is a no-op when nothing is selected.
+     *
+     * Restores the default `items` / `selectedCls` pair only. A subclass tracking additional collections
+     * under their own class — see `selection.table.CellColumnModel` and its `selectedColumnCellIds` —
+     * must extend this to cover them.
+     *
+     * @param {Boolean} [silent=false] true leaves the `update()` cycle to the caller
+     */
+    restoreSelection(silent=false) {
+        let me     = this,
+            {view} = me;
+
+        if (me.items.length > 0) {
+            me.items.forEach(id => {
+                me.annotateItem(view.getVdomChild(me.getItemVdomId(id)))
+            });
+
+            if (!silent && !view.silentSelect) {
+                view.update()
+            }
+        }
     }
 
     /**
@@ -196,35 +403,47 @@ class Model extends Base {
      * @param {String} [selectedCls]
      */
     select(items, itemCollection=this.items, selectedCls) {
-        items = Array.isArray(items) ? items : [items];
+        if (!Array.isArray(items)) {
+            items = [items]
+        }
 
-        let me   = this,
-            view = me.view,
-            vdom = view.vdom,
-            cls;
+        let me      = this,
+            {view}  = me,
+            records = items.map(item => me.getSelectionRecord(item));
+
+        // We hold vdom ids for now, so all incoming selections must be converted.
+        items = items.map(item => me.getSelectionItemId(item));
 
         if (!Neo.isEqual(itemCollection, items)) {
-            if (me.singleSelect) {
-                me.deselectAll(true);
+            if (me.singleSelect && itemCollection === me.items) {
+                me.deselectAll(true, itemCollection)
             }
 
             items.forEach(node => {
-                if (typeof node === 'string') {
-                    node = view.getVdomChild(node);
-                }
-
-                if (node) {
-                    cls = node.cls || [];
-                    NeoArray.add(cls, selectedCls || me.selectedCls);
-                    node.cls = cls;
-                }
+                me.annotateItem(view.getVdomChild(node), selectedCls)
             });
 
             NeoArray.add(itemCollection, items);
 
-            view[view.silentSelect ? '_vdom' : 'vdom'] = vdom;
+            if (!view.silentSelect) {
+                view.update()
+            }
 
+            view.parent?.onSelect?.(items); // grid.Container & table.Container
             view.onSelect?.(items);
+
+            view.fire('select', {
+                records,
+                selection: itemCollection
+            });
+
+            me.fire('selectionChange', {
+                records,
+                selection: itemCollection
+            })
+        }
+        else {
+            me.fire('noChange')
         }
     }
 
@@ -235,9 +454,31 @@ class Model extends Base {
         let me = this;
 
         if (me.isSelected(item)) {
-            me.deselect(item);
+            me.deselect(item)
         } else {
-            me.select(item);
+            me.select(item)
+        }
+    }
+
+    /**
+     * @returns {Object}
+     */
+    toJSON() {
+        const
+            me    = this,
+            items = (me.items || []).map(item => {
+                if (Neo.isRecord(item)) {
+                    return item.toJSON()
+                }
+
+                return item
+            });
+
+        return {
+            ...super.toJSON(),
+            items,
+            selectedCls : me.selectedCls,
+            singleSelect: me.singleSelect
         }
     }
 
@@ -245,20 +486,28 @@ class Model extends Base {
      *
      */
     unregister() {
-        let me  = this,
-            cls = me.view.cls || [];
+        let me     = this,
+            {view} = me;
 
-        if (me.cls && cls.includes(me.cls)) {
-            NeoArray.remove(cls, me.cls);
-            me.view.cls = cls;
+        if (view && !view.isDestroying) {
+            let cls = view.wrapperCls || [];
+
+            if (me.cls && cls.includes(me.cls)) {
+                NeoArray.remove(cls, me.cls);
+                view.wrapperCls = cls
+            }
+
+            me.deselectAll();
+
+            me.removeDomListeners()
         }
 
-        me.deselectAll();
+        me.#unfollowWindow?.();
+        me.#unfollowWindow = null;
 
-        me.removeDomListeners();
+        me.view     = null;
+        me.windowId = null
     }
 }
 
-Neo.applyClassConfig(Model);
-
-export default Model;
+export default Neo.setupClass(Model);

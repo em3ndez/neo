@@ -44,37 +44,44 @@ class YearComponent extends Component {
          */
         cachedUpdate: null,
         /**
-         * Bound to the view model.
+         * Bound to the state provider.
          * @member {Neo.calendar.store.Calendars|null} calendarStore_=null
+         * @reactive
          */
         calendarStore_: null,
         /**
          * Will get passed from the MainContainer
          * @member {Date|null} currentDate_=null
          * @protected
+         * @reactive
          */
         currentDate_: null,
         /**
          * The format of the column headers.
          * Valid values are: narrow, short & long
          * @member {String} dayNameFormat_='narrow'
+         * @reactive
          */
         dayNameFormat_: 'narrow',
         /**
          * @member {Number} eventIndicatorHigh_=3
+         * @reactive
          */
         eventIndicatorHigh_: 3,
         /**
          * @member {Number} eventIndicatorLow_=1
+         * @reactive
          */
         eventIndicatorLow_: 1,
         /**
          * @member {Number} eventIndicatorMedium_=2
+         * @reactive
          */
         eventIndicatorMedium_: 2,
         /**
-         * Bound to the view model.
+         * Bound to the state provider.
          * @member {Neo.calendar.store.Events|null} eventStore_=null
+         * @reactive
          */
         eventStore_: null,
         /**
@@ -91,17 +98,20 @@ class YearComponent extends Component {
          * Internal flag to prevent changing the date while change animations are still running
          * @member {Boolean} isUpdating_=false
          * @protected
+         * @reactive
          */
         isUpdating_: false,
         /**
-         * Bound to the view model.
+         * Bound to the state provider.
          * @member {String} locale_=Neo.config.locale
+         * @reactive
          */
         locale_: Neo.config.locale,
         /**
          * The format of the month header names.
          * Valid values are: narrow, short & long
          * @member {String} monthNameFormat_='long'
+         * @reactive
          */
         monthNameFormat_: 'long',
         /**
@@ -123,26 +133,31 @@ class YearComponent extends Component {
         /**
          * True to show borders for the calendar month cells
          * @member {Boolean} showCellBorders_=false
+         * @reactive
          */
         showCellBorders_: false,
         /**
          * True to show the days of the previous or next month (not selectable)
          * @member {Boolean} showDisabledDays_=true
+         * @reactive
          */
         showDisabledDays_: true,
         /**
-         * Bound to the view model.
+         * Bound to the state provider.
          * @member {Boolean} showWeekends_=true
+         * @reactive
          */
         showWeekends_: true,
         /**
          * True to show the week number as the first column of each month
          * @member {Boolean} showWeekNumbers_=true
+         * @reactive
          */
         showWeekNumbers_: true,
         /**
          * True to show 6 weeks for each month, so that all months have the same height
          * @member {Boolean} sixWeeksPerMonth_=false
+         * @reactive
          */
         sixWeeksPerMonth_: false,
         /**
@@ -166,8 +181,9 @@ class YearComponent extends Component {
         ]},
         /**
          * 0-6 => Sun-Sat
-         * Bound to the view model.
+         * Bound to the state provider.
          * @member {Number} weekStartDay_=0
+         * @reactive
          */
         weekStartDay_: 0
     }
@@ -182,14 +198,22 @@ class YearComponent extends Component {
 
         me.addDomListeners([
             {click: me.onNavButtonClick, delegate: '.neo-nav-button', scope: me},
-            {wheel: me.onWheel, scope: me}
+            {
+                scope: me,
+                wheel: {
+                    bubble : false,
+                    fn     : me.onWheel,
+                    local  : true,
+                    passive: false
+                }
+            }
         ]);
 
         if (me.calendarStore.getCount() > 0 && me.eventStore.getCount() > 0) {
-            me.createMonths(true); // silent update
+            me.createMonths(true) // silent update
         }
 
-        me.updateHeaderYear();
+        me.updateHeaderYear()
     }
 
     /**
@@ -208,7 +232,7 @@ class YearComponent extends Component {
         };
 
         oldValue?.un(listeners);
-        value   ?.on(listeners);
+        value   ?.on(listeners)
     }
 
     /**
@@ -223,10 +247,7 @@ class YearComponent extends Component {
                 year    = value   .getFullYear();
 
             if (year !== oldYear) {
-                this.changeYear(year - oldYear);
-            } else {
-                // todo
-                console.log('## select a new day', value.getMonth(), value.getDate());
+                this.changeYear(year - oldYear)
             }
         }
     }
@@ -238,7 +259,7 @@ class YearComponent extends Component {
      * @protected
      */
     afterSetDayNameFormat(value, oldValue) {
-        this.updateDayNamesRows(value, oldValue);
+        this.updateDayNamesRows(value, oldValue)
     }
 
     /**
@@ -248,7 +269,7 @@ class YearComponent extends Component {
      * @protected
      */
     afterSetEventIndicatorHigh(value, oldValue) {
-        oldValue !== undefined && this.createMonths();
+        oldValue !== undefined && this.createMonths()
     }
 
     /**
@@ -258,7 +279,7 @@ class YearComponent extends Component {
      * @protected
      */
     afterSetEventIndicatorLow(value, oldValue) {
-        oldValue !== undefined && this.createMonths();
+        oldValue !== undefined && this.createMonths()
     }
 
     /**
@@ -268,7 +289,7 @@ class YearComponent extends Component {
      * @protected
      */
     afterSetEventIndicatorMedium(value, oldValue) {
-        oldValue !== undefined && this.createMonths();
+        oldValue !== undefined && this.createMonths()
     }
 
     /**
@@ -287,7 +308,7 @@ class YearComponent extends Component {
         };
 
         oldValue?.un(listeners);
-        value   ?.on(listeners);
+        value   ?.on(listeners)
     }
 
     /**
@@ -301,7 +322,7 @@ class YearComponent extends Component {
             let me = this;
 
             me.updateDayNamesRows(me.dayNameFormat, '', true);
-            me.updateMonthNameFormat(me.monthNameFormat, '');
+            me.updateMonthNameFormat(me.monthNameFormat, '')
         }
     }
 
@@ -312,7 +333,7 @@ class YearComponent extends Component {
      * @protected
      */
     afterSetMonthNameFormat(value, oldValue) {
-        this.updateMonthNameFormat(value, oldValue);
+        this.updateMonthNameFormat(value, oldValue)
     }
 
     /**
@@ -328,7 +349,7 @@ class YearComponent extends Component {
 
         if (value && me.needsEventUpdate) {
             me.createMonths();
-            me.needsEventUpdate = false;
+            me.needsEventUpdate = false
         }
     }
 
@@ -342,7 +363,7 @@ class YearComponent extends Component {
         let cls = this.cls;
 
         NeoArray[value ? 'add' : 'remove'](cls, 'neo-show-cell-borders');
-        this.cls = cls;
+        this.cls = cls
     }
 
     /**
@@ -353,9 +374,9 @@ class YearComponent extends Component {
      */
     afterSetShowWeekends(value, oldValue) {
         if (oldValue !== undefined) {
-            let me   = this,
-                vdom = me.vdom,
-                i    = 0,
+            let me     = this,
+                {vdom} = me,
+                i      = 0,
                 item, itemCn, j, k, len;
 
             for (; i < 12; i++) { // months
@@ -368,9 +389,9 @@ class YearComponent extends Component {
 
                         if (item.cls.includes('neo-weekend')) {
                             if (value) {
-                                delete item.removeDom;
+                                delete item.removeDom
                             } else {
-                                item.removeDom = true;
+                                item.removeDom = true
                             }
                         }
                     }
@@ -378,7 +399,7 @@ class YearComponent extends Component {
             }
 
             // triggers the vdom update
-            me.updateDayNamesRows(me.dayNameFormat, '');
+            me.updateDayNamesRows(me.dayNameFormat, '')
         }
     }
 
@@ -399,11 +420,11 @@ class YearComponent extends Component {
                 len    = itemCn.length;
 
                 for (j = 1; j < len; j++) {
-                    itemCn[j].cn[0].removeDom = !value;
+                    itemCn[j].cn[0].removeDom = !value
                 }
             }
 
-            me.update();
+            me.update()
         }
     }
 
@@ -424,10 +445,10 @@ class YearComponent extends Component {
 
             for (; i < 12; i++) {
                 me.vdom.cn[0].cn[1].cn[i].cn[7].removeDom = DateUtil.getWeeksOfMonth(date, me.weekStartDay) === 5 && !value;
-                date.setMonth(date.getMonth() + 1);
+                date.setMonth(date.getMonth() + 1)
             }
 
-            me.update();
+            me.update()
         }
     }
 
@@ -438,7 +459,7 @@ class YearComponent extends Component {
      * @protected
      */
     afterSetWeekStartDay(value, oldValue) {
-        oldValue !== undefined && this.createMonths();
+        oldValue !== undefined && this.createMonths()
     }
 
     /**
@@ -448,7 +469,7 @@ class YearComponent extends Component {
      * @protected
      */
     beforeSetDayNameFormat(value, oldValue) {
-        return this.beforeSetEnumValue(value, oldValue, 'dayNameFormat', DateUtil.prototype.dayNameFormats);
+        return this.beforeSetEnumValue(value, oldValue, 'dayNameFormat', DateUtil.prototype.dayNameFormats)
     }
 
     /**
@@ -458,7 +479,7 @@ class YearComponent extends Component {
      * @protected
      */
     beforeSetMonthNameFormat(value, oldValue) {
-        return this.beforeSetEnumValue(value, oldValue, 'monthNameFormat', DateUtil.prototype.monthNameFormats);
+        return this.beforeSetEnumValue(value, oldValue, 'monthNameFormat', DateUtil.prototype.monthNameFormats)
     }
 
     /**
@@ -467,7 +488,7 @@ class YearComponent extends Component {
      * @protected
      */
     cacheUpdate(date=this.currentDate) {
-        this.cachedUpdate = date;
+        this.cachedUpdate = date
     }
 
     /**
@@ -493,7 +514,7 @@ class YearComponent extends Component {
                             {cls: ['neo-animation-wrapper'], cn: [
                                 {cls: ['neo-content-wrapper'], cn: [
                                     {cls: ['neo-year-header'], cn: [
-                                        {html: me.currentDate.getFullYear()},
+                                        {text: me.currentDate.getFullYear()},
                                         {cls: ['neo-nav-button', 'neo-prev-button']},
                                         {cls: ['neo-nav-button', 'neo-next-button']}
                                     ]},
@@ -512,17 +533,17 @@ class YearComponent extends Component {
                     vdom.cn[1].cn[0].cn[scrollFromTop ? 'unshift' : 'push'](vdom.cn[0]);
                     vdom.cn.splice(0, 1);
 
-                    me.promiseUpdate(vdom).then(() => {
+                    me.promiseUpdate().then(() => {
                         y = scrollFromTop ? -data.height : 0;
                         vdom.cn[0].cn[0].style.transform = `translateY(${y}px)`;
                         me.update();
 
-                        setTimeout(() => {
+                        me.timeout(300).then(() => {
                             vdom.cn[0] = vdom.cn[0].cn[0].cn[scrollFromTop ? 1 : 0];
-                            me.triggerVdomUpdate();
-                        }, 300);
-                    });
-                });
+                            me.triggerVdomUpdate()
+                        })
+                    })
+                })
             }
         }
     }
@@ -542,21 +563,21 @@ class YearComponent extends Component {
         for (; i < 7; i++) {
             node = {
                 cls : ['neo-cell', 'neo-weekday-cell'],
-                html: me.intlFormat_day.format(date)
+                text: me.intlFormat_day.format(date)
             };
 
             day = date.getDay();
 
             if (!me.showWeekends && (day === 0 || day === 6)) {
-                node.removeDom = true;
+                node.removeDom = true
             }
 
             row.cn.push(node);
 
-            date.setDate(date.getDate() + 1);
+            date.setDate(date.getDate() + 1)
         }
 
-        return row;
+        return row
     }
 
     /**
@@ -566,12 +587,11 @@ class YearComponent extends Component {
      */
     createMonthContent(containerEl, currentDate) {
         let me             = this,
-            calendarStore  = me.calendarStore,
+            {calendarStore, eventStore} = me,
             currentDay     = currentDate.getDate(),
             currentMonth   = currentDate.getMonth(),
             currentYear    = currentDate.getFullYear(),
             date           = DateUtil.clone(currentDate),
-            eventStore     = me.eventStore,
             valueDate      = me.currentDate, // cloned
             valueMonth     = valueDate.getMonth(),
             valueYear      = valueDate.getFullYear(),
@@ -595,8 +615,8 @@ class YearComponent extends Component {
 
                 cn: [{
                     cls      : ['neo-cell', 'neo-weeknumber-cell'],
-                    html     : DateUtil.getWeekOfYear(weekDate),
-                    removeDom: !me.showWeekNumbers
+                    removeDom: !me.showWeekNumbers,
+                    text     : DateUtil.getWeekOfYear(weekDate)
                 }]
             };
 
@@ -614,7 +634,7 @@ class YearComponent extends Component {
 
                     cn: [{
                         cls : ['neo-cell-content'],
-                        html: hasContent ? day : me.showDisabledDays ? date.getDate() : ''
+                        text: hasContent ? day : me.showDisabledDays ? date.getDate() : ''
                     }]
                 };
 
@@ -624,17 +644,17 @@ class YearComponent extends Component {
                     configCls.push('neo-weekend');
 
                     if (!me.showWeekends) {
-                        config.removeDom = true;
+                        config.removeDom = true
                     }
                 }
 
 
                 if (today.year === currentYear && today.month === currentMonth && today.day === day) {
-                    config.cn[0].cls.push('neo-today');
+                    config.cn[0].cls.push('neo-today')
                 }
 
                 if (valueYear === currentYear && valueMonth === currentMonth && day === currentDay) {
-                    configCls.push('neo-selected');
+                    configCls.push('neo-selected')
                 }
 
                 if (!config.removeDom) {
@@ -650,13 +670,13 @@ class YearComponent extends Component {
 
                 date.setDate(date.getDate() + 1);
 
-                day++;
+                day++
             }
 
-            containerEl.cn.push(row);
+            containerEl.cn.push(row)
         }
 
-        return containerEl;
+        return containerEl
     }
 
     /**
@@ -667,10 +687,10 @@ class YearComponent extends Component {
         let me = this;
 
         if (!me.mounted) {
-            me.needsEventUpdate = true;
+            me.needsEventUpdate = true
         } else {
             let currentDate    = me.currentDate, // cloned
-                vdom           = me.vdom,
+                {vdom}         = me,
                 monthContainer = containerEl || vdom.cn[0].cn[1],
                 i              = 0,
                 monthVdom;
@@ -683,16 +703,16 @@ class YearComponent extends Component {
 
                 monthVdom =
                 {cls: ['neo-month'], cn: [
-                    {cls: ['neo-month-name'], html: me.intlFormat_month.format(currentDate)},
+                    {cls: ['neo-month-name'], text: me.intlFormat_month.format(currentDate)},
                     me.createDayNamesRow()
                 ]};
 
                 monthVdom = me.createMonthContent(monthVdom, DateUtil.clone(currentDate));
 
-                monthContainer.cn.push(monthVdom);
+                monthContainer.cn.push(monthVdom)
             }
 
-            me[silent ? '_vdom' : 'vdom'] = vdom;
+            !silent && me.update()
         }
     }
 
@@ -706,56 +726,56 @@ class YearComponent extends Component {
         day = day.toString();
 
         if (day.length < 2) {
-            day = '0' + day;
+            day = '0' + day
         }
 
         month = month.toString();
 
         if (month.length < 2) {
-            month = '0' + month;
+            month = '0' + month
         }
 
-        return this.id + '__' + year + '-' + month + '-' + day;
+        return this.id + '__' + year + '-' + month + '-' + day
     }
 
     /**
      * @param {Object[]} data
      */
     onCalendarStoreLoad(data) {
-        this.eventStore.getCount() > 0 && this.createMonths();
+        this.eventStore.getCount() > 0 && this.createMonths()
     }
 
     /**
      * @param {Object} data
      */
     onCalendarStoreRecordChange(data) {
-        this.createMonths();
+        this.createMonths()
     }
 
     /**
      * @param {Object[]} data
      */
     onEventStoreLoad(data) {
-        this.calendarStore.getCount() > 0 && this.createMonths();
+        this.calendarStore.getCount() > 0 && this.createMonths()
     }
 
     /**
      * @param {Object[]} data
      */
     onEventStoreRecordChange(data) {
-        this.createMonths();
+        this.createMonths()
     }
 
     /**
      * @param {Object} data
      */
     onNavButtonClick(data) {
-        let me          = this,
-            currentDate = me.currentDate; // cloned
+        let me            = this,
+            {currentDate} = me; // cloned
 
         currentDate.setFullYear(currentDate.getFullYear() + (data.path[0].cls.includes('neo-next-button') ? 1 : -1));
 
-        me.currentDate = currentDate;
+        me.getStateProvider().setData({currentDate})
     }
 
     /**
@@ -763,12 +783,12 @@ class YearComponent extends Component {
      */
     onWheel(data) {
         if (Math.abs(data.deltaY) > Math.abs(data.deltaX)) {
-            let me          = this,
-                currentDate = me.currentDate; // cloned
+            let me            = this,
+                {currentDate} = me; // cloned
 
             currentDate.setFullYear(currentDate.getFullYear() + (data.deltaY > 0 ? 1 : -1));
 
-            me.currentDate = currentDate;
+            me.getStateProvider().setData({currentDate})
         }
     }
 
@@ -783,9 +803,9 @@ class YearComponent extends Component {
 
             me.isUpdating = true;
 
-            me.promiseUpdate(me.vdom).then(() => {
-                me.isUpdating = false;
-            });
+            me.promiseUpdate().then(() => {
+                me.isUpdating = false
+            })
         }
     }
 
@@ -801,9 +821,9 @@ class YearComponent extends Component {
         me.intlFormat_day = new Intl.DateTimeFormat(me.locale, {weekday: value});
 
         if (oldValue !== undefined) {
-            let date = me.currentDate, // cloned
-                vdom = me.vdom,
-                i    = 1,
+            let date   = me.currentDate, // cloned
+                {vdom} = me,
+                i      = 1,
                 day, j, node;
 
             date.setDate(me.currentDate.getDate() - me.currentDate.getDay() + me.weekStartDay);
@@ -813,19 +833,19 @@ class YearComponent extends Component {
                     day  = date.getDay();
                     node = vdom.cn[0].cn[1].cn[j].cn[1].cn[i];
 
-                    node.html = me.intlFormat_day.format(date);
+                    node.text = me.intlFormat_day.format(date);
 
                     if (!me.showWeekends && (day === 0 || day === 6)) {
-                        node.removeDom = true;
+                        node.removeDom = true
                     } else {
-                        delete node.removeDom;
+                        delete node.removeDom
                     }
                 }
 
-                date.setDate(date.getDate() + 1);
+                date.setDate(date.getDate() + 1)
             }
 
-            me[silent ? '_vdom' : 'vdom'] = vdom;
+            !silent && me.update()
         }
     }
 
@@ -833,7 +853,7 @@ class YearComponent extends Component {
      *
      */
     updateHeaderYear() {
-        this.vdom.cn[0].cn[0].cn[0].html = this.currentDate.getFullYear();
+        this.vdom.cn[0].cn[0].cn[0].text = this.currentDate.getFullYear()
     }
 
     /**
@@ -849,22 +869,19 @@ class YearComponent extends Component {
         me.intlFormat_month = new Intl.DateTimeFormat(me.locale, {month: value});
 
         if (oldValue !== undefined) {
-            let vdom        = me.vdom,
-                i           = 0,
-                currentDate = me.currentDate;
+            let {currentDate, vdom} = me,
+                i                   = 0;
 
             for (; i < 12; i++) {
                 currentDate.setMonth(i);
                 currentDate.setDate(1);
 
-                vdom.cn[0].cn[1].cn[i].cn[0].html = me.intlFormat_month.format(currentDate);
+                vdom.cn[0].cn[1].cn[i].cn[0].text = me.intlFormat_month.format(currentDate)
             }
 
-            me[silent ? '_vdom' : 'vdom'] = vdom;
+            !silent && me.update()
         }
     }
 }
 
-Neo.applyClassConfig(YearComponent);
-
-export default YearComponent;
+export default Neo.setupClass(YearComponent);

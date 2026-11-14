@@ -18,16 +18,16 @@ const globalDomEvents = [
     {name: 'mouseleave',  handler: 'onMouseLeave', options: {capture: true}},
     {name: 'mouseup',     handler: 'onMouseUp'},
     {name: 'scroll',      handler: 'onScroll',     options: {capture: true}},
-    {name: 'wheel',       handler: 'onWheel',      options: {passive: false}}
+    {name: 'wheel',       handler: 'onWheel',      options: {passive: true}}
 ];
 
-// Will get applied to the document.body in case Neo.config.useTouchEvents === true (default value)
+// Will get applied to the document.body in case Neo.config.hasTouchEvents === true
 const touchEvents = [
     {name: 'touchcancel', handler: 'onTouchCancel'},
     {name: 'touchend',    handler: 'onTouchEnd'},
     {name: 'touchenter',  handler: 'onTouchEnter'},
     {name: 'touchleave',  handler: 'onTouchLeave'},
-    {name: 'touchmove',   handler: 'onTouchMove'},
+    {name: 'touchmove',   handler: 'onTouchMove', options: {passive: false}},
     {name: 'touchstart',  handler: 'onTouchStart'}
 ];
 
@@ -62,13 +62,17 @@ const lastWheelEvent = {
     target: null
 };
 
-const disabledInputKeys         = {},
-      preventClickTargets       = [],
-      preventContextmenuTargets = [];
+const
+    disabledInputKeys         = {},
+    preventClickTargets       = [],
+    preventContextmenuTargets = [],
+    preventDefaultKeys        = {};
 
 /**
  * @class Neo.main.DomEvents
  * @extends Neo.core.Base
+ * @mixes Neo.core.Observable
+ * @mixes Neo.main.mixin.TouchDomEvents
  * @singleton
  */
 class DomEvents extends Base {
@@ -97,20 +101,47 @@ class DomEvents extends Base {
         singleton: true,
         /**
          * Remote method access for other workers
-         * @member {Object} remote={app: ['addDomListener']}
+         * @member {Object} remote
          * @protected
          */
         remote: {
             app: [
                 'addDomListener',
                 'registerDisabledInputChars',
+                'registerPreventDefaultKeys',
                 'registerPreventDefaultTargets',
-                'unregisterDisabledInputChars'
+                'unregisterDisabledInputChars',
+                'unregisterPreventDefaultKeys'
             ]
         }
     }
 
     /**
+     * @member {Object|null} lastMouseMoveData=null
+     */
+    lastMouseMoveData = null
+    /**
+     *
+     * @member {Object} touch
+     */
+    lastTouch = null
+    /**
+     * @member {Number|null} mouseMoveReqId=null
+     */
+    mouseMoveReqId = null
+
+    /**
+     * @member {Boolean} #departed=false Whether this window already told the SharedWorkers it leaves
+     */
+    #departed = false
+    /**
+     * Native font subscription owned by this document.
+     * @member {Object|null} #fontEvents=null
+     */
+    #fontEvents = null
+
+    /**
+     * @summary Registers main-thread DOM and native font events.
      * @param {Object} config
      */
     construct(config) {
@@ -118,22 +149,57 @@ class DomEvents extends Base {
 
         let me = this;
 
-        document.addEventListener('DOMContentLoaded', me.onDomContentLoaded.bind(me));
-        document.addEventListener('selectionchange',  me.onSelectionChange .bind(me));
-        window  .addEventListener('hashchange',       me.onHashChange      .bind(me));
+        document.addEventListener('DOMContentLoaded',  me.onDomContentLoaded .bind(me));
+        document.addEventListener('selectionchange',   me.onSelectionChange  .bind(me));
+        document.addEventListener('visibilitychange',  me.onVisibilitychange .bind(me));
+        window  .addEventListener('orientationchange', me.onOrientationChange.bind(me));
+        window  .addEventListener('hashchange',        me.onHashChange       .bind(me));
+        window  .addEventListener('blur',              me.onWindowBlur       .bind(me));
+        window  .addEventListener('focus',             me.onWindowFocus      .bind(me));
 
         if (Neo.config.useSharedWorkers) {
-            window.addEventListener('beforeunload', me.onBeforeUnload.bind(me))
+            window.addEventListener('beforeunload', me.onBeforeUnload.bind(me));
+            window.addEventListener('pagehide',     me.onPageHide    .bind(me))
         }
+
+        // Unsupported browsers keep the measurements made with their currently available fonts.
+        const fonts = document.fonts;
+
+        if (typeof fonts?.addEventListener === 'function' && typeof fonts.removeEventListener === 'function') {
+            const listener = me.onFontChange.bind(me);
+
+            me.#fontEvents = {fonts, listener};
+            fonts.addEventListener('loadingdone',  listener);
+            fonts.addEventListener('loadingerror', listener)
+        }
+    }
+
+    /**
+     * @summary Releases the native font listeners with their main-thread owner.
+     * @param {...*} args
+     */
+    destroy(...args) {
+        let me = this;
+
+        if (me.#fontEvents) {
+            const {fonts, listener} = me.#fontEvents;
+
+            fonts.removeEventListener('loadingdone',  listener);
+            fonts.removeEventListener('loadingerror', listener);
+            me.#fontEvents = null
+        }
+
+        super.destroy(...args)
     }
 
     /**
      * @param {Object} data
      */
     addDomListener(data) {
-        let me  = this,
-            i   = 0,
-            len = data.events.length,
+        let me       = this,
+            i        = 0,
+            len      = data.events.length,
+            failedId = null,
             event, id, targetNode;
 
         for (; i < len; i++) {
@@ -153,14 +219,22 @@ class DomEvents extends Base {
                 targetNode = document.querySelector(`[data-neo-id='${id}']`)
             }
 
-            targetNode.addEventListener(event.name, me[event.handler].bind(me));
+            if (targetNode) {
+                targetNode.addEventListener(event.name, me[event.handler].bind(me), event.options)
+            } else {
+                failedId = id
+            }
+        }
+
+        if (failedId && Neo.config.environment === 'development') {
+            console.warn('DomEvents:addDomListener() => target node not found:', failedId)
         }
 
         Neo.worker.Manager.sendMessage(data.origin, {
             action : 'reply',
             data,
             replyId: data.id,
-            success: true
+            success: !failedId
         })
     }
 
@@ -170,18 +244,26 @@ class DomEvents extends Base {
     addGlobalDomListeners() {
         let me = this;
 
-        [...globalDomEvents].concat(Neo.config.useTouchEvents ? touchEvents : []).forEach(event => {
+        [...globalDomEvents].concat(Neo.config.hasTouchEvents ? touchEvents : []).forEach(event => {
             document.body.addEventListener(event.name, me[event.handler].bind(me), event.options)
         });
     }
 
     /**
-     * Local domEvent listener
-     * @param {Object} event
+     * @summary Forwards local DOM events to the App Worker unless an active `Clipboard` addon registration owns the gesture.
+     * @param {Event} event
      */
     domEventListener(event) {
-        let me     = this,
-            target = event.target,
+        if (
+            (event.type === 'copy' || event.type === 'cut' || event.type === 'paste') &&
+            Neo.main.addon?.Clipboard?.claimsEvent?.(event)
+        ) {
+            return
+        }
+
+        let me       = this,
+            {target} = event,
+
             config = {
                 action   : 'domEvent',
                 eventName: event.type,
@@ -193,49 +275,41 @@ class DomEvents extends Base {
                 }
             };
 
-        // console.log('domEventListener', event.type, target.id, target.value, event);
-
         switch (event.type) {
-            case 'dragend':
-                me.dragElementId = null;
-                break;
-            case 'dragenter':
-                if (me.dragElementId === target.id) {
-                    return; // ignore target and source to be the same
-                }
-                break;
-            case 'dragleave':
-                if (me.dragElementId === target.id) {
-                    return; // ignore target and source to be the same
-                }
-                break;
-            case 'dragover':
-                me.onDragOver(event);
-                event.preventDefault();
-                break;
-            case 'dragstart':
-                me.dragElementId = target.id;
-                break;
-            case 'drop':
-                if (!me.dragElementId || me.dragElementId === target.id) {
-                    return; // drop fires twice by default & drop should not trigger on the drag element
-                }
-                if (event.stopPropagation) {
-                    event.stopPropagation(); // stops the browser from redirecting.
-                }
-                event.preventDefault();
-                config.data.srcId = me.dragElementId;
-                me.dragElementId = null;
-                break;
             case 'mousemove':
                 Object.assign(config.data, me.getMouseEventData(event));
-                break;
+                break
             default:
-                event.preventDefault();
-                break;
+                if (event.cancelable) {
+                    event.preventDefault()
+                }
+                break
         }
 
         Neo.worker.Manager.sendMessage('app', config)
+    }
+
+    /**
+     *
+     * @param {HTMLElement} node
+     * @returns {Object}
+     */
+    geAriaAttributes(node) {
+        let ariaAttributes = {},
+            {attributes}   = node,
+            i              = 0,
+            len            = attributes?.length || 0,
+            attribute;
+
+        for (; i < len; i++) {
+            attribute = attributes[i];
+
+            if (attribute.name.startsWith('aria-')) {
+                ariaAttributes[attribute.name.substring(5)] = attribute.value
+            }
+        }
+
+        return ariaAttributes
     }
 
     /**
@@ -247,7 +321,7 @@ class DomEvents extends Base {
      * @returns {Number}
      */
     getDistance(x1, y1, x2, y2) {
-        return Math.sqrt((x2 - x1) ** 2 + (y2 - y1) ** 2);
+        return Math.sqrt((x2 - x1) ** 2 + (y2 - y1) ** 2)
     }
 
     /**
@@ -259,15 +333,21 @@ class DomEvents extends Base {
 
         if (path.length < 1) {
             // our draggable implementation will generate paths, so we do need to check for them
-            path = event.path;
+            path = event.path || [];
         }
 
-        return {
-            path     : path.map(e => this.getTargetData(e)),
-            target   : this.getTargetData(event.target),
+        const result = {
+            path     : path.map(e => this.getTargetData(e, event.type, false)),
+            target   : this.getTargetData(event.target, event.type, true),
             timeStamp: event.timeStamp,
-            type     : event.type
+            type     : event.type,
+        };
+
+        if (event.relatedTarget) {
+            result.relatedTarget = this.getTargetData(event.relatedTarget, event.type, false)
         }
+
+        return result
     }
 
     /**
@@ -294,14 +374,17 @@ class DomEvents extends Base {
      * @returns {Object}
      */
     getMouseEventData(event) {
-        let {altKey, clientX, clientY, ctrlKey, metaKey, offsetX, offsetY, pageX, pageY, screenX, screenY, shiftKey} = event;
+        let {altKey, button, buttons, clientX, clientY, ctrlKey, detail, metaKey, offsetX, offsetY, pageX, pageY, screenX, screenY, shiftKey} = event;
 
         return {
             ...this.getEventData(event),
             altKey,
+            button,
+            buttons,
             clientX,
             clientY,
             ctrlKey,
+            detail,
             metaKey,
             offsetX,
             offsetY,
@@ -335,33 +418,40 @@ class DomEvents extends Base {
     /**
      * @param {Object[]} path
      * @param {HTMLElement} target
+     * @param {String} [eventName]
      * @returns {Object[]}
      */
-    getSelectionPath(path, target) {
+    getSelectionPath(path, target, eventName) {
         if (target.parentNode && target.id.split('__').length > 1) {
-            path = this.getSelectionPath(path, target.parentNode);
+            path = this.getSelectionPath(path, target.parentNode, eventName);
         }
 
-        path.push(this.getTargetData(target));
+        path.push(this.getTargetData(target, eventName, false));
 
-        return path;
+        return path
     }
 
     /**
      * @param {HTMLElement} node
+     * @param {String} [eventName]
+     * @param {Boolean} [isTarget=true]
      * @returns {Object}
      */
-    getTargetData(node) {
-        let r    = node.getBoundingClientRect?.(),
-            rect = r && this.parseDomRect(r) || {};
+    getTargetData(node, eventName, isTarget=true) {
+        // Fast path: eliminate layout thrashing on continuous events.
+        // We skip bounding rect and layout dimensions for scroll & wheel.
+        let skipLayout = eventName === 'scroll' || eventName === 'wheel',
+            r          = !skipLayout && node.getBoundingClientRect?.(),
+            rect       = r && this.parseDomRect(r) || undefined;
 
         return {
+            aria             : this.geAriaAttributes(node),
             checked          : node.checked,
             childElementCount: node.childElementCount,
-            clientHeight     : node.clientHeight,
+            clientHeight     : skipLayout ? undefined : node.clientHeight,
             clientLeft       : node.clientLeft,
             clientTop        : node.clientTop,
-            clientWidth      : node.clientWidth,
+            clientWidth      : skipLayout ? undefined : node.clientWidth,
             cls              : node.classList ? [...node.classList] : [],
             data             : {...node.dataset},
             draggable        : node.draggable,
@@ -371,17 +461,18 @@ class DomEvents extends Base {
             isConnected      : node.isConnected,
             isContentEditable: node.isContentEditable,
             nodeType         : node.nodeType,
-            offsetHeight     : node.offsetHeight,
+            offsetHeight     : skipLayout ? undefined : node.offsetHeight,
             offsetLeft       : node.offsetLeft,
             offsetTop        : node.offsetTop,
-            offsetWidth      : node.offsetWidth,
+            offsetWidth      : skipLayout ? undefined : node.offsetWidth,
             rect,
-            scrollHeight     : node.scrollHeight,
-            scrollLeft       : node.scrollLeft,
-            scrollTop        : node.scrollTop,
-            scrollWidth      : node.scrollWidth,
+            role             : node.role,
+            scrollHeight     : skipLayout ? undefined : node.scrollHeight,
+            scrollLeft       : skipLayout && !isTarget ? undefined : node.scrollLeft,
+            scrollTop        : skipLayout && !isTarget ? undefined : node.scrollTop,
+            scrollWidth      : skipLayout ? undefined : node.scrollWidth,
             style            : node.style?.cssText,
-            tabIndex         : node.tabIndex,
+            tabIndex         : node.getAttribute?.('tabindex') ? node.tabIndex : null,
             tagName          : node.tagName?.toLowerCase()
         }
     }
@@ -397,30 +488,38 @@ class DomEvents extends Base {
     }
 
     /**
-     * Only in use if Neo.config.useSharedWorkers = true
+     * Only in use if Neo.config.useSharedWorkers = true. Disconnects each app this window knows of; a window that knows
+     * none yet — it unloads before its first `registerAppName` arrives, while the workers already hold its port —
+     * disconnects as a whole.
      * @param {Object} event
      */
     onBeforeUnload(event) {
-        let manager = Neo.worker.Manager;
+        let {Manager}            = Neo.worker,
+            {appNames, windowId} = Manager;
 
-        manager.appNames.forEach(appName => {
-            manager.broadcast({action: 'disconnect', appName})
-        })
+        if (this.#departed) return;
+        this.#departed = true;
+
+        if (appNames.length) {
+            appNames.forEach(appName => {
+                Manager.broadcast({action: 'disconnect', appName, windowId})
+            })
+        } else {
+            Manager.broadcast({action: 'disconnect', windowId})
+        }
     }
 
     /**
      * @param {InputEvent} event
      */
     onChange(event) {
-        let me      = this,
-            target  = event.target,
-            tagName = target.tagName,
-            value   = target.value,
+        let me       = this,
+            {target} = event,
 
-            data    = {
+            data = {
                 ...me.getEventData(event),
-                valid: target.checkValidity(),
-                value: tagName === 'INPUT' ? StringUtil.escapeHtml(value) : tagName === 'TEXTAREA' ? me.stripHtml(value) : value
+                valid: target.checkValidity?.(),
+                value: target.value
             };
 
         // input and change events can pass a FileList for input type file
@@ -437,6 +536,7 @@ class DomEvents extends Base {
     onClick(event) {
         let me = this;
 
+        me.flushPendingMouseMove();
         me.sendMessageToApp(me.getMouseEventData(event));
 
         me.testPathInclusion(event, preventClickTargets) && event.preventDefault()
@@ -448,9 +548,11 @@ class DomEvents extends Base {
     onContextMenu(event) {
         let me = this;
 
+        me.flushPendingMouseMove();
         me.sendMessageToApp(me.getMouseEventData(event));
 
-        if (event.ctrlKey || me.testPathInclusion(event, preventContextmenuTargets)) {
+        if (event.ctrlKey || !event.target?.closest?.('.neo-form-field, input, textarea, [contenteditable="true"]') &&
+            me.testPathInclusion(event, preventContextmenuTargets)) {
             event.preventDefault()
         }
     }
@@ -469,16 +571,10 @@ class DomEvents extends Base {
     onDoubleClick(event) {
         let me = this;
 
+        me.flushPendingMouseMove();
         me.sendMessageToApp(me.getMouseEventData(event));
 
         me.testPathInclusion(event, preventClickTargets) && event.preventDefault()
-    }
-
-    /**
-     * @param {Object} event
-     */
-    onDragOver(event) {
-        event.dataTransfer.dropEffect = 'move'
     }
 
     /**
@@ -489,46 +585,145 @@ class DomEvents extends Base {
     }
 
     /**
+     * A focusout raised while `Neo.main.DeltaUpdates` removes a node carries that node's id as
+     * `removedNodeId`, so the app worker can tell the leave of a removed mount from a leave to elsewhere.
      * @param {FocusEvent} event
      */
     onFocusOut(event) {
-        this.sendMessageToApp(this.getEventData(event))
+        let data             = this.getEventData(event),
+            {removingNodeId} = Neo.main.DeltaUpdates;
+
+        if (removingNodeId) {
+            data.removedNodeId = removingNodeId
+        }
+
+        this.sendMessageToApp(data)
+    }
+
+    /**
+     * @summary Forwards settled iframe focus after an instance-owned task deferral.
+     * Focus crossing into a nested document is invisible to the focus events this document forwards:
+     * the element losing focus fires `focusout` with no `relatedTarget`, the `<iframe>` element that
+     * now holds it fires no `focusin`, and only the window's `blur` says anything happened. Without a
+     * `focusin` the app worker's focus manager reads the `focusout` as a leave after its gap — a
+     * click into an iframe INSIDE a focus-holding subtree looks like leaving it. This forwards the
+     * frame element as the focus target, so the worker sees a move to the component that hosts the
+     * frame. `activeElement` settles after `blur`, hence the deferral; a blur that leaves the
+     * document altogether (another window) has no iframe at the active element and forwards nothing.
+     */
+    onWindowBlur() {
+        let me = this;
+
+        me.timeout(0).then(() => {
+            let node = document.activeElement,
+                path = [];
+
+            if (node?.tagName !== 'IFRAME') {
+                return
+            }
+
+            for (let current = node; current; current = current.parentNode) {
+                path.push(current)
+            }
+
+            me.sendMessageToApp(me.getEventData({
+                composedPath: () => path,
+                target      : node,
+                timeStamp   : performance.now(),
+                type        : 'focusin'
+            }))
+        })
+    }
+
+    /**
+     * Tells the App Worker that this window regained focus, e.g. a user coming back from another application
+     */
+    onWindowFocus() {
+        Neo.worker.Manager.sendMessage('app', {
+            action: 'windowFocus',
+            data  : {windowId: Neo.worker.Manager.windowId}
+        })
     }
 
     /**
      *
      */
     onHashChange() {
-        let manager    = Neo.worker.Manager,
-            hashString = location.hash.substr(1);
+        let {Manager}  = Neo.worker,
+            hashString = location.hash.substring(1);
 
-        manager.sendMessage('app', {
+        Manager.sendMessage('app', {
             action: 'hashChange',
             data  : {
-                appNames: manager.appNames,
+                appNames: Manager.appNames,
                 hash    : this.parseHash(hashString),
-                hashString
+                hashString,
+                windowId: Manager.windowId
             }
         })
     }
 
     /**
+     * @summary Preserves native input defaults, including an open select's focused option, inside selection regions.
      * @param {KeyboardEvent} event
      */
     onKeyDown(event) {
-        let target  = event.target,
-            tagName = target.tagName,
-            isInput = tagName === 'INPUT' || tagName === 'TEXTAREA';
+        let me        = this,
+            {target}  = event,
+            {tagName} = target,
+            isInput   = tagName === 'INPUT' || tagName === 'TEXTAREA' || tagName === 'SELECT' || !!target.closest?.('select');
 
         if (isInput && disabledInputKeys[target.id]?.includes(event.key)) {
             event.preventDefault()
         } else {
-            this.sendMessageToApp(this.getKeyboardEventData(event));
+            me.sendMessageToApp(me.getKeyboardEventData(event));
 
-            if (!isInput) { // see: https://github.com/neomjs/neo/issues/1729
-                if (['ArrowDown', 'ArrowLeft', 'ArrowRight', 'ArrowUp'].includes(event.key)) {
-                    event.preventDefault()
-                }
+            if (
+                isInput &&
+                event.key === 'Tab' &&
+                me.testPathInclusion(event, ['neo-grid-editor', 'neo-table-editor'], true)
+            ) {
+                event.preventDefault()
+            }
+
+            // A picker field opens its own picker on Alt+ArrowDown; a date or time input would open the browser's too
+            if (isInput && event.altKey && event.key === 'ArrowDown' && me.testPathInclusion(event, ['neo-pickerfield'])) {
+                event.preventDefault()
+            }
+
+            // A key the App Worker handles for this exact node: it still gets the event, only the default is gone.
+            // The worker cannot cancel a default after the fact, so it registers the node before the key arrives.
+            if (preventDefaultKeys[target.id]?.includes(event.key)) {
+                event.preventDefault()
+            }
+
+            // A grid editor sits in grid.View's scroll area, and a key its input does not consume scrolls the View,
+            // recycling the pooled row the editor is embodied in. PageUp/PageDown never move a single-line caret;
+            // Home/End scroll under macOS key bindings and move the caret everywhere else. Bindings follow the host
+            // OS, which `navigator.platform` reports even where the user agent is emulated.
+            if (
+                tagName === 'INPUT' &&
+                (['PageDown', 'PageUp'].includes(event.key) || ['End', 'Home'].includes(event.key) && /Mac/.test(navigator.platform)) &&
+                me.testPathInclusion(event, ['neo-grid-editor'])
+            ) {
+                event.preventDefault()
+            }
+
+            // Arrows drive roving / efficiency focus within a neo-selection region and may not scroll the
+            // page. The app still receives the keydown (sendMessageToApp above) — this only suppresses the
+            // browser's scroll default. Space is intentionally NOT suppressed here: native interactive
+            // targets (buttons, selects, links, contenteditable) own Enter/Space activation.
+            if (
+                !isInput &&
+                ['ArrowDown', 'ArrowLeft', 'ArrowRight', 'ArrowUp'].includes(event.key) &&
+                me.testPathInclusion(event, ['neo-selection', 'neo-accordion-header'], true)
+            ) {
+                event.preventDefault()
+            }
+
+            // A menu item, accordion header or role-button trigger/nav-button is not a native <button>: Space activates it, like Enter, and scrolls nothing
+            if (!isInput && event.key === ' ' && me.testPathInclusion(event, ['neo-menu-list', 'neo-accordion-header', 'neo-field-trigger', 'neo-nav-button'])) {
+                event.preventDefault()
             }
         }
     }
@@ -544,6 +739,7 @@ class DomEvents extends Base {
      * @param {MouseEvent} event
      */
     onMouseDown(event) {
+        this.flushPendingMouseMove();
         this.sendMessageToApp(this.getMouseEventData(event))
     }
 
@@ -552,8 +748,9 @@ class DomEvents extends Base {
      */
     onMouseEnter(event) {
         let me       = this,
-            appEvent = {...me.getMouseEventData(event), fromElementId: event.fromElement?.id || null};
+            appEvent = {...me.getMouseEventData(event), fromElementId: event.fromElement?.id || null, toElementId: event.toElement?.id || null};
 
+        me.flushPendingMouseMove();
         me.sendMessageToApp(appEvent);
         me.fire('mouseEnter', appEvent)
     }
@@ -563,8 +760,9 @@ class DomEvents extends Base {
      */
     onMouseLeave(event) {
         let me       = this,
-            appEvent = {...me.getMouseEventData(event), toElementId: event.toElement?.id || null};
+            appEvent = {...me.getMouseEventData(event), fromElementId: event.fromElement?.id || null, toElementId: event.toElement?.id || null};
 
+        me.flushPendingMouseMove();
         me.sendMessageToApp(appEvent);
         me.fire('mouseLeave', appEvent)
     }
@@ -572,32 +770,113 @@ class DomEvents extends Base {
     /**
      * @param {MouseEvent} event
      */
+    onMouseMove(event) {
+        let me = this;
+
+        me.lastMouseMoveData = me.getMouseEventData(event);
+
+        if (!me.mouseMoveReqId) {
+            me.mouseMoveReqId = requestAnimationFrame(me.flushMouseMove.bind(me))
+        }
+    }
+
+    /**
+     *
+     */
+    flushMouseMove() {
+        let me = this;
+
+        if (me.lastMouseMoveData) {
+            me.sendMessageToApp(me.lastMouseMoveData);
+            me.lastMouseMoveData = null
+        }
+
+        me.mouseMoveReqId = null
+    }
+
+    /**
+     * Sends a coalesced move that is still waiting for its frame, ahead of the mouse event that calls this. Without
+     * it a press overtakes the move and reaches the app worker as press-then-move, so a consumer deriving movement
+     * from the last reported position (a canvas's mouse state) reads the whole jump as a held button's movement.
+     * Call it only on the path that sends: an event the main thread keeps has no order to restore, and flushing for
+     * it would spend the frame's one move.
+     */
+    flushPendingMouseMove() {
+        let me = this;
+
+        if (me.mouseMoveReqId) {
+            cancelAnimationFrame(me.mouseMoveReqId);
+            me.flushMouseMove()
+        }
+    }
+
+    /**
+     * @param {MouseEvent} event
+     */
     onMouseUp(event) {
+        this.flushPendingMouseMove();
         this.sendMessageToApp(this.getMouseEventData(event))
     }
 
     /**
      * @param {Event} event
      */
-    onScroll(event) {
-        let {clientHeight, clientWidth, scrollLeft, scrollTop} = event.target;
+    onOrientationChange(event) {
+        let {orientation} = screen,
+            {angle, type} = orientation,
+            layout        = angle === 0 || angle === 180 ? 'portrait' : 'landscape';
 
-        this.sendMessageToApp({
-            ...this.getEventData(event),
+        Neo.worker.Manager.sendMessage('app', {
+            action: 'orientationChange',
+            data  : {angle, layout, type}
+        })
+    }
+
+    /**
+     * Only in use if Neo.config.useSharedWorkers = true. A close can skip `beforeunload` (an automation's target
+     * close fires only `pagehide` and `unload`), so the window departs here too, unless it enters the bfcache.
+     * @param {PageTransitionEvent} event
+     */
+    onPageHide(event) {
+        event.persisted || this.onBeforeUnload(event)
+    }
+
+    /**
+     * @param {Event} event
+     */
+    onScroll(event) {
+        let me = this,
+            {firstTouch, lastTouch} = me,
+            {clientHeight, clientWidth, scrollLeft, scrollTop} = event.target,
+            data;
+
+        event.preventDefault();
+
+        data = {
+            ...me.getEventData(event),
             clientHeight,
             clientWidth,
             scrollLeft,
             scrollTop
-        })
+        };
+
+        if (firstTouch) {
+            data.touches = {
+                firstTouch: {clientX: firstTouch.clientX, clientY: firstTouch.clientY},
+                lastTouch : {clientX: lastTouch .clientX, clientY: lastTouch .clientY}
+            }
+        }
+
+        me.sendMessageToApp(data)
     }
 
     /**
      * @param {Event} event
      */
     onSelectionChange(event) {
-        let me      = this,
-            target  = event.target,
-            element = target.type ? target : target.activeElement,
+        let me       = this,
+            {target} = event,
+            element  = target.type ? target : target.activeElement,
             path, targetData;
 
         if (target.tagName === 'BODY') {
@@ -619,8 +898,52 @@ class DomEvents extends Base {
     /**
      * @param {Event} event
      */
+    onVisibilitychange(event) {
+        Neo.worker.Manager.sendMessage('app', {
+            action: 'visibilityChange',
+            data  : {
+                hidden         : document.hidden,
+                visibilityState: document.visibilityState,
+                windowId       : Neo.worker.Manager.windowId
+            }
+        })
+    }
+
+    /**
+     * @summary Announces a completed or failed font load in this document's current window.
+     * @protected
+     */
+    onFontChange() {
+        const binding = this.#fontEvents;
+
+        if (binding && !this.isDestroyed) {
+            Neo.worker.Manager.sendMessage('app', {
+                action: 'fontChange',
+                data  : {windowId: Neo.worker.Manager.windowId}
+            })
+        }
+    }
+
+    /**
+     * A wheel listener a component mounted on its own node (`wheel: {local: true}`) fires with that node as the
+     * `currentTarget`. The global target list does not know such a node, so the node itself is the target; the body
+     * listener has no local target.
+     * @param {WheelEvent} event
+     * @returns {Object|Boolean} `{cls: null, node}` for a local listener, otherwise false
+     */
+    getLocalWheelTarget(event) {
+        let node = event.currentTarget;
+
+        return node && node !== document.body ? {cls: null, node} : false
+    }
+
+    /**
+     * Wheel events reach the app worker for the global target list, and for any node a component listens on
+     * locally (`getLocalWheelTarget`); everything else stays on the main thread.
+     * @param {WheelEvent} event
+     */
     onWheel(event) {
-        let target        = this.testPathInclusion(event, globalWheelTargets),
+        let target        = this.testPathInclusion(event, globalWheelTargets) || this.getLocalWheelTarget(event),
             preventUpdate = false,
             targetCls;
 
@@ -641,12 +964,18 @@ class DomEvents extends Base {
             }
 
             if (!preventUpdate) {
-                let {deltaX, deltaY, deltaZ} = event;
+                // A wheel event is a mouse event: the mouse serializer carries the pointer position, the held
+                // buttons and the modifiers (a zooming consumer zooms towards the pointer, tells the trackpad
+                // pinch — ctrl + wheel on macOS — from a scroll, and keeps a drag's buttons through a wheel tick);
+                // the deltas and the target's scroll geometry ride beside them.
+                let {deltaMode, deltaX, deltaY, deltaZ} = event;
 
+                this.flushPendingMouseMove();
                 this.sendMessageToApp({
-                    ...this.getEventData(event),
+                    ...this.getMouseEventData(event),
                     clientHeight: target.node.clientHeight,
                     clientWidth : target.node.clientWidth,
+                    deltaMode,
                     deltaX,
                     deltaY,
                     deltaZ,
@@ -656,7 +985,10 @@ class DomEvents extends Base {
             }
 
             if (!globalWheelTargetsKeepEvent.includes(targetCls)) {
-                event.preventDefault()
+                if (event.currentTarget !== document.body) {
+                    event.preventDefault();
+                    event.stopPropagation()
+                }
             }
         }
     }
@@ -693,7 +1025,7 @@ class DomEvents extends Base {
                 parts.push('')
             }
 
-            key = decodeURIComponent(parts[0]);
+            key   = decodeURIComponent(parts[0]);
             value = decodeURIComponent(parts[1]);
 
             if (key.indexOf('[]') !== -1) {
@@ -737,6 +1069,19 @@ class DomEvents extends Base {
      */
     registerDisabledInputChars(data) {
         disabledInputKeys[data.id] = data.chars
+    }
+
+    /**
+     * Cancels the browser default of `keys` while the node `id` is the keydown target. Unlike
+     * {@link #registerDisabledInputChars} the event is still delivered to the App Worker, and the node need not be
+     * an input: this is for a key the worker handles itself on a focusable container, where letting the default
+     * through as well — Tab leaving the component, say — would undo what the handler does.
+     * @param {Object} data
+     * @param {String} data.id
+     * @param {String[]} data.keys `KeyboardEvent.key` values
+     */
+    registerPreventDefaultKeys(data) {
+        preventDefaultKeys[data.id] = data.keys
     }
 
     /**
@@ -792,9 +1137,10 @@ class DomEvents extends Base {
     /**
      * @param {Object} event
      * @param {Object} targetArray
+     * @param {Object} testSubstring=false
      * @returns {Object|Boolean} target cls & node if found, false otherwise
      */
-    testPathInclusion(event, targetArray) {
+    testPathInclusion(event, targetArray, testSubstring=false) {
         let countTargets = targetArray.length,
             path         = event.path || event.composedPath(),
             i            = 0,
@@ -805,11 +1151,11 @@ class DomEvents extends Base {
             node = path[i];
 
             for (j = 0; j < countTargets; j++) {
-                if (node.classList?.contains(targetArray[j])) {
-                    return {
-                        cls: targetArray[j],
-                        node
-                    };
+                if (
+                    testSubstring && node.classList?.value?.includes(targetArray[j]) ||
+                    node.classList?.contains(targetArray[j])
+                ) {
+                    return {cls: targetArray[j], node}
                 }
             }
         }
@@ -824,8 +1170,14 @@ class DomEvents extends Base {
     unregisterDisabledInputChars(data) {
         delete disabledInputKeys[data.id]
     }
+
+    /**
+     * @param {Object} data
+     * @param {String} data.id
+     */
+    unregisterPreventDefaultKeys(data) {
+        delete preventDefaultKeys[data.id]
+    }
 }
 
-let instance = Neo.applyClassConfig(DomEvents);
-
-export default instance;
+export default Neo.setupClass(DomEvents);

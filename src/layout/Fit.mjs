@@ -16,56 +16,40 @@ class Fit extends Base {
          * @member {String} ntype='layout-fit'
          * @protected
          */
-        ntype: 'layout-fit'
+        ntype: 'layout-fit',
+        /**
+         * @member {String|null} containerCls='neo-layout-fit'
+         * @protected
+         * @reactive
+         */
+        containerCls: 'neo-layout-fit'
     }
 
     /**
      * Initially sets the CSS classes of the container items this layout is bound to.
-     * @param {Neo.component.Base} child
+     * @param {Neo.component.Base} item
      * @param {Number} index
      */
-    applyChildAttributes(child, index) {
-        if (!child.ignoreLayout) {
-            child.wrapperCls = NeoArray.union(child.wrapperCls, 'neo-layout-fit-item');
+    applyChildAttributes(item, index) {
+        if (!item.ignoreLayout) {
+            item.wrapperCls = NeoArray.union(item.wrapperCls, 'neo-layout-fit-item')
         }
     }
 
     /**
-     * Applies CSS classes to the container this layout is bound to
-     */
-    applyRenderAttributes() {
-        let me         = this,
-            container  = Neo.getComponent(me.containerId),
-            wrapperCls = container?.wrapperCls || [];
-
-        if (!container) {
-            Neo.logError('layout.Fit: applyRenderAttributes -> container not yet created', me.containerId);
-        }
-
-        NeoArray.add(wrapperCls, 'neo-layout-fit');
-
-        container.wrapperCls = wrapperCls;
-    }
-
-    /**
-     * Removes all CSS rules from the container this layout is bound to.
+     * Removes all CSS rules from a container item this layout is bound to.
      * Gets called when switching to a different layout.
+     * @param {Neo.component.Base} item
+     * @param {Number} index
      */
-    removeRenderAttributes() {
-        let me         = this,
-            container  = Neo.getComponent(me.containerId),
-            wrapperCls = container?.wrapperCls || [];
+    removeChildAttributes(item, index) {
+        if (!item.ignoreLayout) {
+            let {wrapperCls} = item;
 
-        if (!container) {
-            Neo.logError('layout.Fit: removeRenderAttributes -> container not yet created', me.containerId);
+            NeoArray.remove(wrapperCls, 'neo-layout-fit-item');
+            item.wrapperCls = wrapperCls
         }
-
-        NeoArray.remove(wrapperCls, 'neo-layout-fit');
-
-        container.wrapperCls = wrapperCls;
     }
 }
 
-Neo.applyClassConfig(Fit);
-
-export default Fit;
+export default Neo.setupClass(Fit);

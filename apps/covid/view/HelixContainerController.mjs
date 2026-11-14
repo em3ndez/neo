@@ -14,6 +14,7 @@ class HelixContainerController extends ComponentController {
         /**
          * @member {Neo.component.Helix|null} helix_=null
          * @protected
+         * @reactive
          */
         helix_: null
     }
@@ -101,6 +102,4 @@ class HelixContainerController extends ComponentController {
     }
 }
 
-Neo.applyClassConfig(HelixContainerController);
-
-export default HelixContainerController;
+export default Neo.setupClass(HelixContainerController);

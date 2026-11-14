@@ -1,10 +1,10 @@
-import Base from './Base.mjs';
+import List from './Base.mjs';
 
 /**
  * @class Neo.list.Color
  * @extends Neo.list.Base
  */
-class Color extends Base {
+class Color extends List {
     static config = {
         /**
          * @member {String} className='Neo.list.Color'
@@ -22,13 +22,14 @@ class Color extends Base {
         baseCls: ['neo-color-list', 'neo-list'],
         /**
          * The data.Model field which contains the color value
-         * @member {String} colorField='name'
+         * @member {String} colorField_='name'
+         * @reactive
          */
-        colorField: 'name',
+        colorField_: 'name',
         /**
          * Override the formatter to apply a custom background-color styling.
          * E.g. using CSS vars for different themes
-         * @member {Function} colorField=(scope,data)=>data[scope.colorField]
+         * @member {Function} colorFormatter=(scope,data)=>data[scope.colorField]
          */
         colorFormatter: (scope,data) => data[scope.colorField]
     }
@@ -60,9 +61,9 @@ class Color extends Base {
             }
         }, {
             vtype: 'text',
-            html : record[me.displayField],
-            id   : me.getListItemVtextId(id)
-        }];
+            id   : me.getListItemVtextId(id),
+            text : record[me.displayField]
+        }]
     }
 
     /**
@@ -70,7 +71,7 @@ class Color extends Base {
      * @returns {String}
      */
     getListItemIconId(recordId) {
-        return `${this.id}__icon__${recordId}`;
+        return `${this.id}__icon__${recordId}`
     }
 
     /**
@@ -78,7 +79,7 @@ class Color extends Base {
      * @returns {String}
      */
     getListItemVtextId(recordId) {
-        return `${this.id}__vtext__${recordId}`;
+        return `${this.id}__vtext__${recordId}`
     }
 
     /**
@@ -89,10 +90,8 @@ class Color extends Base {
 
         me.createItems(me.silentSelectUpdate);
 
-        !me.silentSelect && me.focus(items[0]);
+        !me.silentSelect && me.focus(items[0])
     }
 }
 
-Neo.applyClassConfig(Color);
-
-export default Color;
+export default Neo.setupClass(Color);

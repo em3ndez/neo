@@ -45,7 +45,7 @@ class Component extends BaseComponent {
             endTime             : data => data.endTime,
             eventBorder         : data => data.events.border,
             eventStore          : 'stores.events',
-            intlFormat_time     : data => data.intlFormat_time,
+            intlFormat_time     : data => data.timeFormatter,
             locale              : data => data.locale,
             minimumEventDuration: data => data.minimumEventDuration,
             showWeekends        : data => data.showWeekends,
@@ -53,41 +53,48 @@ class Component extends BaseComponent {
             weekStartDay        : data => data.weekStartDay
         },
         /**
-         * Bound to the view model
+         * Bound to the state provider
          * @member {Neo.calendar.store.Calendars|null} calendarStore_=null
+         * @reactive
          */
         calendarStore_: null,
         /**
          * Amount of hidden columns on both sides each inside this view.
          * @member {Number} columnsBuffer_=7
+         * @reactive
          */
         columnsBuffer_: 7,
         /**
          * Amount of visible columns inside this view.
          * @member {Number} columnsVisible_=7
+         * @reactive
          */
         columnsVisible_: 7,
         /**
-         * Bound to the view model.
+         * Bound to the state provider.
          * @member {Date|null} currentDate_=null
          * @protected
+         * @reactive
          */
         currentDate_: null,
         /**
          * The format of the column headers.
          * Valid values are: narrow, short & long
          * @member {String} dayNameFormat_='short'
+         * @reactive
          */
         dayNameFormat_: 'short',
         /**
-         * Bound to the view model.
+         * Bound to the state provider.
          * @member {Boolean} enableDrag_=true
          * @protected
+         * @reactive
          */
         enableDrag_: true,
         /**
-         * Bound to the view model
+         * Bound to the state provider
          * @member {String|null} eventBorder_=null
+         * @reactive
          */
         eventBorder_: null,
         /**
@@ -95,8 +102,9 @@ class Component extends BaseComponent {
          */
         eventDragZone: null,
         /**
-         * Bound to the view model
+         * Bound to the state provider
          * @member {Neo.calendar.store.Events|null} eventStore_=null
+         * @reactive
          */
         eventStore_: null,
         /**
@@ -117,9 +125,10 @@ class Component extends BaseComponent {
          */
         intlFormat_day: null,
         /**
-         * Bound to the view model.
+         * Bound to the state provider.
          * @member {Intl.DateTimeFormat|null} intlFormat_time_=null
          * @protected
+         * @reactive
          */
         intlFormat_time_: null,
         /**
@@ -128,12 +137,13 @@ class Component extends BaseComponent {
          */
         isUpdating: false,
         /**
-         * Bound to the view model.
+         * Bound to the state provider.
          * @member {String} locale_=Neo.config.locale
+         * @reactive
          */
         locale_: Neo.config.locale,
         /**
-         * Time in minutes. Bound to the view model.
+         * Time in minutes. Bound to the state provider.
          * @member {Number} minimumEventDuration=30
          * @protected
          */
@@ -161,11 +171,13 @@ class Component extends BaseComponent {
         pluginEventResizableConfig: null,
         /**
          * @member {Boolean} showEventEndTime_=false
+         * @reactive
          */
         showEventEndTime_: false,
         /**
-         * Bound to the view model.
+         * Bound to the state provider.
          * @member {Boolean} showWeekends_=true
+         * @reactive
          */
         showWeekends_: true,
         /**
@@ -181,6 +193,7 @@ class Component extends BaseComponent {
          * Valid values are start & end.
          * start => left, end => right in LTR mode.
          * @member {String} timeAxisPosition_='start'
+         * @reactive
          */
         timeAxisPosition_: 'start',
         /**
@@ -190,6 +203,7 @@ class Component extends BaseComponent {
          * @protected
          */
         totalColumns: null,
+        updateDepth: -1,
         /**
          * @member {Object} vdom
          */
@@ -205,11 +219,20 @@ class Component extends BaseComponent {
         ]},
         /**
          * 0-6 => Sun-Sat
-         * Bound to the view model.
+         * Bound to the state provider.
          * @member {Number} weekStartDay_=0
+         * @reactive
          */
         weekStartDay_: 0
     }
+
+    /**
+     * Last-seen horizontal scroll offset of `.neo-c-w-scrollcontainer`, used by `onScroll`
+     * to ignore vertical-only scroll events (`deltaX === 0`).
+     * @member {Number} lastScrollLeft=0
+     * @protected
+     */
+    lastScrollLeft = 0
 
     /**
      * @param {Object} config
@@ -221,30 +244,28 @@ class Component extends BaseComponent {
 
         me.addDomListeners([
             {dblclick: me.onEventDoubleClick, scope: me, delegate: '.neo-event'},
+            {scroll  : me.onScroll,           scope: me},
             {wheel   : me.onWheel,            scope: me}
         ]);
 
-        me.timeAxis = Neo.create(TimeAxisComponent, {
+        me.timeAxis = Neo.create({
+            module   : TimeAxisComponent,
             appName  : me.appName,
             parentId : me.id,
-            listeners: {
-                change: me.onTimeAxisChange,
-                scope : me
-            },
+            listeners: {change: me.onTimeAxisChange, scope : me},
+            windowId : me.windowId,
             ...me.timeAxisConfig
         });
 
-        me.getColumnTimeAxisContainer().cn[me.timeAxisPosition === 'start' ? 'unshift' : 'push'](me.timeAxis.vdom);
+        me.getColumnTimeAxisContainer().cn[me.timeAxisPosition === 'start' ? 'unshift' : 'push'](me.timeAxis.createVdomReference());
 
         if (me.calendarStore.getCount() > 0 && me.eventStore.getCount() > 0) {
-            me.needsEventUpdate = true;
+            me.needsEventUpdate = true
         }
 
         me.updateHeader(true, me.needsEventUpdate);
 
-        me.needsEventUpdate && me.updateEvents(false);
-
-        me.headerCreated = true;
+        me.needsEventUpdate && me.updateEvents(false)
     }
 
     /**
@@ -256,19 +277,18 @@ class Component extends BaseComponent {
      * @param {Boolean} [silent=false]
      */
     adjustTotalHeight(data, silent=false) {
-        let me          = this,
-            rowHeight   = data.rowHeight,
-            rowsPerItem = data.rowsPerItem,
-            height      = data.totalHeight - rowHeight,
-            i           = 0,
-            gradient    = [];
+        let me                       = this,
+            {rowHeight, rowsPerItem} = data,
+            height                   = data.totalHeight - rowHeight,
+            i                        = 0,
+            gradient                 = [];
 
         for (; i < rowsPerItem; i++) {
             gradient.push(
                 `var(--c-w-background-color) ${i * rowHeight + i}px`,
                 `var(--c-w-background-color) ${(i + 1) * rowHeight + i}px`,
                 'var(--c-w-border-color) 0'
-            );
+            )
         }
 
         Object.assign(me.getColumnContainer().style, {
@@ -278,7 +298,7 @@ class Component extends BaseComponent {
             maxHeight      : `${height}px`
         });
 
-        !silent && me.update();
+        !silent && me.update()
     }
 
     /**
@@ -297,7 +317,7 @@ class Component extends BaseComponent {
         };
 
         oldValue?.un(listeners);
-        value   ?.on(listeners);
+        value   ?.on(listeners)
     }
 
     /**
@@ -307,7 +327,8 @@ class Component extends BaseComponent {
      * @protected
      */
     afterSetColumnsBuffer(value, oldValue) {
-        this.totalColumns = this.visibleColumns + 2 * value;
+        this.totalColumns = this.columnsVisible + 2 * value;
+        oldValue !== undefined && this.rebuildColumns()
     }
 
     /**
@@ -318,6 +339,7 @@ class Component extends BaseComponent {
      */
     afterSetColumnsVisible(value, oldValue) {
         this.totalColumns = 2 * this.columnsBuffer + value;
+        oldValue !== undefined && this.rebuildColumns()
     }
 
     /**
@@ -329,9 +351,9 @@ class Component extends BaseComponent {
     afterSetCurrentDate(value, oldValue) {
         let me = this;
 
-        if (me.isConstructed) {
+        if (value && me.isConstructed) {
             me.updateHeader(false, true);
-            me.updateEvents();
+            me.updateEvents()
         }
     }
 
@@ -345,7 +367,7 @@ class Component extends BaseComponent {
         let me = this;
 
         me.intlFormat_day = new Intl.DateTimeFormat(me.locale, {weekday: value});
-        oldValue && me.updateHeader();
+        oldValue && me.updateHeader()
     }
 
     /**
@@ -355,32 +377,29 @@ class Component extends BaseComponent {
      * @protected
      */
     afterSetEnableDrag(value, oldValue) {
-        let me = this;
-
-        if (value && !me.getPlugin({flag: 'dragdrop'})) {
+        if (value && !this.getPlugin('calendar-week-dragdrop')) {
             Promise.all([
                 import('./plugin/DragDrop.mjs'),
                 import('./plugin/EventResizable.mjs')
             ]).then(modules => {
-                let me      = this,
-                    plugins = me.plugins || [];
+                let me        = this,
+                    {appName} = me,
+                    plugins   = me.plugins || [];
 
                 plugins.push({
                     module : modules[0].default,
-                    appName: me.appName,
-                    flag   : 'dragdrop',
+                    appName,
                     ...me.pluginDragDropConfig
                 }, {
                     module       : modules[1].default,
-                    appName      : me.appName,
+                    appName,
                     delegationCls: 'neo-event',
                     directions   : ['b', 't'],
-                    flag         : 'resizable',
                     ...me.pluginEventResizableConfig
                 });
 
-                me.plugins = plugins;
-            });
+                me.plugins = plugins
+            })
         }
     }
 
@@ -391,13 +410,13 @@ class Component extends BaseComponent {
      * @protected
      */
     afterSetEventBorder(value, oldValue) {
-        let me  = this,
-            cls = me.cls;
+        let me    = this,
+            {cls} = me;
 
         oldValue && NeoArray.remove(cls, `neo-event-border-${oldValue}`);
         value    && NeoArray.add(   cls, `neo-event-border-${value}`);
 
-        me.cls = cls;
+        me.cls = cls
     }
 
     /**
@@ -416,7 +435,19 @@ class Component extends BaseComponent {
         };
 
         oldValue?.un(listeners);
-        value   ?.on(listeners);
+        value   ?.on(listeners)
+    }
+
+    /**
+     * @summary Re-renders week events when the bound timeFormatter changes.
+     * @param {Intl.DateTimeFormat|null} value
+     * @param {Intl.DateTimeFormat|null} oldValue
+     * @protected
+     */
+    afterSetIntlFormat_time(value, oldValue) {
+        if (oldValue && this.isConstructed) {
+            this.updateEvents()
+        }
     }
 
     /**
@@ -430,7 +461,7 @@ class Component extends BaseComponent {
             let me = this;
 
             me.intlFormat_day  = new Intl.DateTimeFormat(value, {weekday: me.dayNameFormat});
-            me.updateHeader();
+            me.updateHeader()
         }
     }
 
@@ -449,7 +480,7 @@ class Component extends BaseComponent {
         if (value) {
             if (me.needsEventUpdate) {
                 me.updateEvents();
-                me.needsEventUpdate = false;
+                me.needsEventUpdate = false
             }
 
             await me.timeout(100);
@@ -461,8 +492,9 @@ class Component extends BaseComponent {
                 appName  : me.appName,
                 direction: 'left',
                 id       : scrollContainerId,
-                value    : rect.width * me.columnsBuffer / me.columnsVisible / 3
-            });
+                value    : rect.width * me.columnsBuffer / me.columnsVisible / 3,
+                windowId : me.windowId
+            })
         }
     }
 
@@ -473,7 +505,7 @@ class Component extends BaseComponent {
      * @protected
      */
     afterSetShowEventEndTime(value, oldValue) {
-        oldValue !== undefined && this.updateEvents();
+        oldValue !== undefined && this.updateEvents()
     }
 
     /**
@@ -483,8 +515,8 @@ class Component extends BaseComponent {
      * @protected
      */
     afterSetShowWeekends(value, oldValue) {
-        let me  = this,
-            cls = me.cls;
+        let me    = this,
+            {cls} = me;
 
         NeoArray[value ? 'add' : 'remove'](cls, 'neo-show-weekends');
 
@@ -492,7 +524,7 @@ class Component extends BaseComponent {
 
         if (oldValue !== undefined) {
             me.updateHeader(false, true);
-            me.updateEvents();
+            me.updateEvents()
         }
     }
 
@@ -504,17 +536,17 @@ class Component extends BaseComponent {
      */
     afterSetTimeAxisPosition(value, oldValue) {
         let me                = this,
-            cls               = me.cls,
+            {cls}             = me,
             timeAxisContainer = me.getColumnTimeAxisContainer();
 
         NeoArray[value === 'end' ? 'add' : 'remove'](cls, 'neo-timeaxis-end');
 
         if (oldValue !== undefined) {
-            timeAxisContainer.cn.unshift(timeAxisContainer.cn.pop()); // switch the order of the 2 items
+            timeAxisContainer.cn.unshift(timeAxisContainer.cn.pop()) // switch the order of the 2 items
         }
 
         me.cls = cls; // silent update
-        me.update();
+        me.update()
     }
 
     /**
@@ -526,7 +558,7 @@ class Component extends BaseComponent {
     afterSetWeekStartDay(value, oldValue) {
         if (oldValue !== undefined) {
             this.updateHeader(false, true);
-            this.updateEvents();
+            this.updateEvents()
         }
     }
 
@@ -537,7 +569,7 @@ class Component extends BaseComponent {
      * @protected
      */
     beforeSetDayNameFormat(value, oldValue) {
-        return this.beforeSetEnumValue(value, oldValue, 'dayNameFormat', DateUtil.prototype.dayNameFormats);
+        return this.beforeSetEnumValue(value, oldValue, 'dayNameFormat', DateUtil.prototype.dayNameFormats)
     }
 
     /**
@@ -547,7 +579,7 @@ class Component extends BaseComponent {
      * @protected
      */
     beforeSetTimeAxisPosition(value, oldValue) {
-        return this.beforeSetEnumValue(value, oldValue, 'timeAxisPosition');
+        return this.beforeSetEnumValue(value, oldValue, 'timeAxisPosition')
     }
 
     /**
@@ -557,10 +589,11 @@ class Component extends BaseComponent {
      * @protected
      */
     beforeSetWeekStartDay(value, oldValue) {
-        return this.beforeSetEnumValue(value, oldValue, 'weekStartDay', DateUtil.prototype.weekStartDays);
+        return this.beforeSetEnumValue(value, oldValue, 'weekStartDay', DateUtil.prototype.weekStartDays)
     }
 
     /**
+     * @summary Builds column and header VDOM descriptors with deterministic date-scoped IDs so `EventDragZone#dragMove` resolves the right drop day from `targetPath` after mid-drag column paging.
      * @param {Date} date
      * @returns {Object}
      */
@@ -570,27 +603,28 @@ class Component extends BaseComponent {
             currentDate = date.getDate(),
             currentDay  = date.getDay(),
             dateCls     = ['neo-date'],
+            headerId    = me.getColumnHeaderId(date),
             removeDom   = false,
             column, header;
 
         if (currentDay === 0 || currentDay === 6) {
             columnCls.push('neo-weekend');
-            !me.showWeekends && (removeDom = true);
+            !me.showWeekends && (removeDom = true)
         }
 
         if (currentDate === today.day && date.getMonth() === today.month && date.getFullYear() === today.year) {
-            dateCls.push('neo-today');
+            dateCls.push('neo-today')
         }
 
-        column = {cls: columnCls, flag: DateUtil.convertToyyyymmdd(date), removeDom};
+        column = {cls: columnCls, flag: DateUtil.convertToyyyymmdd(date), id: me.getColumnId(date), removeDom};
 
         header =
-        {cls: ['neo-header-row-item'], removeDom: removeDom, cn: [
-            {cls: ['neo-day'], html: me.intlFormat_day.format(date)},
-            {cls: dateCls,     html: currentDate}
+        {cls: ['neo-header-row-item'], id: headerId, removeDom: removeDom, cn: [
+            {cls: ['neo-day'], id: `${headerId}_day`,  text: me.intlFormat_day.format(date)},
+            {cls: dateCls,     id: `${headerId}_date`, text: currentDate}
         ]};
 
-        return {column, header};
+        return {column, header}
     }
 
     /**
@@ -599,14 +633,14 @@ class Component extends BaseComponent {
     destroy(...args) {
         this.timeAxis = null;
 
-        super.destroy(...args);
+        super.destroy(...args)
     }
 
     /**
      *
      */
     getColumnContainer() {
-        return VDomUtil.getByFlag(this.vdom, 'neo-c-w-column-container');
+        return VDomUtil.getByFlag(this.vdom, 'neo-c-w-column-container')
     }
 
     /**
@@ -614,7 +648,7 @@ class Component extends BaseComponent {
      * @returns {String}
      */
     getColumnId(date) {
-        return `${this.id}_col_${DateUtil.convertToyyyymmdd(date)}`;
+        return `${this.id}_col_${DateUtil.convertToyyyymmdd(date)}`
     }
 
     /**
@@ -622,14 +656,14 @@ class Component extends BaseComponent {
      * @returns {String}
      */
     getColumnHeaderId(date) {
-        return `${this.id}_ch_${DateUtil.convertToyyyymmdd(date)}`;
+        return `${this.id}_ch_${DateUtil.convertToyyyymmdd(date)}`
     }
 
     /**
      *
      */
     getColumnTimeAxisContainer() {
-        return VDomUtil.getByFlag(this.vdom, 'neo-c-w-column-timeaxis-container');
+        return VDomUtil.getByFlag(this.vdom, 'neo-c-w-column-timeaxis-container')
     }
 
     /**
@@ -637,14 +671,14 @@ class Component extends BaseComponent {
      * @returns {String}
      */
     getEventId(recordId) {
-        return `${this.id}__${recordId}`;
+        return `${this.id}__${recordId}`
     }
 
     /**
      *
      */
     getHeaderContainer() {
-        return VDomUtil.getByFlag(this.vdom, 'neo-header-row');
+        return VDomUtil.getByFlag(this.vdom, 'neo-header-row')
     }
 
     /**
@@ -652,28 +686,28 @@ class Component extends BaseComponent {
      * @returns {String}
      */
     getIdKey() {
-        return 'c-w';
+        return 'c-w'
     }
 
     /**
      *
      */
     getScrollContainer() {
-        return VDomUtil.getByFlag(this.vdom, 'neo-c-w-scrollcontainer');
+        return VDomUtil.getByFlag(this.vdom, 'neo-c-w-scrollcontainer')
     }
 
     /**
      * @param {Object[]} data
      */
     onCalendarStoreLoad(data) {
-        this.eventStore.getCount() > 0 && this.updateEvents();
+        this.eventStore.getCount() > 0 && this.updateEvents()
     }
 
     /**
      * @param {Object} data
      */
     onCalendarStoreRecordChange(data) {
-        this.updateEvents();
+        this.updateEvents()
     }
 
     /**
@@ -681,18 +715,20 @@ class Component extends BaseComponent {
      */
     onEventDoubleClick(data) {
         if (this.data.events.enableEdit) {
-            !data.path[0].cls.includes('neo-event') && data.path.shift();
+            let {path} = data;
+
+            !path[0].cls.includes('neo-event') && path.shift();
 
             let me                 = this,
-                editEventContainer = me.owner.editEventContainer,
-                eventNode          = data.path[0],
-                eventVdom          = VDomUtil.findVdomChild(me.vdom, eventNode.id).vdom,
+                {editEventContainer} = me.owner,
+                eventNode          = path[0],
+                eventVdom          = VDomUtil.find(me.vdom, eventNode.id).vdom,
                 record             = me.eventStore.get(eventVdom.flag),
-                style              = editEventContainer.style;
+                {style}            = editEventContainer;
 
             Object.assign(style, {left: `${eventNode.rect.width + 15}px`, top: eventVdom.style.top});
-            editEventContainer.setSilent({parentId: data.path[1].id, record, style});
-            editEventContainer.render(true);
+            editEventContainer.setSilent({parentId: path[1].id, record, style});
+            editEventContainer.initVnode(true)
         }
     }
 
@@ -700,14 +736,14 @@ class Component extends BaseComponent {
      * @param {Object[]} data
      */
     onEventStoreLoad(data) {
-        this.calendarStore.getCount() > 0 && this.updateEvents();
+        this.calendarStore.getCount() > 0 && this.updateEvents()
     }
 
     /**
      * @param {Object[]} data
      */
     onEventStoreRecordChange(data) {
-        this.updateEvents();
+        this.updateEvents()
     }
 
     /**
@@ -716,11 +752,32 @@ class Component extends BaseComponent {
      * @param {Object[]} data.path
      */
     onFocusChange(data) {
-        let oldPath = data.oldPath,
-            path    = data.path;
+        let {oldPath, path} = data;
 
-        oldPath?.[0]?.cls.includes('neo-event') && Neo.applyDeltas(this.appName, {id: oldPath[0].id, cls: {remove: ['neo-focus']}});
-        path   ?.[0]?.cls.includes('neo-event') && Neo.applyDeltas(this.appName, {id: path[0]   .id, cls: {add:    ['neo-focus']}});
+        oldPath?.[0]?.cls.includes('neo-event') && Neo.applyDeltas(this.windowId, {id: oldPath[0].id, cls: {remove: ['neo-focus']}});
+        path   ?.[0]?.cls.includes('neo-event') && Neo.applyDeltas(this.windowId, {id: path[0]   .id, cls: {add:    ['neo-focus']}})
+    }
+
+    /**
+     * @summary Forwards horizontal scroll events on the week scroll container into the infinite-scroll column paging handler while ignoring vertical-only scroll events.
+     * @param {Object} data
+     */
+    onScroll(data) {
+        let me = this;
+
+        if (!data.target || data.target.cls?.includes('neo-c-w-scrollcontainer') || data.target.id === me.getScrollContainer().id) {
+            let deltaX = data.scrollLeft - me.lastScrollLeft;
+
+            me.lastScrollLeft = data.scrollLeft;
+
+            if (deltaX !== 0) {
+                me.onWheel({
+                    ...data,
+                    deltaX,
+                    deltaY: 0
+                })
+            }
+        }
     }
 
     /**
@@ -734,23 +791,22 @@ class Component extends BaseComponent {
         let me = this;
 
         me.adjustTotalHeight(data, me.headerCreated);
-        me.headerCreated && me.updateEvents();
+        me.headerCreated && me.updateEvents()
     }
 
     /**
+     * @summary Pages buffered day columns in and out at the horizontal scroll edges and compensates scrollLeft.
      * @param {Object} data
      */
     onWheel(data) {
         if (!this.isUpdating && Math.abs(data.deltaX) > Math.abs(data.deltaY)) {
-            let me              = this,
-                columns         = me.getColumnContainer(),
-                columnsBuffer   = me.columnsBuffer,
-                columnsVisible  = me.columnsVisible,
-                firstColumnDate = me.firstColumnDate,
-                header          = me.getHeaderContainer(),
-                i               = 0,
-                timeAxisWidth   = 50,
-                width           = data.clientWidth - timeAxisWidth,
+            let me                                               = this,
+                columns                                          = me.getColumnContainer(),
+                {columnsBuffer, columnsVisible, firstColumnDate} = me,
+                header                                           = me.getHeaderContainer(),
+                i                                                = 0,
+                timeAxisWidth                                    = 50,
+                width                                            = data.clientWidth - timeAxisWidth,
                 config, date, scrollValue;
 
             // console.log(data.scrollLeft, Math.round(data.scrollLeft / (data.clientWidth - timeAxisWidth) * 7));
@@ -767,16 +823,16 @@ class Component extends BaseComponent {
                     config = me.createColumnAndHeader(date);
 
                     columns.cn.push(config.column);
-                    header .cn.push(config.header);
+                    header .cn.push(config.header)
                 }
 
                 firstColumnDate.setDate(firstColumnDate.getDate() + columnsBuffer);
 
                 // we need a short delay to move the event rendering into the next animation frame.
                 // Details: https://github.com/neomjs/neo/issues/2216
-                setTimeout(() => {me.updateEvents(false, columnsBuffer + columnsVisible, me.totalColumns)}, 50);
+                me.timeout(50).then(() => {me.updateEvents(false, columnsBuffer + columnsVisible, me.totalColumns)});
 
-                scrollValue = -width;
+                scrollValue = -width
             }
 
             else if (data.deltaX < 0 && Math.round(data.scrollLeft / width * columnsBuffer) < 1) {
@@ -791,39 +847,58 @@ class Component extends BaseComponent {
                     config = me.createColumnAndHeader(date);
 
                     columns.cn.unshift(config.column);
-                    header .cn.unshift(config.header);
+                    header .cn.unshift(config.header)
                 }
 
                 firstColumnDate.setDate(firstColumnDate.getDate() - columnsBuffer);
 
                 // we need a short delay to move the event rendering into the next animation frame.
                 // Details: https://github.com/neomjs/neo/issues/2216
-                setTimeout(() => {me.updateEvents(false, 0, columnsBuffer)}, 50);
+                me.timeout(50).then(() => {me.updateEvents(false, 0, columnsBuffer)});
 
-                scrollValue = width;
+                scrollValue = width
             }
 
             if (scrollValue) {
-                me.isUpdating = true;
+                me.isUpdating     = true;
+                me.lastScrollLeft = data.scrollLeft + scrollValue;
 
                 me.promiseUpdate().then(() => {
                     Neo.main.DomAccess.scrollBy({
                         direction: 'left',
                         id       : me.getScrollContainer().id,
-                        value    : scrollValue
+                        value    : scrollValue,
+                        windowId : me.windowId
                     }).then(() => {
-                        me.isUpdating = false;
-                    });
-                });
+                        me.isUpdating = false
+                    })
+                })
             }
         }
+    }
+
+    /**
+     * @summary Re-creates all columns, headers and events after totalColumns changed.
+     * updateHeader() only creates columns once and afterwards updates them in place,
+     * so a different column count requires empty containers.
+     * @protected
+     */
+    rebuildColumns() {
+        let me = this;
+
+        me.getColumnContainer().cn = [];
+        me.getHeaderContainer().cn = [];
+        me.headerCreated           = false;
+
+        me.updateHeader(true, true);
+        me.updateEvents()
     }
 
     /**
      * @param {Date} date
      */
     setFirstColumnDate(date) {
-        date.setDate(date.getDate() - date.getDay() + this.weekStartDay - this.columnsBuffer);
+        date.setDate(date.getDate() - date.getDay() + this.weekStartDay - this.columnsBuffer)
     }
 
     /**
@@ -835,20 +910,18 @@ class Component extends BaseComponent {
     updateEvents(silent=false, startIndex=0, endIndex=this.totalColumns) {
         let me = this;
 
+        if (!me.currentDate) return;
+
         if (!me.mounted) {
-            me.needsEventUpdate = true;
+            me.needsEventUpdate = true
         } else {
-            let calendarStore     = me.calendarStore,
-                eventStore        = me.eventStore,
-                timeAxis          = me.timeAxis,
-                endTime           = timeAxis.getTime(me.endTime),
-                startTime         = timeAxis.getTime(me.startTime),
-                totalTime         = endTime - startTime,
-                date              = DateUtil.clone(me.firstColumnDate),
-                vdom              = me.vdom,
-                content           = me.getColumnContainer(),
-                j                 = startIndex,
-                showEventEndTime  = me.showEventEndTime,
+            let {calendarStore, eventStore, showEventEndTime, timeAxis, vdom} = me,
+                endTime   = timeAxis.getTime(me.endTime),
+                startTime = timeAxis.getTime(me.startTime),
+                totalTime = endTime - startTime,
+                date      = DateUtil.clone(me.firstColumnDate),
+                content   = me.getColumnContainer(),
+                j         = startIndex,
                 calendarRecord, column, dayRecords, duration, endDate, eventCls, eventIntervals, hasOverflow, height, i,
                 len, record, recordKey, startDate, startHours, top;
 
@@ -871,19 +944,19 @@ class Component extends BaseComponent {
                         startDate = record.startDate;
 
                         if (endTime <= startDate.getHours() || startTime >= endDate.getHours()) {
-                            continue;
+                            continue
                         }
 
                         if (endTime < endDate.getHours()) {
                             endDate = DateUtil.clone(endDate);
                             endDate.setHours(endTime);
-                            endDate.setMinutes(0);
+                            endDate.setMinutes(0)
                         }
 
                         if (startTime > startDate.getHours()) {
                             startDate = DateUtil.clone(startDate);
                             startDate.setHours(startTime);
-                            startDate.setMinutes(0);
+                            startDate.setMinutes(0)
                         }
 
                         duration       = (endDate - startDate) / 60 / 60 / 1000; // duration in hours
@@ -899,7 +972,7 @@ class Component extends BaseComponent {
                             hasOverflow = timeAxis.rowHeight * eventIntervals < (showEventEndTime ? 50 : 34);
 
                             if (hasOverflow && !(showEventEndTime && (timeAxis.rowHeight / eventIntervals >= 34))) {
-                                eventCls.push('neo-overflow');
+                                eventCls.push('neo-overflow')
                             }
                         }
 
@@ -915,17 +988,17 @@ class Component extends BaseComponent {
 
                             cn: [{
                                 cls : ['neo-event-time'],
-                                html: me.intlFormat_time.format(record.startDate),
-                                id  : `${me.id}__time__${recordKey}`
+                                id  : `${me.id}__time__${recordKey}`,
+                                text: me.intlFormat_time.format(record.startDate)
                             }, {
                                 cls : ['neo-event-title'],
-                                html: record.title,
-                                id  : `${me.id}__title__${recordKey}`
+                                id  : `${me.id}__title__${recordKey}`,
+                                text: record.title
                             }, {
                                 cls      : ['neo-event-time', 'neo-event-end-time'],
-                                html     : me.intlFormat_time.format(record.endDate),
                                 id       : `${me.id}__enddate__${recordKey}`,
-                                removeDom: !showEventEndTime
+                                removeDom: !showEventEndTime,
+                                text     : me.intlFormat_time.format(record.endDate)
                             }],
 
                             style: {
@@ -933,30 +1006,36 @@ class Component extends BaseComponent {
                                 top   : `calc(${top}% + 1px)`,
                                 width : 'calc(100% - 1px)'
                             }
-                        });
+                        })
                     }
                 }
 
-                date.setDate(date.getDate() + 1);
+                date.setDate(date.getDate() + 1)
             }
 
-            me[silent ? '_vdom' : 'vdom'] = vdom;
+            !silent && me.update()
         }
     }
 
     /**
+     * @summary Defers header creation until currentDate is set.
      * @param {Boolean} [create=false]
      * @param {Boolean} [silent=false]
      */
     updateHeader(create=false, silent=false) {
-        let me           = this,
-            date         = me.currentDate, // cloned
-            vdom         = me.vdom,
-            content      = me.getColumnContainer(),
-            header       = me.getHeaderContainer(),
-            i            = 0,
-            showWeekends = me.showWeekends,
+        let me             = this,
+            {showWeekends} = me,
+            date           = me.currentDate, // cloned
+            content        = me.getColumnContainer(),
+            header         = me.getHeaderContainer(),
+            i              = 0,
             columnCls, currentDate, currentDay, dateCls, headerId, removeDom;
+
+        if (!date) return;
+
+        if (!me.headerCreated) {
+            create = true
+        }
 
         me.setFirstColumnDate(date);
 
@@ -971,11 +1050,11 @@ class Component extends BaseComponent {
 
             if (currentDay === 0 || currentDay === 6) {
                 columnCls.push('neo-weekend');
-                !showWeekends && (removeDom = true);
+                !showWeekends && (removeDom = true)
             }
 
             if (currentDate === today.day && date.getMonth() === today.month && date.getFullYear() === today.year) {
-                dateCls.push('neo-today');
+                dateCls.push('neo-today')
             }
 
             headerId = me.getColumnHeaderId(date);
@@ -985,9 +1064,9 @@ class Component extends BaseComponent {
 
                 header.cn.push(
                 {cls: ['neo-header-row-item'], id: headerId, removeDom, cn: [
-                    {cls: ['neo-day'], html: me.intlFormat_day.format(date), id: `${headerId}_day`},
-                    {cls : dateCls,    html: currentDate,                    id: `${headerId}_date`}
-                ]});
+                    {cls: ['neo-day'], id: `${headerId}_day`,  text: me.intlFormat_day.format(date)},
+                    {cls : dateCls,    id: `${headerId}_date`, text: currentDate}
+                ]})
             } else {
                 Object.assign(content.cn[i], {
                     cls : columnCls,
@@ -997,17 +1076,17 @@ class Component extends BaseComponent {
                 });
 
                 Object.assign(header.cn[i],       {id: headerId, removeDom});
-                Object.assign(header.cn[i].cn[0], {html: me.intlFormat_day.format(date), id: `${headerId}_day`});
-                Object.assign(header.cn[i].cn[1], {cls: dateCls, html: currentDate, id: `${headerId}_date`});
+                Object.assign(header.cn[i].cn[0], {id: `${headerId}_day`, text: me.intlFormat_day.format(date)});
+                Object.assign(header.cn[i].cn[1], {cls: dateCls, id: `${headerId}_date`, text: currentDate})
             }
 
-            date.setDate(date.getDate() + 1);
+            date.setDate(date.getDate() + 1)
         }
 
-        me[silent ? '_vdom' : 'vdom'] = vdom;
+        me.headerCreated = true;
+
+        !silent && me.update()
     }
 }
 
-Neo.applyClassConfig(Component);
-
-export default Component;
+export default Neo.setupClass(Component);

@@ -1,24 +1,18 @@
-import ClassSystemUtil  from '../../util/ClassSystem.mjs';
-import ComponentManager from '../../manager/Component.mjs';
-import List             from '../../list/Base.mjs';
-import Picker           from './Picker.mjs';
-import Store            from '../../data/Store.mjs';
-import VDomUtil         from '../../util/VDom.mjs';
+import ClassSystemUtil from '../../util/ClassSystem.mjs';
+import Field           from './Base.mjs';
+import NeoArray        from '../../util/Array.mjs';
+import Store           from '../../data/Store.mjs';
+import StringUtil      from '../../util/String.mjs';
+import VNodeUtil       from '../../util/VNode.mjs';
 
 /**
- * Provides a dropdown list to select one or multiple items
+ * @summary A Store-backed native single-select field with optional rich option content.
+ * Values are typed scalars, not records. A missing requested value remains in `value`, but is invalid and
+ * submits null until the Store supplies it. Filtering does not invalidate an existing selection.
  * @class Neo.form.field.Select
- * @extends Neo.form.field.Picker
+ * @extends Neo.form.field.Base
  */
-class Select extends Picker {
-    /**
-     * Valid values for triggerAction
-     * @member {String[]} triggerActions=['all','filtered']
-     * @protected
-     * @static
-     */
-    static triggerActions = ['all', 'filtered']
-
+class Select extends Field {
     static config = {
         /**
          * @member {String} className='Neo.form.field.Select'
@@ -31,723 +25,476 @@ class Select extends Picker {
          */
         ntype: 'selectfield',
         /**
-         * @member {String[]} baseCls=['neo-selectfield','neo-pickerfield','neo-textfield']
+         * @member {String[]} baseCls=['neo-selectfield']
+         * @protected
          */
-        baseCls: ['neo-selectfield', 'neo-pickerfield', 'neo-textfield'],
+        baseCls: ['neo-selectfield'],
         /**
-         * @member {String} displayField='name'
+         * Opts into CSS base-select where supported. False keeps the browser's classic control.
+         * The closed control uses native text; custom content belongs to the open options.
+         * @member {Boolean} customizable_=true
+         * @reactive
          */
+        customizable_: true,
+        /** @member {String} disabledField='disabled' */
+        disabledField: 'disabled',
+        /** @member {String} displayField='name' */
         displayField: 'name',
         /**
-         * True will only fire a change event, in case the TextField input value matches a record.
-         * onFocusLeave() will try to select a hint record, if needed and possible.
-         * @member {Boolean} forceSelection=false
+         * @member {String|null} error_=null
+         * @reactive
          */
-        forceSelection: false,
+        error_: null,
+        /** @member {String} errorTextMissing='Selection unavailable' */
+        errorTextMissing: 'Selection unavailable',
+        /** @member {String} errorTextRequired='Required' */
+        errorTextRequired: 'Required',
         /**
-         * @member {String|Number|null} hintRecordId=null
+         * @member {Boolean} hideLabel_=false
+         * @reactive
          */
-        hintRecordId: null,
+        hideLabel_: false,
         /**
-         * Additional used keys for the selection model
-         * @member {Object} keys
+         * @member {String} labelText_=''
+         * @reactive
          */
-        keys: {
-            Down  : 'onKeyDownDown',
-            Enter : 'onKeyDownEnter',
-            Escape: 'onKeyDownEscape',
-            Right : 'onKeyDownRight',
-            Up    : 'onKeyDownUp'
-        },
+        labelText_: '',
         /**
-         * @member {String|null} lastManualInput=null
-         * @protected
+         * An array of scalars or records to normalize into an owned Store. An explicit or bound Store wins
+         * during construction; assigning options later replaces it. Null clears the options Store.
+         * @member {Array|null} options_=null
+         * @reactive
          */
-        lastManualInput: null,
+        options_: null,
         /**
-         * @member {Neo.list.Base} list=null
-         * @protected
+         * @member {String} placeholderText_='Select…'
+         * @reactive
          */
-        list: null,
+        placeholderText_: 'Select…',
         /**
-         * @member {Object|null} listConfig_=null
+         * @member {Boolean} showErrorTexts_=true
+         * @reactive
          */
-        listConfig_: null,
+        showErrorTexts_: true,
         /**
-         * The height of the picker container. Defaults to px.
-         * @member {Number|null} pickerHeight=null
-         */
-        pickerHeight: null,
-        /**
-         * @member {Object} record_=null
-         * @protected
-         */
-        record_: null,
-        /**
-         * @member {String|null} role='listbox'
-         */
-        role: 'listbox',
-        /**
-         * @member {Neo.data.Store|null} store_=null
+         * Instances are borrowed. Configs and arrays create an owned Store, disposed on replacement/destruction.
+         * With neither store nor options, creates an empty Store; a binding can instead supply one later.
+         * @member {Neo.data.Store|Object|Array|null} store_=null
+         * @reactive
          */
         store_: null,
         /**
-         * Showing the list via the down trigger can either show all list items or only show items which
-         * match the filter string inside the input field.
-         * Valid values: all, filtered
-         * @member {String} triggerAction_='all'
+         * Unique, non-null strings, finite numbers or booleans. DOM option values are internal typed tokens;
+         * use value / getSubmitValue(), not native FormData, to read business values.
+         * @member {String} valueField='id'
          */
-        triggerAction_: 'all',
+        valueField: 'id',
         /**
-         * Display the first matching result while typing
-         * @member {Boolean} typeAhead_=true
+         * @member {Object} _vdom
+         * @protected
          */
-        typeAhead_: true,
-        /**
-         * This config should point to the store keyProperty or a different model field,
-         * which you want to submit instead
-         * @member {Number|String} valueField='id'
-         */
-        valueField: 'id'
+        _vdom: {cn: [
+            {tag: 'label', cls: ['neo-selectfield-label']},
+            {tag: 'select', cls: ['neo-selectfield-input'], cn: []},
+            {cls: ['neo-selectfield-error'], removeDom: true}
+        ]}
     }
 
-    /**
-     * @member {String} filterOperator='like'
-     */
-    filterOperator = 'like'
-    /**
-     * Set this config to false, in case typing into the input field should not filter list items
-     * @member {Boolean} useFilter=true
-     */
-    useFilter = true
+    /** @type {WeakSet<Neo.data.Store>} */
+    #ownedStores = new WeakSet()
+    /** @type {Map<String, Object>} */
+    #optionsByToken = new Map()
+    /** @type {String|null} */
+    #externalError = null
 
     /**
+     * @summary Registers native change handling after the field's configs are available.
      * @param {Object} config
      */
     construct(config) {
         super.construct(config);
-
-        let me = this;
-
-        me.list = Neo.create({
-            module        : List,
-            appName       : me.appName,
-            displayField  : me.displayField,
-            itemRole      : 'option',
-            parentId      : me.id,
-            selectionModel: {stayInList: false},
-            store         : me.store,
-            ...me.listConfig
-        });
-
-        me.list.keys._keys.push(
-            {fn: 'onContainerKeyDownEnter',  key: 'Enter',  scope: me.id},
-            {fn: 'onContainerKeyDownEscape', key: 'Escape', scope: me.id}
-        );
-
-        me.list.on({
-            createItems       : me.onListCreateItems,
-            itemClick         : me.onListItemClick,
-            itemNavigate      : me.onListItemNavigate,
-            selectPostLastItem: me.onSelectPostLastItem,
-            selectPreFirstItem: me.onSelectPreFirstItem,
-            scope             : me
-        });
-
-        me.typeAhead && me.updateTypeAhead()
+        this.addDomListeners({change: this.onInputValueChange, scope: this});
+        this.refreshOptions()
     }
 
     /**
-     * Triggered after the record config got changed
-     * @param {Object} value
-     * @param {Object} oldValue
+     * @summary Detaches the field without retiring borrowed Store or Model state.
+     */
+    destroy(...args) {
+        const store = this.store;
+        this.unbindStore(store);
+        super.destroy(...args);
+        this.#ownedStores.has(store) && store.destroy()
+    }
+
+    /**
+     * @summary Switches between enhanced and classic native presentation.
+     * @param {Boolean} value
      * @protected
      */
-    afterSetRecord(value, oldValue) {
-        let me             = this,
-            list           = me.list,
-            selectionModel = list?.selectionModel,
-            valueField     = me.valueField,
-            nodeId;
-
-        if (oldValue) {
-            nodeId = list?.getItemId(oldValue[valueField]);
-
-            selectionModel?.deselect(nodeId);
-        }
-
-        if (value) {
-            nodeId = list?.getItemId(value[valueField]);
-
-            selectionModel?.select(nodeId);
-        }
+    afterSetCustomizable(value) {
+        this[value ? 'addCls' : 'removeCls']('neo-selectfield-customizable')
     }
 
     /**
-     * Triggered after the store config got changed
-     * @param {Neo.data.Store} value
-     * @param {Neo.data.Store} oldValue
-     * @protected
-     */
-    afterSetStore(value, oldValue) {
-        let me = this,
-            filters;
-
-        if (value) {
-            if (me.useFilter) {
-                filters = value.filters || [];
-
-                filters.push({
-                    includeEmptyValues: true,
-                    operator          : me.filterOperator,
-                    property          : me.displayField,
-                    value             : value.get(me.value)?.[me.displayField] || me.value
-                });
-
-                value.filters = filters
-            }
-
-            if (me.list) {
-                me.list.store = value
-            }
-
-            value.on('load', me.onStoreLoad, me)
-        }
-    }
-
-    /**
-     * Triggered after the typeAhead config got changed
+     * @summary Keeps the native disabled property and field validity in agreement.
      * @param {Boolean} value
      * @param {Boolean} oldValue
      * @protected
      */
-    afterSetTypeAhead(value, oldValue) {
-        this.rendered && this.updateTypeAhead()
+    afterSetDisabled(value, oldValue) {
+        super.afterSetDisabled(value, oldValue);
+        this.getInputEl().disabled = value;
+        this.configsApplied && this.validate(false)
     }
 
     /**
-     * Triggered after the value config got changed
-     * @param {Number|String|null} value
-     * @param {Number|String|null} oldValue
-     * @param {Boolean} preventFilter=false
+     * @summary Renders an explicitly assigned error, including form server errors.
+     * @param {String|null} value
      * @protected
      */
-    afterSetValue(value, oldValue, preventFilter=false) {
-        !preventFilter && this.updateValue(true);
-
-        super.afterSetValue(value, oldValue)
+    afterSetError(value) {
+        this.#externalError = value;
+        this.updateError(value);
+        this.update()
     }
 
     /**
-     * Triggered before the listConfig config gets changed.
-     * @param {Object} value
-     * @param {Object} oldValue
-     * @returns {Object}
+     * @summary Hides the visual label while retaining its accessible name.
+     * @param {Boolean} value
      * @protected
      */
-    beforeSetListConfig(value, oldValue) {
-        value && this.parseItemConfigs(value);
+    afterSetHideLabel(value) {
+        this.vdom.cn[0].removeDom = value;
+        this.syncLabel()
+    }
+
+    /**
+     * @summary Updates the field's visible and accessible label.
+     * @protected
+     */
+    afterSetLabelText() {
+        this.syncLabel()
+    }
+
+    /**
+     * @summary Replaces the options-owned Store after construction.
+     * @param {Array|null} value
+     * @protected
+     */
+    afterSetOptions(value) {
+        this.configsApplied && (this.store = value || [])
+    }
+
+    /**
+     * @summary Refreshes the empty option's label.
+     * @protected
+     */
+    afterSetPlaceholderText() {
+        this.configsApplied && this.refreshOptions()
+    }
+
+    /**
+     * @summary Applies native required validity and rechecks the logical selection.
+     * @param {Boolean} value
+     * @param {Boolean} oldValue
+     * @protected
+     */
+    afterSetRequired(value, oldValue) {
+        this.getInputEl().required = value;
+        super.afterSetRequired(value, oldValue)
+    }
+
+    /**
+     * @summary Updates error visibility without changing the validation result.
+     * @protected
+     */
+    afterSetShowErrorTexts() {
+        this.configsApplied && this.validate(false)
+    }
+
+    /**
+     * @summary Subscribes additively; Store load covers membership changes and sort.
+     * @param {Neo.data.Store|null} value
+     * @param {Neo.data.Store|null} oldValue
+     * @protected
+     */
+    afterSetStore(value, oldValue) {
+        this.unbindStore(oldValue);
+        value?.on({filter: 'refreshOptions', load: 'refreshOptions', recordChange: 'refreshOptions', scope: this});
+        this.configsApplied && this.refreshOptions();
+        this.#ownedStores.has(oldValue) && oldValue.destroy()
+    }
+
+    /**
+     * @summary Projects a programmatic value; Base supplies the change event sequence.
+     * @protected
+     */
+    afterSetValue(value, oldValue) {
+        if (oldValue !== undefined) this.#externalError = null;
+        this.configsApplied && this.refreshOptions()
+    }
+
+    /**
+     * @summary Rejects malformed options before replacing the current Store.
+     * @param {Array|null} value
+     * @returns {Array|null}
+     * @protected
+     */
+    beforeSetOptions(value) {
+        if (value !== null && !Array.isArray(value)) throw new TypeError('Select options must be an array or null');
         return value
     }
 
     /**
-     * Triggered before the store config gets changed.
-     * @param {Object|Neo.data.Store|null} value
-     * @param {Neo.data.Store} oldValue
-     * @returns {Neo.data.Store}
-     * @protected
-     */
-    beforeSetStore(value, oldValue) {
-        oldValue?.destroy();
-
-        // to reduce boilerplate code, a store config object without a defined model should default
-        // to displayField & valueField defaults
-        if (Neo.typeOf(value) === 'Object' && !value.model && !value.module && !value.ntype) {
-            value.model = {
-                fields: [
-                    {name: 'id',   type: 'String'},
-                    {name: 'name', type: 'String'}
-                ]
-            }
-        }
-
-        return ClassSystemUtil.beforeSetInstance(value, Store)
-    }
-
-    /**
-     * Triggered before the triggerAction config gets changed
-     * @param {String} value
-     * @param {String} oldValue
-     * @protected
-     */
-    beforeSetTriggerAction(value, oldValue) {
-        return this.beforeSetEnumValue(value, oldValue, 'triggerAction')
-    }
-
-    /**
-     * Triggered before the value config gets changed.
-     * @param {Number|String|null} value
-     * @param {Number|String|null} oldValue
-     * @returns {Number|String|null}
-     * @protected
-     */
-    beforeSetValue(value, oldValue) {
-        let me           = this,
-            displayField = me.displayField,
-            store        = me.store,
-            record;
-
-        if (Neo.isObject(value)) {
-            me.record = value;
-            return value[displayField];
-        } else {
-            record = store.isFiltered() ? store.allItems.get(value) : store.get(value);
-
-            if (record) {
-                me.record = record;
-                return record[displayField];
-            }
-        }
-
-        me.record = store.find(displayField, value)[0] || null;
-
-        return value
-    }
-
-    /**
-     * @returns {Neo.list.Base}
-     */
-    createPickerComponent() {
-        return this.list
-    }
-
-    /**
-     * Overrides form.field.Base
+     * @summary Normalizes the Store without borrowing its Model instance into another owner.
      * @param {*} value
-     * @param {*} oldValue
-     * @override
+     * @returns {Neo.data.Store|null}
+     * @protected
      */
-    fireChangeEvent(value, oldValue) {
-        let me            = this,
-            FormContainer = Neo.form?.Container,
-            record        = me.record,
-            oldRecord, params;
+    beforeSetStore(value) {
+        const me = this;
+        if (!value && !me.configsApplied && me.bind?.store) return null;
+        value ??= !me.configsApplied ? me.options || [] : [];
 
-        if (!(me.forceSelection && !record)) {
-            oldRecord = me.store.get(oldValue) || null;
-
-            params = {
-                component: me,
-                oldRecord,
-                oldValue,
-                record,
-                value
-            };
-
-            me.fire('change', params);
-
-            if (!me.suspendEvents) {
-                ComponentManager.getParents(me).forEach(parent => {
-                    if (FormContainer && parent instanceof FormContainer) {
-                        parent.fire('fieldChange', params)
-                    }
-                })
-            }
+        if (Array.isArray(value)) {
+            value = {data: value.map(option => Neo.isObject(option) ? {...option} : {
+                [me.displayField]: String(option),
+                [me.valueField]  : option
+            })}
         }
+
+        const storeClass = value?.module || value?.ntype || value?.className;
+        if (Neo.isObject(value) && !value.model && [undefined, Store, 'store', 'Neo.data.Store'].includes(storeClass)) {
+            const fields = new Set([me.valueField, me.displayField, me.disabledField]);
+            value.data?.forEach(record => Object.keys(record).forEach(key => fields.add(key)));
+            value = {...value, keyProperty: value.keyProperty || me.valueField,
+                model: {fields: [...fields].map(name => ({name}))}}
+        }
+
+        const store = ClassSystemUtil.beforeSetInstance(value, Store);
+        if (store !== value) me.#ownedStores.add(store);
+        return store
     }
 
     /**
-     * @param {Function} [callback]
+     * @summary Accepts null or a typed scalar key without coercion.
+     * @param {*} value
+     * @returns {*}
+     * @protected
      */
-    focusInputEl(callback) {
-        let me              = this,
-            lastManualInput = me.lastManualInput;
-
-        me.updateTypeAheadValue(lastManualInput, true);
-        me.value = lastManualInput;
-
-        Neo.main.DomAccess.focus({
-            appName: me.appName,
-            id     : me.getInputElId()
-        }).then(() => {
-            callback?.apply(me)
-        })
+    beforeSetValue(value) {
+        value === null || this.getOptionToken(value);
+        return value
     }
 
     /**
-     * @returns {Object}
-     */
-    getInputHintEl() {
-        return VDomUtil.findVdomChild(this.vdom, this.getInputHintId())?.vdom
-    }
-
-    /**
+     * @summary Renders one option's opaque content; override for rich options.
+     * Return trusted noninteractive HTML containing readable text; escape dynamic data (or call super for the label).
+     * Keep ids and selectedcontent out of this markup. Classic browsers use the text as their option label.
+     * @param {Object} record
+     * @param {Number} index Index in the visible Store, or -1 for a filtered selection.
      * @returns {String}
      */
-    getInputHintId() {
-        return this.id + '__input-hint'
+    createOptionContent(record, index) {
+        return StringUtil.escapeHtml(String(record[this.displayField] ?? ''))
     }
 
     /**
-     * Returns the first selected record or null
-     * returns {Object}
-     */
-    getRecord() {
-        let list      = this.list,
-            recordKey = list.selectionModel.getSelection()[0];
-
-        return recordKey && this.store.get(list.getItemRecordId(recordKey)) || null
-    }
-
-    /**
-     * @returns {Number|String}
-     */
-    getValue() {
-        let me = this;
-
-        return me.record?.[me.valueField] || me.value
-    }
-
-    /**
-     * @param {Object} data
+     * @summary Binds the label and error description to the native input's stable id.
      * @protected
      */
-    handleKeyDownEnter(data) {
-        let me = this;
+    ensureStableIds() {
+        super.ensureStableIds();
+        const me = this;
+        me.vdom.cn[0].id  = `${me.id}__label`;
+        me.vdom.cn[0].for = me.getInputElId();
+        me.vdom.cn[2].id  = `${me.id}__error`;
+        me.getInputEl().id = me.getInputElId()
+    }
 
-        if (me.pickerIsMounted) {
-            me.selectListItem();
-            super.onKeyDownEnter(data)
-        } else {
-            super.onKeyDownEnter(data, me.selectListItem)
+    /**
+     * @summary Focuses the native control.
+     */
+    focus() {
+        super.focus(this.getInputElId())
+    }
+
+    /**
+     * @summary Returns the native select VDOM.
+     * @returns {Object}
+     */
+    getInputEl() {
+        return this.vdom.cn[1]
+    }
+
+    /**
+     * @summary Returns the native select's id.
+     * @returns {String}
+     */
+    getInputElId() {
+        return `${this.id}__input`
+    }
+
+    /**
+     * @summary Encodes typed keys without conflating 0, false, empty string or string zero.
+     * @param {*} value
+     * @returns {String}
+     * @protected
+     */
+    getOptionToken(value) {
+        const type = typeof value;
+        if (!['string', 'number', 'boolean'].includes(type) || type === 'number' && !Number.isFinite(value)) {
+            throw new TypeError('Select values must be strings, finite numbers or booleans')
         }
+        return `${type}:${value}`
     }
 
     /**
-     * @param {Object} data
-     * @protected
+     * @summary Resolves against the full population, including a filtered-out selection.
+     * @returns {Object|null}
      */
-    onContainerKeyDownEnter(data) {
-        this.hidePicker()
-    }
-
-    /**
-     * @param {Object} data
-     * @protected
-     */
-    onContainerKeyDownEscape(data) {
-        this.focusInputEl(this.hidePicker)
-    }
-
-    /**
-     * @param {Object} data
-     * @param {Object[]} data.oldPath
-     * @protected
-     */
-    onFocusLeave(data) {
-        let me = this;
-
-        if (me.forceSelection && !me.record) {
-            me.value = me.hintRecordId;
+    getSelectedRecord() {
+        const {store, value, valueField} = this;
+        if (!store || value === null) return null;
+        for (const item of store.allItems?.items || store.items) {
+            // The Store must hydrate its own hidden rows too, so mapped fields and notification ownership agree.
+            const record = store.hydrateRecord(item);
+            if (record[valueField] === value) return record
         }
-
-        super.onFocusLeave(data)
+        return null
     }
 
     /**
-     * @param {Object} data
-     * @protected
+     * @summary Returns the resolved scalar, or null while a requested key is absent.
+     * @returns {String|Number|Boolean|null}
      */
-    onInputValueChange(data) {
-        super.onInputValueChange(data);
-        this.lastManualInput = data.value
+    getSubmitValue() {
+        return this.getSelectedRecord() ? this.value : null
     }
 
     /**
-     * @param {Object} data
-     * @protected
+     * @summary Checks logical selection validity without emitting value events.
+     * @returns {Boolean}
      */
-    onKeyDownDown(data) {
-        this.handleKeyDownEnter(data)
+    isValid() {
+        return this.validate()
     }
 
     /**
+     * @summary Reconciles the user's native choice before the next VDOM diff.
      * @param {Object} data
      * @protected
      */
-    onKeyDownEnter(data) {
-        this.handleKeyDownEnter(data);
-    }
+    onInputValueChange({value: token}) {
+        const me       = this,
+              record   = me.#optionsByToken.get(token),
+              oldValue = me.value,
+              input    = me.vnode && VNodeUtil.find(me.vnode, me.getInputElId())?.vnode;
 
-    /**
-     * @param {Object} data
-     * @protected
-     */
-    onKeyDownRight(data) {
-        let me = this,
-            oldValue, record;
+        input?.childNodes.forEach(option => {
+            option.attributes.selected = String(option.attributes.value === token)
+        });
 
-        if (me.hintRecordId) {
-            oldValue = me.value;
-            record   = me.store.get(me.hintRecordId);
-
-            me.record = record;
-            me._value = record[me.displayField];
-
-            me.afterSetValue(me._value, oldValue)
+        if (!me.disabled && (token === '' || record && !record[me.disabledField])) {
+            me.value = token === '' ? null : record[me.valueField];
+            if (me.value !== oldValue) me.fireUserChangeEvent(me.value, oldValue)
         }
+        me.refreshOptions()
     }
 
     /**
-     * @param {Object} data
+     * @summary Rebuilds managed option nodes while retaining a filtered selection and unresolved request.
      * @protected
      */
-    onKeyDownUp(data) {
-        let me = this;
+    refreshOptions() {
+        if (!this.configsApplied || this.isDestroyed) return;
+        const me       = this,
+              input    = me.getInputEl(),
+              selected = me.getSelectedRecord(),
+              records  = [],
+              options  = [{tag: 'option', id: `${me.id}__empty`, value: '', text: me.placeholderText, selected: !selected}],
+              tokens   = new Map();
 
-        if (me.pickerIsMounted) {
-            me.selectLastListItem();
-            super.onKeyDownEnter(data)
-        } else {
-            super.onKeyDownEnter(data, me.selectLastListItem)
-        }
-    }
+        me.store?.forEach(record => records.push(record));
+        const visibleCount = records.length;
+        if (selected && !records.includes(selected)) records.push(selected);
 
-    /**
-     * @protected
-     */
-    onListCreateItems() {
-        let me = this;
-        me.typeAhead && me.picker?.mounted && me.updateTypeAheadValue()
-    }
-
-    /**
-     * @param {Object} record
-     * @protected
-     */
-    onListItemChange(record) {
-        let me           = this,
-            displayField = me.displayField,
-            oldValue     = me.value,
-            value        = record[displayField];
-
-        if (me.value !== value) {
-            me.hintRecordId = null;
-            me.record       = record;
-            me._value       = value;
-            me.getInputHintEl().value = null;
-
-            me.afterSetValue(value, oldValue, true); // prevent the list from getting filtered
-
-            me.fire('select', {
-                record,
-                value: record[displayField]
+        records.forEach((record, position) => {
+            const index = position < visibleCount ? position : -1,
+                  token = me.getOptionToken(record[me.valueField]);
+            if (tokens.has(token)) throw new Error(`Select option values must be unique: ${token}`);
+            tokens.set(token, record);
+            options.push({
+                tag         : 'option', id: `${me.id}__${me.store.getInternalId(record)}`, value: token,
+                'aria-label': String(record[me.displayField] ?? ''),
+                disabled    : !!record[me.disabledField], selected: record === selected,
+                ...(index === -1 ? {hidden: ''} : {}), html: me.createOptionContent(record, index)
             })
-        }
+        });
+
+        me.#optionsByToken = tokens;
+        input.cn = options;
+        me.validate();
+        me.update()
     }
 
     /**
-     * @param {Object} record
+     * @summary Clears a form server error even when reset keeps the current value.
+     * @param {String|Number|Boolean|null} value=null
+     */
+    reset(value=null) {
+        this.#externalError = null;
+        super.reset(value);
+        this.validate(false)
+    }
+
+    /**
+     * @summary Keeps a hidden label available through aria-label.
      * @protected
      */
-    onListItemClick(record) {
-        this.onListItemChange(record);
-        this.hidePicker()
+    syncLabel() {
+        this.vdom.cn[0].text = this.labelText;
+        this.getInputEl()['aria-label'] = this.hideLabel ? this.labelText : null;
+        this.update()
     }
 
     /**
-     * @param {Object} record
+     * @summary Removes only this field's subscriptions.
+     * @param {Neo.data.Store|null} store
      * @protected
      */
-    onListItemNavigate(record) {
-        this.onListItemChange(record)
+    unbindStore(store) {
+        store?.un({filter: 'refreshOptions', load: 'refreshOptions', recordChange: 'refreshOptions', scope: this})
     }
 
     /**
+     * @summary Projects validation onto accessible state and optional error text.
+     * @param {String|null} value
      * @protected
      */
-    onSelectPostLastItem() {
-        this.record = null;
-        this.focusInputEl()
+    updateError(value) {
+        const me = this, input = me.getInputEl(), error = me.vdom.cn[2];
+        error.text = value || '';
+        error.removeDom = !value || !me.showErrorTexts;
+        input['aria-invalid'] = !!value;
+        input['aria-describedby'] = error.removeDom ? null : `${me.id}__error`;
+        me.cls = NeoArray.toggle(me.cls, 'neo-invalid', !!value)
     }
 
     /**
-     * @protected
+     * @summary Required rejects empty; an unresolved request is invalid even for an optional field.
+     * @param {Boolean} silent=true
+     * @returns {Boolean}
      */
-    onSelectPreFirstItem() {
-        this.record = null;
-        this.focusInputEl()
-    }
-
-    /**
-     * Selecting a record, if required
-     * @param {Object[]} items
-     */
-    onStoreLoad(items) {
-        let me    = this,
-            value = me.value;
-
-        if (value) {
-            me._value = null; // silent update
-            me.value  = value
-        }
-    }
-
-    /**
-     *
-     */
-    selectFirstListItem() {
-        this.selectListItem(0)
-    }
-
-    /**
-     *
-     */
-    selectLastListItem() {
-        this.selectListItem(this.store.getCount() -1)
-    }
-
-    /**
-     * If no index is passed, the index matching to the field input will get used (0 if none)
-     * @param {Number} [index]
-     */
-    selectListItem(index) {
-        let me = this;
-
-        if (!Neo.isNumber(index)) {
-            if (me.hintRecordId) {
-                index = me.store.indexOfKey(me.hintRecordId);
-            } else {
-                index = 0;
-            }
-        }
-
-        me.list.selectItem(index);
-        me.onListItemNavigate(me.store.getAt(index))
-    }
-
-    /**
-     *
-     */
-    togglePicker() {
-        let me = this,
-            filter;
-
-        if (me.triggerAction === 'all' && !me.pickerIsMounted) {
-            filter = me.store.getFilter(me.displayField);
-
-            if (filter) {
-                filter.value = null;
-            }
-        }
-
-        super.togglePicker()
-    }
-
-    /**
-     * @param {Boolean} [silent=false]
-     * @protected
-     */
-    updateTypeAhead(silent=false) {
-        let me      = this,
-            inputEl = VDomUtil.findVdomChild(me.vdom, {flag: 'neo-real-input'}),
-            vdom    = me.vdom;
-
-        if (me.typeAhead) {
-            inputEl.parentNode.cn[inputEl.index] = {
-                tag: 'span',
-                cls: ['neo-input-field-wrapper'],
-                cn : [{
-                    tag         : 'input',
-                    autocomplete: 'no',
-                    autocorrect : 'off',
-                    cls         : ['neo-textfield-input', 'neo-typeahead-input'],
-                    id          : me.getInputHintId(),
-                    spellcheck  : 'false'
-                }, inputEl.vdom]
-            }
-        } else {
-            VDomUtil.replaceVdomChild(vdom, inputEl.parentNode.id, inputEl.vdom);
-        }
-
-        !silent && me.update()
-    }
-
-    /**
-     * @param {String|null} [value=this.value]
-     * @param {Boolean} [silent=false]
-     * @protected
-     */
-    updateTypeAheadValue(value=this.value, silent=false) {
-        let me          = this,
-            hasMatch    = false,
-            store       = me.store,
-            i           = 0,
-            len         = store.getCount(),
-            inputHintEl = me.getInputHintEl(),
-            storeValue;
-
-        if (!me.record && value && value.length > 0) {
-            for (; i < len; i++) {
-                storeValue = store.items[i][me.displayField];
-
-                if (!Neo.isString(storeValue)) {
-                    return;
-                }
-
-                if (storeValue.toLowerCase().indexOf(value.toLowerCase()) === 0) {
-                    hasMatch = true;
-                    break;
-                }
-            }
-
-            if (hasMatch && inputHintEl) {
-                inputHintEl.value = value + storeValue.substr(value.length);
-                me.hintRecordId = store.items[i][store.keyProperty || store.model.keyProperty]
-            }
-        }
-
-        if (!hasMatch && inputHintEl) {
-            inputHintEl.value = null;
-            me.hintRecordId = null;
-        }
-
-        !silent && me.update()
-    }
-
-    /**
-     * @param {Boolean} silent=false
-     * @protected
-     */
-    updateValue(silent=false) {
-        let me           = this,
-            displayField = me.displayField,
-            store        = me.store,
-            value        = me._value,
-            filter;
-
-        if (store && !Neo.isEmpty(store.filters)) {
-            filter = store.getFilter(displayField);
-
-            if (filter) {
-                filter.value = me.record?.[displayField] || value;
-            }
-        }
-
-        if (me.typeAhead && !me.picker?.containsFocus) {
-            me.updateTypeAheadValue(value, silent)
-        }
+    validate(silent=true) {
+        const me = this;
+        me._error = me.disabled ? null : me.value !== null && !me.getSelectedRecord()
+            ? me.errorTextMissing : me.required && me.value === null ? me.errorTextRequired : me.#externalError;
+        me.updateError(me._error);
+        !silent && me.update();
+        return !me._error
     }
 }
 
-/**
- * The select event fires when a list item gets selected
- * @event select
- * @param {Object} record
- * @param {value} record[store.keyProperty]
- * @returns {Object}
- */
-
-Neo.applyClassConfig(Select);
-
-export default Select;
+export default Neo.setupClass(Select);

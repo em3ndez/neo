@@ -18,11 +18,14 @@ class Examples extends Store {
         keyProperty: 'id',
         /**
          * @member {Neo.data.Model} model=Example
+         * @reactive
          */
-        model: Example
+        model: Example,
+        /**
+         * @member {String} url='../../docs/examples.json'
+         */
+        url: '../../docs/examples.json'
     }
 }
 
-Neo.applyClassConfig(Examples);
-
-export default Examples;
+export default Neo.setupClass(Examples);

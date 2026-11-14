@@ -29,6 +29,4 @@ class Page13 extends FormPageContainer {
     }
 }
 
-Neo.applyClassConfig(Page13);
-
-export default Page13;
+export default Neo.setupClass(Page13);

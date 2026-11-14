@@ -81,7 +81,8 @@ class WorldMapComponent extends AmChartComponent {
      * @param {Object[]} data
      */
     loadData(data) {
-        const chartData = [];
+        let me        = this,
+            chartData = [];
 
         data.forEach(item => {
             chartData.push({
@@ -92,17 +93,16 @@ class WorldMapComponent extends AmChartComponent {
                 id       : item.countryInfo.iso2,
                 name     : item.country,
                 recovered: item.recovered,
-            });
+            })
         });
 
         Neo.main.addon.AmCharts.updateData({
             data    : chartData,
-            dataPath: this.dataPath,
-            id      : this.id
-        });
+            dataPath: me.dataPath,
+            id      : me.id,
+            windowId: me.windowId
+        })
     }
 }
 
-Neo.applyClassConfig(WorldMapComponent);
-
-export default WorldMapComponent;
+export default Neo.setupClass(WorldMapComponent);

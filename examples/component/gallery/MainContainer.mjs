@@ -75,7 +75,7 @@ class MainContainer extends Viewport {
                         if (this.name === 'opacity') {
                             data.value /= 100;
                         }
-                        Neo.get('neo-gallery-1')[this.name] = data.value;
+                        Neo.get('neo-gallery-1')[this.name] = data.value
                     }
                 }
             },
@@ -100,8 +100,8 @@ class MainContainer extends Viewport {
 
                         Neo.get('neo-gallery-1').on('changeTranslateX', function(value) {
                             value = Math.min(Math.max(value, this.minValue), this.maxValue);
-                            this.value = value;
-                        }, field);
+                            this.value = value
+                        }, field)
                     }
                 }
             }, {
@@ -118,15 +118,15 @@ class MainContainer extends Viewport {
                 value    : 0,
                 listeners: {
                     change: function(data) {
-                        Neo.get('neo-gallery-1')[this.name] = data.value;
+                        Neo.get('neo-gallery-1')[this.name] = data.value
                     },
                     mounted: function(fieldId) {
                         let field = Neo.get(fieldId);
 
                         Neo.get('neo-gallery-1').on('changeTranslateZ', function(value) {
                             value = Math.min(Math.max(value, this.minValue), this.maxValue);
-                            this.value = value;
-                        }, field);
+                            this.value = value
+                        }, field)
                     }
                 }
             }, {
@@ -156,7 +156,7 @@ class MainContainer extends Viewport {
 
                         this.text = orderByRow === true ? 'Order By Column' : 'Order by Row';
 
-                        gallery.orderByRow = orderByRow;
+                        gallery.orderByRow = orderByRow
                     }
                 }
             }, {
@@ -174,7 +174,7 @@ class MainContainer extends Viewport {
                         }, {
                             property : 'firstname',
                             direction: 'ASC'
-                        }];
+                        }]
                     }
                 }
             }, {
@@ -192,7 +192,7 @@ class MainContainer extends Viewport {
                         }, {
                             property : 'lastname',
                             direction: 'ASC'
-                        }];
+                        }]
                     }
                 }
             }, {
@@ -234,11 +234,12 @@ class MainContainer extends Viewport {
         if (me.showGitHubStarButton) {
             me.on('mounted', () => {
                 Neo.main.DomAccess.addScript({
-                    async: true,
-                    defer: true,
-                    src  : 'https://buttons.github.io/buttons.js'
-                });
-            });
+                    async   : true,
+                    defer   : true,
+                    src     : 'https://buttons.github.io/buttons.js',
+                    windowId: me.windowId
+                })
+            })
         }
     }
 
@@ -246,10 +247,8 @@ class MainContainer extends Viewport {
      * @returns {Neo.data.Store}
      */
     getStore() {
-        return this.items[0].items[0].store;
+        return this.items[0].items[0].store
     }
 }
 
-Neo.applyClassConfig(MainContainer);
-
-export default MainContainer;
+export default Neo.setupClass(MainContainer);

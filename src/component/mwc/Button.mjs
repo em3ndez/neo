@@ -20,32 +20,39 @@ class Button extends Component {
         ntype: 'mwc-button',
         /**
          * @member {Boolean} dense_=false
+         * @reactive
          */
         dense_: false,
         /**
          * Shortcut for domListeners={click:handler}
          * A string based value assumes that the handlerFn lives inside a ComponentController
          * @member {Function|String|null} handler_=null
+         * @reactive
          */
         handler_: null,
         /**
          * @member {String} icon_=''
+         * @reactive
          */
         icon_: '',
         /**
          * @member {String} label_=''
+         * @reactive
          */
         label_: '',
         /**
          * @member {Boolean} outlined_=false
+         * @reactive
          */
         outlined_: false,
         /**
          * @member {Boolean} raised_=false
+         * @reactive
          */
         raised_: false,
         /**
          * @member {Boolean} unelevated_=false
+         * @reactive
          */
         unelevated_: false,
         /**
@@ -62,12 +69,12 @@ class Button extends Component {
         super.construct(config);
 
         if (!Neo.config.mainThreadAddons.includes('Mwc')) {
-            console.error('Please include "Mwc" into the mainThreadAddons of your neo-config.json file.');
+            console.error('Please include "Mwc" into the mainThreadAddons of your neo-config.json file.')
         }
 
         if (!moduleLoaded) {
             moduleLoaded = true;
-            Neo.main.addon.Mwc.loadButtonModule();
+            Neo.main.addon.Mwc.loadButtonModule()
         }
     }
 
@@ -78,7 +85,7 @@ class Button extends Component {
      * @protected
      */
     afterSetDense(value, oldValue) {
-        this.changeVdomRootKey('dense', value);
+        this.changeVdomRootKey('dense', value)
     }
 
     /**
@@ -89,7 +96,7 @@ class Button extends Component {
      * @protected
      */
     afterSetDisabled(value, oldValue) {
-        this.changeVdomRootKey('disabled', value);
+        this.changeVdomRootKey('disabled', value)
     }
 
     /**
@@ -102,7 +109,7 @@ class Button extends Component {
         value && this.addDomListeners({
             click: value,
             scope: this
-        });
+        })
     }
 
     /**
@@ -112,7 +119,7 @@ class Button extends Component {
      * @protected
      */
     afterSetIcon(value, oldValue) {
-        this.changeVdomRootKey('icon', value);
+        this.changeVdomRootKey('icon', value)
     }
 
     /**
@@ -122,7 +129,7 @@ class Button extends Component {
      * @protected
      */
     afterSetLabel(value, oldValue) {
-        this.changeVdomRootKey('label', value);
+        this.changeVdomRootKey('label', value)
     }
 
     /**
@@ -132,7 +139,7 @@ class Button extends Component {
      * @protected
      */
     afterSetOutlined(value, oldValue) {
-        this.changeVdomRootKey('outlined', value || null);
+        this.changeVdomRootKey('outlined', value || null)
     }
 
     /**
@@ -142,7 +149,7 @@ class Button extends Component {
      * @protected
      */
     afterSetRaised(value, oldValue) {
-        this.changeVdomRootKey('raised', value || null);
+        this.changeVdomRootKey('raised', value || null)
     }
 
     /**
@@ -152,10 +159,8 @@ class Button extends Component {
      * @protected
      */
     afterSetUnelevated(value, oldValue) {
-        this.changeVdomRootKey('unelevated', value || null);
+        this.changeVdomRootKey('unelevated', value || null)
     }
 }
 
-Neo.applyClassConfig(Button);
-
-export default Button;
+export default Neo.setupClass(Button);

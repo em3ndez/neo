@@ -16,6 +16,7 @@ class YearContainer extends Container {
         className: 'Neo.calendar.view.settings.YearContainer',
         /**
          * @member {Object} layout={ntype:'vbox',align:'stretch'}
+         * @reactive
          */
         layout: {ntype: 'vbox', align: 'stretch'}
     }
@@ -34,7 +35,7 @@ class YearContainer extends Container {
             clearToOriginalValue: true,
             flex                : 'none',
             labelText           : 'eventIndicatorHigh',
-            labelWidth          : labelWidth,
+            labelWidth,
             listeners           : {change: me.onConfigChange, scope: me},
             maxValue            : 10,
             minValue            : 1,
@@ -46,7 +47,7 @@ class YearContainer extends Container {
             clearToOriginalValue: true,
             flex                : 'none',
             labelText           : 'eventIndicatorMedium',
-            labelWidth          : labelWidth,
+            labelWidth,
             listeners           : {change: me.onConfigChange, scope: me},
             maxValue            : 10,
             minValue            : 1,
@@ -59,7 +60,7 @@ class YearContainer extends Container {
             clearToOriginalValue: true,
             flex                : 'none',
             labelText           : 'eventIndicatorLow',
-            labelWidth          : labelWidth,
+            labelWidth,
             listeners           : {change: me.onConfigChange, scope: me},
             maxValue            : 10,
             minValue            : 1,
@@ -73,11 +74,11 @@ class YearContainer extends Container {
             flex          : 'none',
             hideValueLabel: false,
             labelText     : 'monthNameFormat',
-            labelWidth    : labelWidth,
+            labelWidth,
             listeners     : {change: me.onRadioChange, scope: me},
             name          : 'monthNameFormat',
             style         : {marginTop: '5px'},
-            valueLabelText: 'short'
+            valueLabel    : 'short'
         }, {
             module        : RadioField,
             checked       : yearComponent.monthNameFormat === 'long',
@@ -85,17 +86,17 @@ class YearContainer extends Container {
             flex          : 'none',
             hideValueLabel: false,
             labelText     : '',
-            labelWidth    : labelWidth,
+            labelWidth,
             listeners     : {change: me.onRadioChange, scope: me},
             name          : 'monthNameFormat',
             style         : {marginTop: '5px'},
-            valueLabelText: 'long'
+            valueLabel    : 'long'
         }, {
             module    : CheckBoxField,
             checked   : yearComponent.showCellBorders,
             flex      : 'none',
             labelText : 'showCellBorders',
-            labelWidth: labelWidth,
+            labelWidth,
             listeners : {change: me.onConfigChange, scope: me},
             name      : 'showCellBorders',
             style     : {marginTop: '10px'}
@@ -104,7 +105,7 @@ class YearContainer extends Container {
             checked   : yearComponent.showWeekNumbers,
             flex      : 'none',
             labelText : 'showWeekNumbers',
-            labelWidth: labelWidth,
+            labelWidth,
             listeners : {change: me.onConfigChange, scope: me},
             name      : 'showWeekNumbers',
             style     : {marginTop: '10px'}
@@ -113,18 +114,18 @@ class YearContainer extends Container {
             checked   : yearComponent.sixWeeksPerMonth,
             flex      : 'none',
             labelText : 'sixWeeksPerMonth',
-            labelWidth: labelWidth,
+            labelWidth,
             listeners : {change: me.onConfigChange, scope: me},
             name      : 'sixWeeksPerMonth',
             style     : {marginTop: '10px'}
-        }]);
+        }])
     }
 
     /**
      * @returns {Neo.calendar.view.YearComponent}
      */
     getYearComponent() {
-        return this.up('calendar-maincontainer').yearComponent;
+        return this.up('calendar-maincontainer').yearComponent
     }
 
     /**
@@ -132,7 +133,7 @@ class YearContainer extends Container {
      */
     onRadioChange(data) {
         if (data.value) {
-            this.getYearComponent()[data.component.name] = data.component.fieldValue;
+            this.getYearComponent()[data.component.name] = data.component.fieldValue
         }
     }
 
@@ -140,10 +141,8 @@ class YearContainer extends Container {
      * @param {Object} data
      */
     onConfigChange(data) {
-        this.getYearComponent()[data.component.name] = data.value;
+        this.getYearComponent()[data.component.name] = data.value
     }
 }
 
-Neo.applyClassConfig(YearContainer);
-
-export default YearContainer;
+export default Neo.setupClass(YearContainer);

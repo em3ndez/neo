@@ -20,6 +20,7 @@ class HomeContainer extends Container {
         baseCls: ['rw2-home-container', 'neo-container'],
         /**
          * @member {Object} layout={ntype: 'vbox', align: 'stretch'}
+         * @reactive
          */
         layout: {
             ntype: 'vbox',
@@ -38,10 +39,10 @@ class HomeContainer extends Container {
                     cn : [{
                         tag : 'h1',
                         cls : ['logo-font'],
-                        html: 'conduit v2'
+                        text: 'conduit v2'
                     }, {
                         tag : 'p',
-                        html: 'A place to share your knowledge.'
+                        text: 'A place to share your knowledge.'
                     }]
                 }]
             }
@@ -56,14 +57,14 @@ class HomeContainer extends Container {
                 flex       : 3,
 
                 items: [{
-                    ntype          : 'component',
-                    cls            : ['neo-examples-tab-component'],
-                    style          : {padding: '20px'},
-                    tabButtonConfig: {iconCls: 'fa fa-user-ninja', text: 'Your Feed'},
-                    vdom           : {innerHTML: 'todo'}
+                    ntype : 'component',
+                    cls   : ['neo-examples-tab-component'],
+                    header: {iconCls: 'fa fa-user-ninja', text: 'Your Feed'},
+                    style : {padding: '20px'},
+                    vdom  : {text: 'todo'}
                 }, {
-                    module         : PreviewList,
-                    tabButtonConfig: {iconCls: 'fa fa-globe-europe', text: 'Global Feed'}
+                    module: PreviewList,
+                    header: {iconCls: 'fa fa-globe-europe', text: 'Global Feed'}
                 }]
             }, {
                 module: TagListComponent,
@@ -99,6 +100,4 @@ class HomeContainer extends Container {
     }
 }
 
-Neo.applyClassConfig(HomeContainer);
-
-export default HomeContainer;
+export default Neo.setupClass(HomeContainer);

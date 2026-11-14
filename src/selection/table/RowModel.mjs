@@ -1,11 +1,12 @@
-import Model    from '../Model.mjs';
-import VDomUtil from '../../util/VDom.mjs';
+import BaseModel from './BaseModel.mjs';
 
 /**
+ * Row selection model for `Neo.table.Body`. When {@link #modifierClickEvents} is `true`, modifier clicks fire
+ * `altSelect` > `ctrlSelect` > `metaSelect` > `shiftSelect` on `view` with `{data, record}` instead of toggling.
  * @class Neo.selection.table.RowModel
- * @extends Neo.selection.Model
+ * @extends Neo.selection.table.BaseModel
  */
-class RowModel extends Model {
+class RowModel extends BaseModel {
     static config = {
         /**
          * @member {String} className='Neo.selection.table.RowModel'
@@ -18,124 +19,127 @@ class RowModel extends Model {
          */
         ntype: 'selection-table-rowmodel',
         /**
-         * @member {String} cls='selection-rowmodel'
+         * @member {String} cls='neo-selection-rowmodel'
          * @protected
          */
-        cls: 'neo-selection-rowmodel'
+        cls: 'neo-selection-rowmodel',
+        /**
+         * @member {Boolean} modifierClickEvents=false
+         */
+        modifierClickEvents: false
+    }
+
+    /**
+     * @param {Record} record
+     * @returns {Boolean}
+     */
+    hasAnnotations(record) {
+        return !!Object.getOwnPropertyDescriptor(record.__proto__, this.view.selectedRecordField)
     }
 
     /**
      *
      */
     addDomListener() {
-        let me   = this,
-            view = me.view;
+        let me = this;
 
-        view.addDomListeners({
-            click   : me.onRowClick,
-            delegate: '.neo-table-row',
-            scope   : me
-        });
+        me.view.parent.on('rowClick', me.onRowClick, me)
     }
 
     /**
-     * Finds the matching table row for a given row index
-     * @param {Number} index row index
-     * @returns {String|null} The table row node id
+     * @param args
      */
-    getRowId(index) {
-        if (index < 0 || this.view.store.getCount() < index) {
-            return null;
-        }
+    destroy(...args) {
+        let me = this;
 
-        return this.view.vdom.cn[0].cn[1].cn[index].id;
-    }
+        me.view.parent.un('rowClick', me.onRowClick, me);
 
-    /**
-     * Finds the matching table row for a given event path
-     * @param {Object} path The event path
-     * @returns {Object|null} The node containing the table row class or null
-     * @protected
-     */
-    static getRowNode(path) {
-        let i    = 0,
-            len  = path.length,
-            node = null;
-
-        for (; i < len; i++) {
-            if (path[i].cls.includes('neo-table-row')) {
-                node = path[i];
-            }
-        }
-
-        return node;
+        super.destroy(...args)
     }
 
     /**
      * @param {Object} data
      */
     onKeyDownDown(data) {
-        this.onNavKeyRow(data, 1);
+        this.onNavKeyRow(1)
     }
 
     /**
      * @param {Object} data
      */
     onKeyDownUp(data) {
-        this.onNavKeyRow(data, -1);
+        this.onNavKeyRow(-1)
     }
 
     /**
-     * @param {Object} data
      * @param {Number} step
      */
-    onNavKeyRow(data, step) {
-        let me         = this,
-            node       = RowModel.getRowNode(data.path),
-            view       = me.view,
-            store      = view.store,
-            vdomNode   = VDomUtil.findVdomChild(view.vdom, node.id),
-            newIndex   = (vdomNode.index + step) % store.getCount(),
-            parentNode = vdomNode.parentNode,
-            id;
+    onNavKeyRow(step) {
+        let me           = this,
+            {view}       = me,
+            {store}      = view,
+            countRecords = store.getCount(),
+            currentIndex = 0,
+            newIndex, record, rowId;
 
-        while (newIndex < 0) {
-            newIndex += store.getCount();
+        if (me.hasSelection()) {
+            record       = me.getRowRecord(me.items[0]);
+            currentIndex = store.indexOf(record)
         }
 
-        id = parentNode.cn[newIndex].id;
+        newIndex = (currentIndex + step) % countRecords;
 
-        if (id) {
-            me.select(id);
-            view.focus(id);
+        while (newIndex < 0) {
+            newIndex += countRecords
+        }
 
-            view.fire('select', {
-                record: store.getAt(newIndex)
-            });
+        record = store.getAt(newIndex);
+
+        if (me.hasAnnotations(record)) {
+            me.updateAnnotations(record)
+        } else {
+            rowId = view.getRowId(record);
+
+            if (rowId) {
+                me.select(rowId);
+                view.fire('select', {record})
+            }
         }
     }
 
     /**
+     * @summary Fires modifier-key select events when `modifierClickEvents` is enabled, or toggles row selection.
      * @param {Object} data
      */
     onRowClick(data) {
-        let me   = this,
-            node = RowModel.getRowNode(data.path),
-            id   = node?.id,
-            view = me.view,
+        let me        = this,
+            eventData = data.data,
+            id        = eventData.currentTarget,
+            {view}    = me,
             isSelected, record;
 
         if (id) {
-            me.toggleSelection(id);
+            record = data.record || view.getRecord(id);
 
-            isSelected = me.isSelected(id);
-            record     = view.store.getAt(VDomUtil.findVdomChild(view.vdom, id).index);
+            if (me.modifierClickEvents && eventData.altKey) {
+                view.fire('altSelect', {data: eventData, record})
+            } else if (me.modifierClickEvents && eventData.ctrlKey) {
+                view.fire('ctrlSelect', {data: eventData, record})
+            } else if (me.modifierClickEvents && eventData.metaKey) {
+                view.fire('metaSelect', {data: eventData, record})
+            } else if (me.modifierClickEvents && eventData.shiftKey) {
+                view.fire('shiftSelect', {data: eventData, record})
+            } else if (me.hasAnnotations(record)) {
+                me.updateAnnotations(record)
+            } else {
+                me.toggleSelection(id);
 
-            !isSelected && view.onDeselect?.(record);
+                isSelected = me.isSelected(id);
 
-            view.fire(isSelected ? 'select' : 'deselect', {
-                record
-            });
+                !isSelected && view.onDeselect?.(record);
+
+                view.fire(isSelected ? 'select' : 'deselect', {record})
+            }
         }
     }
 
@@ -145,31 +149,53 @@ class RowModel extends Model {
     register(component) {
         super.register(component);
 
-        let id   = this.id,
-            view = this.view;
+        let {id, view} = this;
 
         view.keys?._keys.push(
             {fn: 'onKeyDownDown', key: 'Down', scope: id},
             {fn: 'onKeyDownUp',   key: 'Up',   scope: id}
-        );
+        )
     }
 
     /**
      *
      */
     unregister() {
-        let id   = this.id,
-            view = this.view;
+        let {id, view} = this;
 
         view.keys?.removeKeys([
             {fn: 'onKeyDownDown', key: 'Down', scope: id},
             {fn: 'onKeyDownUp',   key: 'Up',   scope: id}
         ]);
 
-        super.unregister();
+        super.unregister()
+    }
+
+    /**
+     * @param {Record} record
+     */
+    updateAnnotations(record) {
+        let me               = this,
+            {view}           = me,
+            rowId            = view.getRowId(record),
+            isSelected       = me.isSelected(rowId),
+            annotationsField = view.selectedRecordField;
+
+        if (me.singleSelect) {
+            if (isSelected) {
+                record[annotationsField] = false
+            } else {
+                me.items.forEach(rowId => {
+                    // We can use setSilent(), since the last change will trigger a view update
+                    view.getRecordByRowId(rowId).setSilent({[annotationsField]: false})
+                });
+
+                record[annotationsField] = true
+            }
+        } else {
+            record[annotationsField] = !record[annotationsField]
+        }
     }
 }
 
-Neo.applyClassConfig(RowModel);
-
-export default RowModel;
+export default Neo.setupClass(RowModel);

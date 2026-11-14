@@ -23,6 +23,14 @@ class MainContainerController extends ComponentController {
          */
         activeMainTabIndex: 0,
         /**
+         * @member {String} apiSummaryUrl='https://raw.githubusercontent.com/neomjs/pages/main/resources_pub/data/cvid_static/all.json'
+         */
+        apiFallbackSummaryUrl: 'https://raw.githubusercontent.com/neomjs/pages/main/resources_pub/data/cvid_static/all.json',
+        /**
+         * @member {String} apiUrl='https://raw.githubusercontent.com/neomjs/pages/main/resources_pub/data/cvid_static_countries.json'
+         */
+        apiFallbackUrl: 'https://raw.githubusercontent.com/neomjs/pages/main/resources_pub/data/cvid_static_countries.json',
+        /**
          * @member {String} apiSummaryUrl='https://disease.sh/v3/covid-19/all'
          */
         apiSummaryUrl: 'https://disease.sh/v3/covid-19/all',
@@ -34,6 +42,10 @@ class MainContainerController extends ComponentController {
          * @member {String[]} connectedApps=[]
          */
         connectedApps: [],
+        /**
+         * @member {Object} connectedAppWindows={}
+         */
+        connectedAppWindows: {},
         /**
          * @member {Object[]|null} data=null
          */
@@ -72,7 +84,7 @@ class MainContainerController extends ComponentController {
         /**
          * @member {Object} windowChart=null
          */
-        windowChart: null,
+        windowChart: null
     }
 
     /**
@@ -86,33 +98,33 @@ class MainContainerController extends ComponentController {
 
         data.forEach(item => {
             if (item.country.includes('"')) {
-                item.country = item.country.replace('"', "\'");
+                item.country = item.country.replace(/"/g, "\'");
             }
 
             item.casesPerOneMillion = item.casesPerOneMillion > item.cases ? 'N/A' : item.casesPerOneMillion || 0;
-            item.infected           = item.casesPerOneMillion;
+            item.infected           = item.casesPerOneMillion
         });
 
         me.data = data;
 
         if (countryStore.getCount() < 1) {
-            me.getReference('country-field').store.data = data;
+            me.getReference('country-field').store.data = data
         }
 
         if (['gallery', 'helix', 'table'].includes(reference)) {
             if (activeTab) {
-                activeTab.store.data = data;
+                activeTab.store.data = data
             }
         }
 
         else if (reference === 'mapboxglmap') {
             me.getReference('mapboxglmap').chartData = data;
-            me.mapboxglMapHasData = true;
+            me.mapboxglMapHasData = true
         }
 
         else if (reference === 'worldmap') {
             activeTab.loadData(data);
-            me.worldMapHasData = true;
+            me.worldMapHasData = true
         }
     }
 
@@ -127,33 +139,35 @@ class MainContainerController extends ComponentController {
     applySummaryData(data) {
         let me        = this,
             container = me.getReference('total-stats'),
-            vdom      = container.vdom;
+            vdom;
 
         me.summaryData = data;
 
-        vdom.cn[0].cn[1].html = Util.formatNumber({value: data.cases});
-        vdom.cn[1].cn[1].html = Util.formatNumber({value: data.active});
-        vdom.cn[2].cn[1].html = Util.formatNumber({value: data.recovered});
-        vdom.cn[3].cn[1].html = Util.formatNumber({value: data.deaths});
+        container.items[0].vdom.cn[1].text = Util.formatNumber({value: data.cases});
+        container.items[1].vdom.cn[1].text = Util.formatNumber({value: data.active});
+        container.items[2].vdom.cn[1].text = Util.formatNumber({value: data.recovered});
+        container.items[3].vdom.cn[1].text = Util.formatNumber({value: data.deaths});
 
+        container.updateDepth = 2;
         container.update();
 
         container = me.getReference('last-update');
+        vdom      = container.vdom;
 
-        container.vdom.html = 'Last Update: ' + new Intl.DateTimeFormat('default', {
+        vdom.text = 'Last Update: ' + new Intl.DateTimeFormat('default', {
             hour  : 'numeric',
             minute: 'numeric',
             second: 'numeric'
         }).format(new Date(data.updated));
 
-        container.update();
+        container.update()
     }
 
     /**
      * @param {Object} record
      */
     clearCountryField(record) {
-        this.getReference('country-field').clear();
+        this.getReference('country-field').clear()
     }
 
     /**
@@ -164,7 +178,7 @@ class MainContainerController extends ComponentController {
     createPopupWindow(containerReference, url, windowName) {
         let me = this;
 
-        Neo.Main.getWindowData().then(winData => {
+        Neo.Main.getWindowData({windowId: me.windowId}).then(winData => {
             me.component.getDomRect(me.getReference(containerReference).id).then(data => {
                 let {height, left, top, width} = data;
 
@@ -173,12 +187,13 @@ class MainContainerController extends ComponentController {
                 top    += (winData.outerHeight - winData.innerHeight + winData.screenTop);
 
                 Neo.Main.windowOpen({
-                    url           : `../${url}/index.html`,
+                    url           : `../sharedcovid/childapps/${url}/index.html`,
                     windowFeatures: `height=${height},left=${left},top=${top},width=${width}`,
+                    windowId      : me.windowId,
                     windowName
-                });
-            });
-        });
+                })
+            })
+        })
     }
 
     /**
@@ -187,10 +202,12 @@ class MainContainerController extends ComponentController {
      */
     getMainView(appName) {
         if (!appName || appName === 'Covid') {
-            return this.component;
+            return this.component
         }
 
-        return Neo.apps[appName].mainView;
+        let windowId = this.connectedAppWindows[appName];
+
+        return Neo.apps[windowId]?.mainView
     }
 
     /**
@@ -203,7 +220,7 @@ class MainContainerController extends ComponentController {
             return 0;
         }
 
-        return this.mainTabs.indexOf(hashObject.mainview);
+        return this.mainTabs.indexOf(hashObject.mainview)
     }
 
     /**
@@ -211,37 +228,39 @@ class MainContainerController extends ComponentController {
      * @returns {Neo.component.Base}
      */
     getView(tabIndex) {
-        return this.getReference(this.mainTabs[tabIndex]);
+        return this.getReference(this.mainTabs[tabIndex])
     }
 
     /**
      *
      */
     loadData() {
-        let me = this;
+        let me     = this,
+            apiUrl = Neo.config.useFallbackApi ? me.apiFallbackUrl : me.apiUrl;
 
-        fetch(me.apiUrl)
+        fetch(apiUrl)
             .then(response => response.json())
-            .catch(err => console.log('Can’t access ' + me.apiUrl, err))
-            .then(data => me.addStoreItems(data));
+            .catch(err => console.log('Can’t access ' + apiUrl, err))
+            .then(data => me.addStoreItems(data))
     }
 
     /**
      *
      */
     loadSummaryData() {
-        let me = this;
+        let me            = this,
+            apiSummaryUrl = Neo.config.useFallbackApi ? me.apiFallbackSummaryUrl : me.apiSummaryUrl;
 
-        fetch(me.apiSummaryUrl)
+        fetch(apiSummaryUrl)
             .then(response => response.json())
-            .catch(err => console.log('Can’t access ' + me.apiSummaryUrl, err))
+            .catch(err => console.log('Can’t access ' + apiSummaryUrl, err))
             .then(data => me.applySummaryData(data));
 
-        setTimeout(() => {
+        me.timeout(2000).then(() => {
             if (!me.summaryData) {
-                me.onLoadSummaryDataFail();
+                me.onLoadSummaryDataFail()
             }
-        }, 2000);
+        })
     }
 
     /**
@@ -249,17 +268,16 @@ class MainContainerController extends ComponentController {
      * @param {String} data.appName
      */
     onAppConnect(data) {
-        let me   = this,
-            name = data.appName,
-            parentView, style, toolbar, view;
-
-        console.log('onAppConnect', name);
+        let me         = this,
+            name       = data.appName,
+            {windowId} = me,
+            style, toolbar, view;
 
         switch (name) {
             case 'SharedCovidChart':
                 view = me.getReference('controls-panel');
-                parentView = Neo.getComponent(view.parentId);
-                parentView.storeReferences();
+
+                view.parent.storeReferences();
 
                 toolbar = me.getReference('controls-panel-header');
                 style   = toolbar.style || {};
@@ -270,34 +288,31 @@ class MainContainerController extends ComponentController {
                 view = me.getReference('gallery-container');
                 NeoArray.remove(me.mainTabs, 'gallery');
                 me.activeMainTabIndex--;
-                Neo.Main.editRoute({mainview: me.mainTabs[me.activeMainTabIndex]});
+                Neo.Main.editRoute({mainview: me.mainTabs[me.activeMainTabIndex], windowId});
                 break;
             case 'SharedCovidHelix':
                 view = me.getReference('helix-container');
                 NeoArray.remove(me.mainTabs, 'helix');
                 me.activeMainTabIndex--;
-                Neo.Main.editRoute({mainview: me.mainTabs[me.activeMainTabIndex]});
+                Neo.Main.editRoute({mainview: me.mainTabs[me.activeMainTabIndex], windowId});
                 break;
             case 'SharedCovidMap':
                 view = me.getReference('mapbox-gl-container');
                 NeoArray.remove(me.mainTabs, 'mapboxglmap');
                 me.activeMainTabIndex--;
-                Neo.Main.editRoute({mainview: me.mainTabs[me.activeMainTabIndex]});
+                Neo.Main.editRoute({mainview: me.mainTabs[me.activeMainTabIndex], windowId});
                 break;
         }
 
         if (view) {
             NeoArray.add(me.connectedApps, name);
+            me.connectedAppWindows[name] = data.windowId;
 
-            parentView = parentView ? parentView : view.isTab ? view.up('tab-container') : Neo.getComponent(view.parentId);
-            parentView.remove(view, false);
-
-            Neo.apps[name].on('render', () => {
-                setTimeout(() => {
-                    me.getMainView(name).add(view);
-                }, 100);
-            });
-
+            Neo.apps[data.windowId].on('vnodeInitialized', () => {
+                me.timeout(100).then(() => {
+                    me.getMainView(name).add(view)
+                })
+            })
         }
     }
 
@@ -312,12 +327,11 @@ class MainContainerController extends ComponentController {
             view       = parentView.items[0],
             index, style, toolbar;
 
-        console.log('onAppDisconnect', name);
-
         switch (name) {
             case 'SharedCovid':
                 Neo.Main.windowClose({
-                    names: me.connectedApps,
+                    names   : me.connectedApps,
+                    windowId: me.windowId
                 });
                 break;
             case 'SharedCovidChart':
@@ -330,8 +344,6 @@ class MainContainerController extends ComponentController {
 
         if (view) {
             NeoArray.remove(me.connectedApps, name);
-
-            parentView.remove(view, false);
 
             switch (name) {
                 case 'SharedCovidChart':
@@ -360,7 +372,10 @@ class MainContainerController extends ComponentController {
                     break;
             }
 
-            Neo.apps[name].destroy();
+            if (me.connectedAppWindows[name]) {
+                Neo.apps[me.connectedAppWindows[name]]?.destroy();
+                delete me.connectedAppWindows[name]
+            }
         }
     }
 
@@ -374,7 +389,7 @@ class MainContainerController extends ComponentController {
             country   : 'all',
             hash      : {mainview: 'table'},
             hashString: 'mainview=table'
-        }, null);
+        }, null)
     }
 
     /**
@@ -394,7 +409,7 @@ class MainContainerController extends ComponentController {
             scope     : me
         });
 
-        me.component.on('mounted', me.onMainViewMounted, me);
+        me.component.on('mounted', me.onMainViewMounted, me)
     }
 
 
@@ -402,23 +417,23 @@ class MainContainerController extends ComponentController {
      * @param {Object} data
      */
     onCountryFieldChange(data) {
-        let component  = data.component,
-            store      = component.store,
-            value      = data.value,
+        let component = data.component,
+            store     = component.store,
+            value     = data.value,
             record;
 
         if (store.getCount() > 0) {
-            if (Neo.isObject(value)) {
+            if (Neo.isRecord(value)) {
                 record = value;
-                value  = value[component.displayField];
+                value  = value[component.displayField]
             } else {
-                record = value && store.find('country', value)?.[0];
+                record = value && store.find('country', value)?.[0]
             }
 
-            this.getModel().setData({
+            this.setState({
                 country      : value,
                 countryRecord: record || null
-            });
+            })
         }
     }
 
@@ -439,52 +454,52 @@ class MainContainerController extends ComponentController {
             me.activeMainTabIndex    = activeIndex;
 
             if (!activeView) {
-                setTimeout(() => {
-                    me.onHashChange(value, oldValue);
-                }, 10);
+                me.timeout(10).then(() => {
+                    me.onHashChange(value, oldValue)
+                })
 
-                return;
+                return
             }
 
-            me.getModel().setData({
+            me.setState({
                 country: country || null
             });
 
             // todo: this will only load each store once. adjust the logic in case we want to support reloading the API
             if (me.data && activeView.store?.getCount() < 1) {
-                activeView.store.data = me.data;
+                activeView.store.data = me.data
             }
 
             ntype = activeView.ntype;
 
             if ((ntype === 'mapboxgl' || me.connectedApps.includes('SharedCovidMap')) && me.data) {
                 if (!me.mapBoxView) {
-                    me.mapBoxView = me.getReference('mapboxglmap');
+                    me.mapBoxView = me.getReference('mapboxglmap')
                 }
 
                 if (me.mapboxStyle) {
                     me.mapBoxView.mapboxStyle = me.mapBoxView[me.mapboxStyle];
-                    delete me.mapboxStyle;
+                    delete me.mapboxStyle
                 }
 
                 if (!me.mapboxglMapHasData) {
                     me.mapBoxView.chartData = me.data;
-                    me.mapboxglMapHasData = true;
+                    me.mapboxglMapHasData = true
                 }
 
-                countryRecord = me.getModel().data.countryRecord;
+                countryRecord = me.getStateProvider().data.countryRecord;
                 countryRecord && MainContainerController.selectMapboxGlCountry(me.mapBoxView, countryRecord);
 
                 me.mapBoxView.autoResize();
             } else if (ntype === 'covid-world-map' && me.data) {
                 if (!me.worldMapHasData) {
                     activeView.loadData(me.data);
-                    me.worldMapHasData = true;
+                    me.worldMapHasData = true
                 }
             }
         }
 
-        me.firstHashChange = false;
+        me.firstHashChange = false
     }
 
     /**
@@ -505,7 +520,7 @@ class MainContainerController extends ComponentController {
             ].join('')
         });
 
-        table.update();
+        table.update()
     }
 
     /**
@@ -515,12 +530,13 @@ class MainContainerController extends ComponentController {
         let me = this;
 
         Neo.main.DomAccess.addScript({
-            async: true,
-            defer: true,
-            src  : 'https://buttons.github.io/buttons.js'
+            async   : true,
+            defer   : true,
+            src     : 'https://buttons.github.io/buttons.js',
+            windowId: me.windowId
         });
 
-        me.getReference('tab-container').on('moveTo', me.onTabMove, me);
+        me.getReference('tab-container').on('moveTo', me.onTabMove, me)
     }
 
     /**
@@ -528,7 +544,7 @@ class MainContainerController extends ComponentController {
      */
     onReloadDataButtonClick(data) {
         this.loadData();
-        this.loadSummaryData();
+        this.loadSummaryData()
     }
 
     /**
@@ -541,7 +557,7 @@ class MainContainerController extends ComponentController {
         me.component.remove(me.getReference('footer'), true);
 
         if (activeTab.ntype === 'covid-mapboxgl-container') {
-            me.getReference('mapboxglmap').autoResize();
+            me.getReference('mapboxglmap').autoResize()
         }
     }
 
@@ -553,25 +569,23 @@ class MainContainerController extends ComponentController {
             button     = data.component,
             component  = me.component,
             logo       = me.getReference('logo'),
-            logoPath   = 'https://raw.githubusercontent.com/neomjs/pages/master/resources/images/apps/covid/',
+            logoPath   = 'https://raw.githubusercontent.com/neomjs/pages/main/resources_pub/images/apps/covid/',
             themeLight = button.text === 'Theme Light',
-            buttonText, cls, href, iconCls, mapView, mapViewStyle, theme;
+            buttonText, cls, iconCls, mapView, mapViewStyle, theme;
 
         if (me.connectedApps.includes('SharedCovidMap')) {
-            mapView = me.getMainView('SharedCovidMap').items[0].items[0];
+            mapView = me.getMainView('SharedCovidMap').items[0].items[0]
         } else {
-            mapView = me.getReference('mapboxglmap');
+            mapView = me.getReference('mapboxglmap')
         }
 
         if (themeLight) {
             buttonText   = 'Theme Dark';
-            href         = '../dist/development/neo-theme-light-no-css-vars.css';
             iconCls      = 'fa fa-moon';
             mapViewStyle = mapView?.mapboxStyleLight;
             theme        = 'neo-theme-light';
         } else {
             buttonText   = 'Theme Light';
-            href         = '../dist/development/neo-theme-dark-no-css-vars.css';
             iconCls      = 'fa fa-sun';
             mapViewStyle = mapView?.mapboxStyleDark;
             theme        = 'neo-theme-dark';
@@ -592,15 +606,15 @@ class MainContainerController extends ComponentController {
             });
 
             NeoArray.add(cls, theme);
-            component.cls = cls;
+            component.cls = cls
         });
 
         button.set({iconCls, text: buttonText});
 
         if (mapView) {
-            mapView.mapboxStyle = mapViewStyle;
+            mapView.mapboxStyle = mapViewStyle
         } else {
-            me.mapboxStyle = themeLight ? 'mapboxStyleLight' : 'mapboxStyleDark';
+            me.mapboxStyle = themeLight ? 'mapboxStyleLight' : 'mapboxStyleDark'
         }
     }
 
@@ -608,35 +622,35 @@ class MainContainerController extends ComponentController {
      * @param {Object} data
      */
     onTabMove(data) {
-        NeoArray.move(this.mainTabs, data.fromIndex, data.toIndex);
+        NeoArray.move(this.mainTabs, data.fromIndex, data.toIndex)
     }
 
     /**
      * @param {Object} data
      */
     onWindowChartMaximizeButtonClick(data) {
-        this.createPopupWindow('controls-panel', 'sharedcovidchart', 'SharedCovidChart');
+        this.createPopupWindow('controls-panel', 'sharedcovidchart', 'SharedCovidChart')
     }
 
     /**
      * @param {Object} data
      */
     onWindowGalleryMaximizeButtonClick(data) {
-        this.createPopupWindow('gallery-container', 'sharedcovidgallery', 'SharedCovidGallery');
+        this.createPopupWindow('gallery-container', 'sharedcovidgallery', 'SharedCovidGallery')
     }
 
     /**
      * @param {Object} data
      */
     onWindowHelixMaximizeButtonClick(data) {
-        this.createPopupWindow('helix-container', 'sharedcovidhelix', 'SharedCovidHelix');
+        this.createPopupWindow('helix-container', 'sharedcovidhelix', 'SharedCovidHelix')
     }
 
     /**
      * @param {Object} data
      */
     onWindowMapMaximizeButtonClick(data) {
-        this.createPopupWindow('mapbox-gl-container', 'sharedcovidmap', 'SharedCovidMap');
+        this.createPopupWindow('mapbox-gl-container', 'sharedcovidmap', 'SharedCovidMap')
     }
 
     /**
@@ -662,7 +676,7 @@ class MainContainerController extends ComponentController {
             lng: record.countryInfo.long
         });
 
-        view.zoom = 5; // todo: we could use a different value for big countries (Russia, USA,...)
+        view.zoom = 5 // todo: we could use a different value for big countries (Russia, USA,...)
     }
 
     /**
@@ -671,11 +685,10 @@ class MainContainerController extends ComponentController {
      */
     updateCountryField(data) {
         Neo.Main.editRoute({
-            country: data.record.country
-        });
+            country : data.record.country,
+            windowId: this.windowId
+        })
     }
 }
 
-Neo.applyClassConfig(MainContainerController);
-
-export default MainContainerController;
+export default Neo.setupClass(MainContainerController);

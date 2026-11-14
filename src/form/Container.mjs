@@ -2,6 +2,7 @@ import BaseContainer    from '../container/Base.mjs';
 import BaseField        from '../form/field/Base.mjs';
 import ComponentManager from '../manager/Component.mjs';
 import NeoArray         from '../util/Array.mjs';
+import {isDescriptor}   from '../core/ConfigSymbols.mjs';
 
 /**
  * @class Neo.form.Container
@@ -25,6 +26,18 @@ class Container extends BaseContainer {
          */
         baseCls: ['neo-form-container'],
         /**
+         * Default configuration for descendant form fields (`Neo.form.field.Base`) at any nesting level,
+         * including dynamically added fields. This config uses a descriptor to enable deep merging with
+         * subclass or instance-based `fieldDefaults`.
+         * @member {Object|null} fieldDefaults_={[isDescriptor]: true, merge: 'deep', value: null}
+         * @reactive
+         */
+        fieldDefaults_: {
+            [isDescriptor]: true,
+            merge         : 'deep',
+            value         : null
+        },
+        /**
          * @member {Object} vdom={tag: 'form',cn:[],onsubmit:'return false;'}
          */
         vdom:
@@ -32,7 +45,46 @@ class Container extends BaseContainer {
     }
 
     /**
-     * Helper function used by setValues() which wraps the leaves of a tree structure into a new property.
+     * @summary Propagates runtime updates to `fieldDefaults` across all currently instantiated descendant form fields.
+     * @param {Object|null} value
+     * @param {Object|null} oldValue
+     * @protected
+     */
+    afterSetFieldDefaults(value, oldValue) {
+        if (oldValue !== undefined && value) {
+            ComponentManager.getChildComponents(this).forEach(child => {
+                if (child instanceof BaseField) {
+                    child.applyParentFieldDefaults()
+                }
+            })
+        }
+    }
+
+    /**
+     * @summary Extends `container.Base#createItem` to propagate `fieldDefaults` to descendant fields when a
+     * pre-instantiated container subtree is inserted into the form.
+     * @param {*} item
+     * @param {Number} index
+     * @param {Boolean} [removeFromPreviousParent=true]
+     * @returns {Neo.component.Base|Object}
+     */
+    createItem(item, index, removeFromPreviousParent=true) {
+        item = super.createItem(item, index, removeFromPreviousParent);
+
+        if (this.fieldDefaults && item instanceof BaseContainer) {
+            ComponentManager.getChildComponents(item).forEach(child => {
+                if (child instanceof BaseField) {
+                    child.applyParentFieldDefaults()
+                }
+            })
+        }
+
+        return item
+    }
+
+    /**
+     * @summary Wraps the leaf values of a nested object tree into `{[configName]: value}` descriptors for `setConfigs()`.
+     * Helper function used by `setErrors()` and `setValues()` which wraps the leaves of a tree structure into a new property.
      * @param {Object} values
      * @param {String} configName
      * @param {String[]} fieldPaths
@@ -136,17 +188,76 @@ class Container extends BaseContainer {
         return fields
     }
 
+
+    /**
+     * This function will return one of the following states:
+     * - clean      => all fields are clean (untouched)
+     * - invalid    => at least one field is invalid
+     * - valid      => all required fields are valid
+     * - inProgress => at least one field is valid, at least one field is clean
+     * @returns {Promise<String>}
+     */
+    async getFormState() {
+        let fields           = await this.getFields(),
+            i                = 0,
+            hasCleanFields   = false,
+            hasAlertFields   = false,
+            hasInvalidFields = false,
+            hasUncleanFields = false,
+            hasValidFields   = false,
+            len              = fields.length,
+            field, isClean, isValid;
+
+        for (; i < len; i++) {
+            field   = fields[i];
+            isClean = field.clean;
+            isValid = field.isValid();
+
+            if (!isClean && !isValid) {
+                if (field.isEmptyAndRequired?.()) {
+                    hasAlertFields = true
+                } else {
+                    return 'invalid'
+                }
+            } else if (isValid) {
+                hasValidFields = true
+            } else if (!isValid) {
+                if (field.isEmptyAndRequired?.()) {
+                    hasAlertFields = true
+                } else {
+                    hasInvalidFields = true
+                }
+            }
+
+            if (isClean) {
+                hasCleanFields = true
+            } else {
+                hasUncleanFields = true
+            }
+        }
+
+        if (!hasAlertFields && !hasInvalidFields) {
+            return 'valid'
+        }
+
+        if (!hasAlertFields && hasCleanFields && !hasUncleanFields) {
+            return 'clean'
+        }
+
+        return 'inProgress'
+    }
+
     /**
      * @returns {Promise<Object>}
      */
-    async getValues() {
+    async getSubmitValues() {
         let fields = await this.getFields(),
             Radio  = Neo.form.field.Radio,
             values = {},
             fieldName, key, ns, nsArray, value;
 
         fields.forEach(field => {
-            value = field.getValue();
+            value = field.getSubmitValue();
 
             if (field.name) {
                 fieldName = field.name;
@@ -193,6 +304,14 @@ class Container extends BaseContainer {
         });
 
         return values
+    }
+
+    /**
+     * @deprecated in v7.x
+     * @returns {Promise<Object>}
+     */
+    async getValues() {
+        return this.getSubmitValues()
     }
 
     /**
@@ -306,6 +425,32 @@ class Container extends BaseContainer {
     }
 
     /**
+     * @summary Sets or clears field errors from a flat or nested object tree keyed by field path, name, or id.
+     *
+     * Mirrors {@link #setValues} for API validation responses that return multiple field errors at once:
+     * clones `errors`, wraps leaf values into `{error: value}` descriptors via {@link Neo.form.Container.adjustTreeLeaves},
+     * and applies them through {@link #setConfigs}.
+     * @param {Object} errors={}
+     * @param {Boolean} suspendEvents=false
+     */
+    async setErrors(errors={}, suspendEvents=false) {
+        let fields     = await this.getFields(),
+            fieldPaths = [],
+            path;
+
+        fields.map(field => {
+            path = field.getPath();
+            path && NeoArray.add(fieldPaths, path)
+        });
+
+        errors = Neo.clone(errors, true);
+
+        Container.adjustTreeLeaves(errors, 'error', fieldPaths);
+
+        await this.setConfigs(errors, suspendEvents)
+    }
+
+    /**
      * Set field values by field name or field id
      * @param {Object} values={}
      * @param {Boolean} suspendEvents=false
@@ -330,6 +475,76 @@ class Container extends BaseContainer {
     }
 
     /**
+     * Serializes the form container into a JSON-compatible object.
+     * Includes the current values of all child fields.
+     * @returns {Object}
+     */
+    toJSON() {
+        let me     = this,
+            Radio  = Neo.form.field?.Radio,
+            values = {},
+            fieldName, fields, key, ns, nsArray, value;
+
+        // Synchronously get all currently instantiated child components
+        fields = ComponentManager.getChildComponents(me);
+
+        fields.forEach(field => {
+            if (field.isBasefield) { // Check for isBasefield flag (auto-generated by ntype: 'basefield')
+                value = field.getSubmitValue();
+
+                if (field.name) {
+                    fieldName = field.name;
+
+                    if (field.formGroup) {
+                        fieldName = field.formGroup + '.' + fieldName;
+                    }
+
+                    nsArray = fieldName.split('.');
+                    key     = nsArray.pop();
+                    ns      = Neo.nsWithArrays(nsArray, true, values);
+                } else {
+                    key = field.id;
+                    ns  = values
+                }
+
+                // Ensuring that Radios will not return arrays
+                if (Radio && field instanceof Radio) {
+                    // Only overwrite an existing value with a checked value
+                    if (Object.hasOwn(ns, key)) {
+                        if (value !== field.uncheckedValue) {
+                            ns[key] = value
+                        }
+                    } else {
+                        ns[key] = value
+                    }
+                }
+                /*
+                 * CheckBoxes need custom logic
+                 * => we only want to pass the uncheckedValue in case the field does not belong to a group
+                 * (multiple fields using the same name)
+                 */
+                else if (Object.hasOwn(ns, key) && value !== undefined) {
+                    if (ns[key] === field.uncheckedValue) {
+                        ns[key] = []
+                    } else if (!Array.isArray(ns[key])) {
+                        ns[key] = [ns[key]]
+                    }
+
+                    value !== field.uncheckedValue && ns[key].unshift(value)
+                } else if (value !== undefined) {
+                    ns[key] = value
+                }
+            }
+        });
+
+        return {
+            ...super.toJSON(),
+            fieldDefaults: me.fieldDefaults,
+            values
+        }
+    }
+
+    /**
      * Updates the invalid state for all fields which have validate() implemented.
      * This can be useful for create-entity forms which show up "clean" until pressing a submit button.
      * @returns {Promise<Boolean>}
@@ -342,7 +557,7 @@ class Container extends BaseContainer {
         fields.forEach(field => {
             validField = field.validate?.(false);
 
-            if (!validField) {
+            if (validField === false) {
                 isValid = false
             }
         });
@@ -351,6 +566,4 @@ class Container extends BaseContainer {
     }
 }
 
-Neo.applyClassConfig(Container);
-
-export default Container;
+export default Neo.setupClass(Container);

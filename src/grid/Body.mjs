@@ -1,0 +1,1982 @@
+import Component       from '../component/Base.mjs';
+import Collection      from '../collection/Base.mjs';
+import Performance     from '../util/Performance.mjs';
+import Row             from './Row.mjs';
+import VDomUtil        from '../util/VDom.mjs';
+import VNodeUtil       from '../util/VNode.mjs';
+import {isDescriptor}  from '../core/ConfigSymbols.mjs';
+
+/**
+ * @summary Manages the scrollable viewport and row rendering for the Grid.
+ *
+ * `Neo.grid.Body` is the engine behind the Grid's virtual scrolling. It extends {@link Neo.component.Base} rather than
+ * `Neo.container.Base` to enforce a strict **Row Pooling** architecture.
+ *
+ * **Why Component and not Container?**
+ * Since the Grid uses a **Fixed-DOM-Order** strategy, the standard Container APIs (`add`, `remove`, `move`) are
+ * fundamentally incompatible with the row pooling logic. By extending `Component`, we hide these unsafe methods
+ * while manually implementing the necessary config propagation (theme, appName, windowId) to the managed Row instances.
+ *
+ * **Row Pooling:**
+ * Instead of creating a component for every record in the store, it uses a pool:
+ *
+ * 1.  It creates a fixed pool of {@link Neo.grid.Row} components based on the visible height + a buffer.
+ * 2.  As the user scrolls, these Row instances are recycled. Their `record` and `rowIndex` configs are updated via
+ *     {@link Neo.grid.Row#updateContent}, triggering a lightweight VDOM update.
+ * 3.  It calculates the `mountedRows` (rendered DOM nodes) and `visibleRows` (viewport intersection) to optimize rendering.
+ *
+ * This architecture ensures O(1) performance for record updates and constant memory usage regardless of dataset size.
+ *
+ * **Fixed-DOM-Order Strategy:**
+ * To maximize scrolling performance, `Body` uses a "recycling in place" strategy. The Row components in the `items`
+ * array and the corresponding DOM nodes in `vdom.cn` **never change their order**.
+ *
+ * - When a row scrolls off the top, it remains the "first" child in the DOM but is visually repositioned
+ *   to the bottom via CSS transform (`translate3d`) and updated with new record content.
+ * - This approach eliminates `moveNode`, `insertNode`, and `removeNode` operations, resulting in
+ *   zero layout thrashing during scrolling.
+ *
+ * @class Neo.grid.Body
+ * @extends Neo.component.Base
+ * @see Neo.grid.Row
+ * @see Neo.grid.Container
+ */
+class GridBody extends Component {
+    static config = {
+        /**
+         * @member {String} className='Neo.grid.Body'
+         * @protected
+         */
+        className: 'Neo.grid.Body',
+        /**
+         * @member {String} ntype='grid-body'
+         * @protected
+         */
+        ntype: 'grid-body',
+        /**
+         * @member {Boolean} animatedRowSorting_=false
+         * @reactive
+         */
+        animatedRowSorting_: false,
+        /**
+         * Internal flag. Gets calculated when mounting the grid.Container
+         * @member {Number} availableHeight_=0
+         * @reactive
+         */
+        availableHeight_: 0,
+        /**
+         * Internal flag. Gets calculated when changing the availableHeight config
+         * @member {Number} availableRows_=0
+         * @reactive
+         */
+        availableRows_: 0,
+        /**
+         * Internal flag. Gets calculated after mounting grid.Body rows
+         * @member {Number} availableWidth_=0
+         * @reactive
+         */
+        availableWidth_: 0,
+        /**
+         * @member {String[]} baseCls=['neo-grid-body']
+         * @protected
+         */
+        baseCls: ['neo-grid-body'],
+        /**
+         * The number of columns (cells) to paint before the first and after the last visible column,
+         * to enhance the scrolling performance
+         * @member {Number} bufferColumnRange_=0
+         * @reactive
+         */
+        bufferColumnRange_: 0,
+        /**
+         * The number of rows to paint before the first and after the last visible row,
+         * to enhance the scrolling performance
+         * @member {Number} bufferRowRange_=3
+         * @reactive
+         */
+        bufferRowRange_: 3,
+        /**
+         * The pool size for recyclable cells.
+         * Auto-calculated based on mounted columns range.
+         * @member {Number|null} cellPoolSize_=null
+         * @protected
+         * @reactive
+         */
+        cellPoolSize_: null,
+        /**
+         * Define which model field contains the value of colspan definitions
+         * @member {String} colspanField='colspan'
+         */
+        colspanField: 'colspan',
+        /**
+         * Internal flag. Gets calculated after mounting grid.Body rows
+         * @member {Number} containerWidth_=0
+         * @reactive
+         */
+        containerWidth_: 0,
+        /**
+         * @member {Neo.collection.Base|null} columnPositions_=null
+         * @protected
+         * @reactive
+         */
+        columnPositions_: null,
+        /**
+         * @member {Neo.grid.Container|null} gridContainer=null
+         * @protected
+         */
+        gridContainer: null,
+        /**
+         * @member {Boolean} highlightModifiedCells_=false
+         * @reactive
+         */
+        highlightModifiedCells_: false,
+        /**
+         * @member {Boolean} isScrolling_=false
+         * @reactive
+         */
+        isScrolling_: false,
+        /**
+         * Additional used keys for the selection model
+         * @member {Object} keys
+         */
+        keys: {},
+        /**
+         * Stores the indexes of the first & last mounted columns, including bufferColumnRange.
+         *
+         * **Assign this, never write it by index** — unlike its three sibling windows. It is the
+         * only one of the four with an `afterSet` hook, and {@link #afterSetMountedColumns} calls
+         * `createViewData()`, so the assignment IS the repaint trigger. An index-write would move
+         * the value and skip the render, leaving the painted columns behind the mounted range.
+         *
+         * The descriptor matches the siblings for the same two reasons they carry it: a mutable
+         * default needs `clone` to be per-instance, and `cloneOnGet: 'none'` avoids copying the
+         * array on every read — it is read per row and per cell during render
+         * ({@link Neo.grid.Row}) and three times per `createViewData()`, and the copy protected
+         * nothing because nothing mutates it through the reference.
+         * @member {Number[]} mountedColumns_=[0,0]
+         * @protected
+         * @reactive
+         */
+        mountedColumns_: {
+            [isDescriptor]: true,
+            clone         : 'shallow',
+            cloneOnGet    : 'none',
+            value         : [0, 0]
+        },
+        /**
+         * Stores the indexes of the first & last mounted rows, including bufferRowRange.
+         *
+         * Reactive, and both descriptor keys are behaviour-critical rather than tuning:
+         *
+         * `clone: 'shallow'` gives each body its own array. A non-reactive config has no clone
+         * path at all, so every grid on a page would share one window and the last body to
+         * measure would decide what all the others believe is mounted.
+         *
+         * `cloneOnGet: 'none'` is what makes an index-write land. The engine's default copies
+         * arrays on every read, so `me.mountedRows[0] = x` would write into a discarded copy and
+         * the window would never move — silently, and in the same direction as the bug above.
+         *
+         * @member {Number[]} mountedRows_=[0,0]
+         * @protected
+         * @reactive
+         */
+        mountedRows_: {
+            [isDescriptor]: true,
+            clone         : 'shallow',
+            cloneOnGet    : 'none',
+            value         : [0, 0]
+        },
+        /**
+         * Optional config values for Neo.grid.plugin.AnimateRows
+         * @member {Object} pluginAnimateRowsConfig=null
+         */
+        pluginAnimateRowsConfig: null,
+        /**
+         * @member {String} role='rowgroup'
+         * @reactive
+         */
+        role: 'rowgroup',
+        /**
+         * Number in px
+         * @member {Number} rowHeight_=0
+         * @reactive
+         */
+        rowHeight_: 0,
+        /**
+         * @member {Number} scrollLeft_=0
+         * @protected
+         * @reactive
+         */
+        scrollLeft_: 0,
+        /**
+         * @member {Number} scrollTop_=0
+         * @protected
+         * @reactive
+         */
+        scrollTop_: 0,
+        /**
+         * @member {Number} startIndex_=0
+         * @reactive
+         */
+        startIndex_: 0,
+        /**
+         * The data source containing the records to be rendered.
+         * This can be a standard `Neo.data.Store` for flat lists or a `Neo.data.TreeStore` for hierarchical data.
+         * The Body component delegates row generation to `Neo.grid.Row` instances based on this store's contents.
+         * @member {Neo.data.Store|Neo.data.TreeStore|null} store_=null
+         * @reactive
+         */
+        store_: null,
+        /**
+         * Gives even rows a different background-color
+         * @member {Boolean} stripedRows_=true
+         * @reactive
+         */
+        stripedRows_: true,
+        /**
+         * Stores the indexes of the first & last painted columns.
+         * Written through by index; see `mountedRows_` for why both descriptor keys are required.
+         * @member {Number[]} visibleColumns_=[0,0]
+         * @protected
+         * @reactive
+         */
+        visibleColumns_: {
+            [isDescriptor]: true,
+            clone         : 'shallow',
+            cloneOnGet    : 'none',
+            value         : [0, 0]
+        },
+        /**
+         * Stores the indexes of the first & last visible rows, excluding bufferRowRange.
+         * Written through by index; see `mountedRows_` for why both descriptor keys are required.
+         * @member {Number[]} visibleRows_=[0,0]
+         * @protected
+         * @reactive
+         */
+        visibleRows_: {
+            [isDescriptor]: true,
+            clone         : 'shallow',
+            cloneOnGet    : 'none',
+            value         : [0, 0]
+        },
+        /**
+         * @member {String[]|null} wrapperCls=null
+         * @reactive
+         */
+        wrapperCls: null,
+        /**
+         * @member {Boolean} useRowRecordIds=true
+         */
+        useRowRecordIds: true,
+        /**
+         * @member {Boolean} useInternalId=true
+         */
+        useInternalId: true,
+        /**
+         * @member {Object} _vdom
+         */
+        _vdom:
+            { cn: [] }
+    }
+
+    /**
+     * Internal flag to adopt to store.add() passing an initial chunk.
+     * @member {Number} #initialTotalSize=0
+     */
+    #initialTotalSize = 0
+    /**
+     * The merged arguments of every {@link #createViewData} call deferred while this body's update is in flight. They
+     * collapse into one run, which must keep the strongest intent of them all: forced if any caller forced, and
+     * rendering if any caller asked to render.
+     * @member {Object|null} #deferredViewData=null
+     */
+    #deferredViewData = null
+    /**
+     * Internal cache for the last mountedColumns state.
+     * Used to detect horizontal scrolling/resizing to force row updates.
+     * @member {Number[]|null} #lastMountedColumns=null
+     */
+    #lastMountedColumns = null
+    /**
+     * The visible count the `scrollEdge` event was last fired for; `null` while the visible window is
+     * away from the edge. The key is the visible count alone, never the total behind a filter: an
+     * append a filter hides entirely moved nothing the viewport can reach, and re-arming on it would
+     * let a consumer walk hidden data window by window with no gesture. Cleared again when the body
+     * mounts: a store load reaching an unmounted body still runs the window calculator with the
+     * geometry it last measured, so an edge announced there was announced to no viewport. See
+     * {@link #updateMountedAndVisibleRows} and {@link #afterSetMounted}.
+     * @member {Number|null} #scrollEdgeAnnouncedFor=null
+     */
+    #scrollEdgeAnnouncedFor = null
+    /**
+     * @summary Tracks silent VDOM mutations collected into an in-flight body payload until {@link #afterVnodeSync} lands.
+     * @member {Boolean} #inFlightSilentVdomChanges=false
+     */
+    #inFlightSilentVdomChanges = false
+    /**
+     * @summary Latches silent VDOM mutations until a landed {@link Neo.grid.View#syncBodies} or full body update
+     * flushes them, restoring the latch if the flight rejects.
+     * @member {Boolean} hasSilentVdomChanges=false
+     * @protected
+     */
+    hasSilentVdomChanges = false
+    /**
+     * @member {Object[]} items=[]
+     */
+    items = []
+    /**
+     * The dynamic size of the row pool.
+     * @member {Number|null} rowPoolSize=null
+     */
+    rowPoolSize = null
+    /**
+     * Style-scoped hidden text projection owned by the View. Its identity never enters the physical row pool.
+     * @member {Object|null} rowMeasureVdom=null
+     */
+    rowMeasureVdom = null
+
+    /**
+     * The view's row geometry in content-sized mode, else `null`: a fixed-height body positions rows by
+     * `index × rowHeight`. All three bodies of a view read the same instance.
+     * @member {Neo.grid.RowGeometry|null} rowGeometry
+     */
+    get rowGeometry() {
+        return this.gridContainer?.view?.rowGeometry || null
+    }
+
+    /**
+     * The view's page offset: 0 unless fixed rows scroll in pages, see {@link Neo.grid.View#pageOffset}
+     * @member {Number} pageOffset
+     */
+    get pageOffset() {
+        return this.gridContainer?.view?.pageOffset || 0
+    }
+
+    /**
+     * @param config
+     */
+    construct(config) {
+        super.construct(config);
+
+        let me = this;
+
+        me.addDomListeners([{
+            click: me.onCellClick,
+            dblclick: me.onCellDoubleClick,
+            delegate: '.neo-grid-cell',
+            scope: me
+        }, {
+            click: me.onRowClick,
+            dblclick: me.onRowDoubleClick,
+            delegate: '.neo-grid-row',
+            scope: me
+        }])
+    }
+
+    /**
+     * Optional hook triggered after a VDOM update completes (including Main thread paint).
+     * Used by `Neo.grid.ScrollManager` to measure the real-time VDOM worker pipeline roundtrip
+     * latency (RTT) during active scrolling, enabling Predictive Delta Injection.
+     * Content-sized rows measure the rows the update rendered.
+     * @protected
+     */
+    afterExecuteVdomUpdate() {
+        let me = this;
+
+        if (me.isScrolling) {
+            Performance.markEnd('grid.scroll:' + me.id)
+        }
+
+        me.rowGeometry && me.gridContainer.view.scheduleRowMeasure()
+    }
+
+    /**
+     * Optional hook triggered right before the VDOM payload is dispatched to the worker.
+     * Starts the RTT measurement timer.
+     * @protected
+     */
+    beforeExecuteVdomUpdate() {
+        if (this.isScrolling) {
+            Performance.markStart('grid.scroll:' + this.id)
+        }
+    }
+
+    /**
+     * Triggered after the animatedRowSorting config got changed
+     * @param {Boolean} value
+     * @param {Boolean} oldValue
+     * @protected
+     */
+    afterSetAnimatedRowSorting(value, oldValue) {
+        let me     = this,
+            plugin = me.getPlugin('grid-animate-rows');
+
+        if (value) {
+            if (!plugin) {
+                import('./plugin/AnimateRows.mjs').then(module => {
+                    if (!me.isDestroyed && me.animatedRowSorting && !me.getPlugin('grid-animate-rows')) {
+                        let plugins = me.plugins || [];
+
+                        plugins.push({
+                            module: module.default,
+                            ...me.pluginAnimateRowsConfig
+                        });
+
+                        me.plugins = plugins
+                    }
+                })
+            }
+        } else if (oldValue !== undefined) {
+            plugin?.destroy()
+        }
+    }
+
+    /**
+     * Triggered after the appName config got changed
+     * @param {String|null} value
+     * @param {String|null} oldValue
+     * @protected
+     */
+    afterSetAppName(value, oldValue) {
+        let me = this;
+
+        super.afterSetAppName(value, oldValue);
+
+        if (value) {
+            for (let i = 0, len = me.items.length; i < len; i++) {
+                me.items[i].appName = value
+            }
+        }
+    }
+
+    /**
+     * Triggered after the availableHeight config got changed
+     * @param {Number} value
+     * @param {Number} oldValue
+     * @protected
+     */
+    afterSetAvailableHeight(value, oldValue) {
+        this.updateAvailableRows()
+    }
+
+    /**
+     * Triggered after the availableRows config got changed
+     * @param {Number} value
+     * @param {Number} oldValue
+     * @protected
+     */
+    afterSetAvailableRows(value, oldValue) {
+        value > 0 && this.createViewData()
+    }
+
+    /**
+     * Triggered after the availableWidth config got changed
+     * @param {Number} value
+     * @param {Number} oldValue
+     * @protected
+     */
+    afterSetAvailableWidth(value, oldValue) {
+        if (value > 0) {
+            let me              = this,
+                {gridContainer} = me,
+                scrollbar       = gridContainer?.horizontalScrollbar;
+
+            me.vdom.width = value + 'px';
+            me.update();
+
+            // Per-region sync into the horizontal scrollbar: the center feeds the spacer (the
+            // scrollable content), the locked bodies feed the flanking margins which scope the
+            // scrollbar's scrollport to the center clip width — keeping its scrollLeft range
+            // identical to the center toolbar's, so the addon's verbatim copy stays exact.
+            if (scrollbar) {
+                if      (me === gridContainer.body)      {scrollbar.centerWidth = value}
+                else if (me === gridContainer.bodyStart) {scrollbar.startWidth  = value}
+                else if (me === gridContainer.bodyEnd)   {scrollbar.endWidth    = value}
+            }
+        }
+    }
+
+    /**
+     * Triggered after the bufferColumnRange config got changed
+     * @param {Number} value
+     * @param {Number} oldValue
+     * @protected
+     */
+    afterSetBufferColumnRange(value, oldValue) {
+        if (oldValue !== undefined) {
+            this.refreshColumns(true)
+        }
+    }
+
+    /**
+     * Triggered after the bufferRowRange config got changed
+     * @param {Number} value
+     * @param {Number} oldValue
+     * @protected
+     */
+    afterSetBufferRowRange(value, oldValue) {
+        if (oldValue !== undefined) {
+            let me            = this,
+                {rowGeometry} = me,
+                current       = rowGeometry ? rowGeometry.indexAt(me.scrollTop) : Math.floor(me.scrollTop / me.rowHeight);
+
+            if (Math.abs(me.startIndex - current) >= value) {
+                me.skipCreateViewData = true;
+                me.startIndex = current;
+                me.skipCreateViewData = false
+            }
+
+            me.createViewData(false, true)
+        }
+    }
+
+    /**
+     * Triggered after the containerWidth config got changed
+     * @param {Number} value
+     * @param {Number} oldValue
+     * @protected
+     */
+    afterSetContainerWidth(value, oldValue) {
+        if (value > 0) {
+            // A width-invariant region — e.g. a single-column locked-end body whose mounted range is
+            // always [0, 0] regardless of width — would never render its rows once measured if we
+            // relied on the mounted-range side effect. refreshColumns() guarantees the repaint.
+            this.refreshColumns()
+        }
+    }
+
+    /**
+     * Triggered after the isScrolling config got changed
+     * @param {Number} value
+     * @param {Number} oldValue
+     * @protected
+     */
+    afterSetIsScrolling(value, oldValue) {
+        this.toggleCls('neo-is-scrolling', value);
+        this.fire('isScrollingChange', { value })
+    }
+
+    /**
+     * Triggered after the mounted config got changed. A body that mounts re-arms its scroll edge:
+     * whatever was announced while it was unmounted, its next layout at the edge announces again.
+     * @param {Boolean} value
+     * @param {Boolean} oldValue
+     * @protected
+     */
+    afterSetMounted(value, oldValue) {
+        super.afterSetMounted(value, oldValue);
+
+        if (value) {
+            this.#scrollEdgeAnnouncedFor = null
+        }
+
+        if (oldValue !== undefined) {
+            let i = 0, len = this.items.length, item;
+            for (; i < len; i++) {
+                item = this.items[i];
+                if (!item.vdom.removeDom) {
+                    item.mounted = value
+                }
+            }
+        }
+    }
+
+    /**
+     * Triggered after the mountedColumns config got changed
+     * @param {Number[]} value
+     * @param {Number[]} oldValue
+     * @protected
+     */
+    afterSetMountedColumns(value, oldValue) {
+        oldValue && this.createViewData()
+    }
+
+    /**
+     * Triggered after the rowHeight config got changed
+     * @param {Number} value
+     * @param {Number} oldValue
+     * @protected
+     */
+    afterSetRowHeight(value, oldValue) {
+        value > 0 && this.updateScrollHeight()
+    }
+
+    /**
+     * Triggered after the scrollLeft config got changed
+     * @param {Number} value
+     * @param {Number} oldValue
+     * @protected
+     */
+    afterSetScrollLeft(value, oldValue) {
+        this.updateMountedAndVisibleColumns()
+    }
+
+    /**
+     * Triggered after the scrollTop config got changed
+     * @param {Number} value
+     * @param {Number} oldValue
+     * @protected
+     */
+    afterSetScrollTop(value, oldValue) {
+        // Controlled externally by Grid.Container.syncBodies()
+    }
+
+    /**
+     * Triggered after the startIndex config got changed
+     * @param {Number} value
+     * @param {Number} oldValue
+     * @protected
+     */
+    afterSetStartIndex(value, oldValue) {
+        oldValue !== undefined && this.createViewData()
+    }
+
+    /**
+     * Triggered after the store config got changed
+     * @param {Neo.data.Store|Neo.data.TreeStore|null} value
+     * @param {Neo.data.Store|Neo.data.TreeStore|null} oldValue
+     * @protected
+     */
+    afterSetStore(value, oldValue) {
+        let me = this,
+            listeners = {
+                filter: me.onStoreFilter,
+                load: me.onStoreLoad,
+                recordChange: me.onStoreRecordChange,
+                scope: me
+            };
+
+        oldValue?.un(listeners);
+        value?.on(listeners);
+    }
+
+    /**
+     * Triggered after the stripedRows config got changed
+     * @param {Boolean} value
+     * @param {Boolean} oldValue
+     * @protected
+     */
+    afterSetStripedRows(value, oldValue) {
+        if (oldValue !== undefined) {
+            this.createViewData(false, true)
+        }
+    }
+
+    /**
+     * Triggered after the theme config got changed
+     * @param {String|null} value
+     * @param {String|null} oldValue
+     * @protected
+     */
+    afterSetTheme(value, oldValue) {
+        let me = this;
+
+        super.afterSetTheme(value, oldValue);
+
+        if (value) {
+            for (let i = 0, len = me.items.length; i < len; i++) {
+                me.items[i].theme = value
+            }
+        }
+    }
+
+    /**
+     * Triggered after the windowId config got changed
+     * @param {String|null} value
+     * @param {String|null} oldValue
+     * @protected
+     */
+    afterSetWindowId(value, oldValue) {
+        let me = this;
+
+        super.afterSetWindowId(value, oldValue);
+
+        if (value) {
+            for (let i = 0, len = me.items.length; i < len; i++) {
+                me.items[i].windowId = value
+            }
+        }
+    }
+
+    /**
+     * Triggered after the columnPositions config got changed
+     * @param {Object} value
+     * @protected
+     */
+    beforeGetColumnPositions(value) {
+        if (!value) {
+            this._columnPositions = value = Neo.create({
+                module: Collection,
+                keyProperty: 'dataField'
+            })
+        }
+
+        return value
+    }
+
+    /**
+     * A body configures, instantiates, holds and exposes no selection model: the grid's one model is
+     * {@link Neo.grid.View#selectionModel}, and a row paints the View's projected selection. The
+     * setter is the migration guard — a leftover `body: {selectionModel}` fails loudly here.
+     * @param {*} value
+     */
+    set selectionModel(value) {
+        throw new Error('grid.Body carries no selection model: configure it on the View — grid.Container#viewConfig.selectionModel, or grid.view.selectionModel at runtime')
+    }
+
+    /**
+     * @summary Projects `{record.<field>}` token values for the rows currently rendered in {@link #items}.
+     *
+     * Walks only the live row pool (`this.items`), never `store.getAt(0..count)`, so lazy records outside
+     * the rendered viewport window stay unhydrated. Keys the map strictly by each rendered row's stable
+     * `data-record-id` (`String(this.getRecordId(row.record))`), never by the pooled DOM slot id (`__row-N`).
+     * @override
+     * @returns {Object|undefined}
+     * @protected
+     */
+    buildNativeDragZoneRecords() {
+        let me     = this,
+            fields = me.getNativeDragZoneRecordFields(),
+            key, record, records, row;
+
+        if (!fields.length) {
+            return me.nativeDragZone?.records
+        }
+
+        records = {...me.nativeDragZone?.records};
+
+        for (row of me.items) {
+            record = row?.record;
+
+            if (record) {
+                key = me.getRecordId(record);
+
+                if (key !== undefined && key !== null && key !== '') {
+                    records[String(key)] = Object.fromEntries(fields.map(field => {
+                        const value = typeof record.get === 'function' ? record.get(field) : record[field];
+                        return [field, value === undefined || value === null ? '' : String(value)]
+                    }))
+                }
+            }
+        }
+
+        return records
+    }
+
+    /**
+     * Initializes or expands the pool of `Neo.grid.Row` instances.
+     *
+     * This method calculates the number of rows needed to cover the viewport plus the buffer range.
+     * If the current number of child items (Rows) is less than required, it creates new instances
+     * and adds them to the container. This ensures we have enough "physical" rows to recycle during scrolling.
+     *
+     * @protected
+     */
+    createRowPool() {
+        let me           = this,
+            countRecords = me.store.count,
+            windowSize   = me.availableRows + 2 * me.bufferRowRange,
+            needed       = Math.min(windowSize, Math.max(me.items.length, countRecords)),
+            current      = me.items.length,
+            delta        = needed - current,
+            vdomRoot     = me.getVdomRoot(),
+            prevMeasure  = vdomRoot.cn?.[current] ?? null,
+            i;
+
+        me.rowPoolSize = needed;
+
+        if (delta > 0) {
+            // One push per row, never a spread of the batch: a row registers its id as it is created, and a spread
+            // past the engine's argument limit throws after every new row registered, orphaning their ids
+            for (i = 0; i < delta; i++) {
+                me.items.push(Neo.create({
+                    module: Row,
+                    appName: me.appName,
+                    gridContainer: me.gridContainer,
+                    id: me.getRowId(current + i),
+                    parentId: me.id,
+                    record: null,
+                    rowIndex: -1,
+                    theme: me.theme,
+                    windowId: me.windowId
+                }))
+            }
+        } else if (delta < 0) {
+            // Self-Healing: Destroy excess rows to free memory and VDOM overhead.
+            // This restores performance if the buffer is reduced after being large.
+            const retired = {};
+
+            for (i = current - 1; i >= needed; i--) {
+                const row = me.items.pop();
+
+                retired[row.id] = row.vnode;
+                row.destroy()
+            }
+
+            // The whole contraction leaves the stored vnode in one walk, each row kept as the vnode it
+            // last rendered, so this body's next update removes their DOM nodes. No row edits the vdom
+            // itself: the `cn` rebuild below drops every retired reference anyway.
+            me.vnode && VNodeUtil.unlinkRetiredReferences(me.vnode, retired)
+        }
+
+        // Fixed-DOM-Order Strategy:
+        // We ensure the VDOM children (cn) matches the full pool of items exactly.
+        // We never remove or reorder these nodes. We only update their content and transform.
+        vdomRoot.cn = me.items.map(item => item.createVdomReference());
+        me.rowMeasureVdom && vdomRoot.cn.push(me.rowMeasureVdom);
+
+        if (delta !== 0 || prevMeasure !== (me.rowMeasureVdom ?? null)) {
+            me.hasSilentVdomChanges = true
+        }
+    }
+
+    /**
+     * The main rendering loop for the Grid Body.
+     *
+     * This method:
+     * 1.  Calculates the range of records to render based on scroll position.
+     * 2.  Calls `createRowPool` to ensure enough Row components exist.
+     * 3.  Iterates through the visible record range.
+     * 4.  **Recycles** existing Row components by calling {@link Neo.grid.Row#updateContent} with the new record data.
+     * 5.  Updates the scroll spacer height.
+     *
+     * **Optimization Strategies:**
+     * - **Row Skipping:** If `force` is false and the record/rowIndex match, `Row.updateContent` skips VDOM generation.
+     * - **Cell Recycling:** If horizontal scrolling is detected (implicit force), `recycle=true` is passed to Rows, allowing them to reuse existing cell VDOM nodes.
+     * - **Forced Updates:** Explicit `force=true` (e.g. from column resize) disables recycling to ensure full re-render.
+     *
+     * @param {Boolean} [silent=false] True to suppress the final VDOM update (used when batching).
+     * @param {Boolean} [force=false] True to force row updates even if records haven't changed (e.g. column resize).
+     */
+    createViewData(silent = false, force = false) {
+        let me = this;
+
+        if (me.skipCreateViewData) {
+            return
+        }
+
+        let { mountedRows, store } = me,
+            endIndex, i, item, itemIndex, poolSize, range, recycle = true;
+
+        if (
+            !store ||
+            store.isLoading ||
+            me.availableRows < 1 ||
+            me._containerWidth < 1 || // we are not checking me.containerWidth, since we want to ignore the config symbol
+            me.columnPositions.getCount() < 1 ||
+            me.mountedColumns[1] < 0
+        ) {
+            return
+        }
+
+        if (me.isVdomUpdating) {
+            let pending = me.#deferredViewData;
+
+            // registerPreUpdate() keeps one callback per id, so a later deferral must not drop an earlier one's intent
+            me.#deferredViewData = {force: force || !!pending?.force, silent: silent && (pending?.silent ?? true)};
+            silent && (me.hasSilentVdomChanges = true);
+
+            Neo.manager.VDomUpdate.registerPreUpdate(me.id, () => {
+                let {force, silent} = me.#deferredViewData;
+
+                me.#deferredViewData = null;
+                me.createViewData(silent, force)
+            });
+            return
+        }
+
+        if (me.isScrolling) {
+            Performance.markStart('grid.createViewData:' + me.id)
+        }
+
+        // Auto-detect if columns changed (horizontal scroll or resize)
+        if (!force && !Neo.isEqual(me.mountedColumns, me.#lastMountedColumns)) {
+            force = true
+        }
+        // If force was explicitly passed (e.g. column dataField change), we must disable recycling
+        // to ensure new dataField values are picked up.
+        // If force was implicit (scroll), recycling is safe and desired.
+        else if (force) {
+            recycle = false
+        }
+
+        me.#lastMountedColumns = [...me.mountedColumns];
+
+        // Creates the new start & end indexes
+        me.updateMountedAndVisibleRows();
+        endIndex = mountedRows[1];
+
+        me.createRowPool();
+
+        poolSize = me.items.length;
+
+        // Fixed-DOM-Order Strategy:
+        // We do NOT clear vdomRoot.cn. The Row components remain in the VDOM array.
+        // We iterate the logical range, mapping records to the fixed pool items via modulo.
+
+        let usedMap = new Array(poolSize).fill(false);
+
+        for (i = mountedRows[0]; i < endIndex; i++) {
+            itemIndex = i % poolSize;
+            item = me.items[itemIndex];
+
+            usedMap[itemIndex] = true;
+
+            item.updateContent({
+                force,
+                record: store.getAt(i),
+                recycle,
+                rowIndex: i,
+                silent: true
+            })
+        }
+
+        // Hide unused pool items (e.g. when filtering or at the end of the store)
+        for (i = 0; i < poolSize; i++) {
+            if (!usedMap[i]) {
+                item = me.items[i];
+                // Only update if it currently has a record (was visible)
+                if (item.record) {
+                    item.updateContent({
+                        record: null,
+                        rowIndex: -1,
+                        silent: true
+                    })
+                }
+            }
+        }
+
+        me.gridContainer.isLoading = false;
+
+        me.updateScrollHeight(true); // silent
+
+        // A pass can take the open edit's cell out of the DOM, and only the editing plugin knows what that means
+        me.gridContainer.getPlugin('grid-cell-editing')?.onBodyRender();
+
+        me.refreshNativeDragZoneRecords();
+
+        if (me.isScrolling) {
+            Performance.markEnd('grid.createViewData:' + me.id)
+        }
+
+        // The lead region's rows own this body's rows, and this pool may have formed after the lead's pass
+        if (!me.isAriaLeadRegion) {
+            let {gridContainer} = me;
+
+            (gridContainer.bodyStart || gridContainer.body)?.syncAriaRowOwns(silent)
+        }
+
+        if (!silent) {
+            me.updateDepth = -1;
+            me.update()
+        }
+    }
+
+    /**
+     * @param args
+     */
+    destroy(...args) {
+        let me = this;
+
+        for (let i = 0, len = me.items.length; i < len; i++) {
+            me.items[i].destroy()
+        }
+
+        me.store = null; // remove the listeners
+
+        super.destroy(...args)
+    }
+
+    /**
+     * @param {Object} data
+     * @param {String} eventName
+     */
+    fireCellEvent(data, eventName) {
+        let me = this,
+            id = data.currentTarget,
+            dataField, record, recordId, target;
+
+        for (target of data.path) {
+            if (target.data?.field) {
+                dataField = target.data.field;
+                recordId = target.data.recordId;
+                record = me.getRecord(recordId);
+                break
+            }
+        }
+
+        if (!dataField) {
+            dataField = me.getCellDataField(id);
+            record = me.getRecord(id)
+        }
+
+        me.gridContainer.fire(eventName, { body: me, data, dataField, record })
+    }
+
+    /**
+     * @param {Object} data
+     * @param {String} eventName
+     */
+    fireRowEvent(data, eventName) {
+        let me = this,
+            id = data.currentTarget,
+            record, recordId, target;
+
+        for (target of data.path) {
+            if (target.cls?.includes('neo-grid-row') && target.data?.recordId) {
+                recordId = target.data.recordId;
+                record = me.getRecord(recordId);
+                break
+            }
+        }
+
+        if (!record) {
+            record = me.getRecord(id)
+        }
+
+        me.gridContainer.fire(eventName, { body: me, data, record })
+    }
+
+    /**
+     * @param {String} cellId
+     * @returns {String}
+     */
+    getCellDataField(cellId) {
+        return this.getDataField(cellId)
+    }
+
+    /**
+     * Resolves the physical cell id for a rowIndex / dataField pair. Pooled cells (`hideMode ===
+     * 'removeDom'` and not locked — mirroring {@link Neo.grid.Row#createVdom}) resolve through the
+     * MATERIALIZED slot binding: Row stamps `data.field` into every rendered cell, and pool slots
+     * keep that render-time binding even while `columnPositions` gets re-ordered mid-drag
+     * (`switchItems` moves the collection per switch). Index math over a live collection goes stale
+     * one switch in; reading the rendered binding cannot. Falls back to the region-local
+     * `columnPositions` index only before the first render pass.
+     * @param {Number} rowIndex
+     * @param {String} dataField
+     * @returns {String}
+     */
+    getCellId(rowIndex, dataField) {
+        let me            = this,
+            column        = me.getColumn(dataField),
+            rowId         = me.getRowId(rowIndex),
+            firstRowCells = me.items?.[0]?.vdom?.cn,
+            columnIndex, i, len, node, poolIndex;
+
+        if (column?.hideMode === 'removeDom' && !column.locked) {
+            if (firstRowCells) {
+                for (i = 0, len = firstRowCells.length; i < len; i++) {
+                    node = firstRowCells[i];
+
+                    if (node.data?.field === dataField && node.id?.includes('__cell-')) {
+                        poolIndex = node.id.split('__cell-')[1];
+                        return `${rowId}__cell-${poolIndex}`
+                    }
+                }
+            }
+
+            columnIndex = me.columnPositions.indexOf(dataField);
+
+            if (columnIndex > -1) {
+                return `${rowId}__cell-${columnIndex % me.cellPoolSize}`
+            }
+        }
+
+        return `${rowId}__${dataField}`
+    }
+
+    /**
+     * @param {Object} record
+     * @param {String} dataField
+     * @returns {String}
+     */
+    getLogicalCellId(record, dataField) {
+        return `${this.getRecordId(record)}__${dataField}`
+    }
+
+    /**
+     * Get a grid column or column index by a given field name
+     * @param {String} field
+     * @param {Boolean} returnIndex=false
+     * @returns {Object|Number|null}
+     */
+    getColumn(field, returnIndex = false) {
+        let { columns } = this.gridContainer,
+            column = columns.get(field);
+
+        if (column) {
+            return returnIndex ? columns.indexOf(column) : column
+        }
+
+        return null
+    }
+
+    /**
+     * Get all painted column cells (visible + buffer range)
+     * @param {String} dataField
+     * @returns {Object[]}
+     */
+    getColumnCells(dataField) {
+        let me = this,
+            cells = [],
+            columnIndex = -1,
+            firstRow = me.items[0].vdom,
+            i = 0,
+            len = firstRow.cn.length,
+            cell;
+
+        // Columns might get moved via drag&drop, so let's check for the current match
+        for (; i < len; i++) {
+            if (dataField === me.getDataField(firstRow.cn[i].id)) {
+                columnIndex = i;
+                break
+            }
+        }
+
+        if (columnIndex > -1) {
+            for (i = 0, len = me.items.length; i < len; i++) {
+                cell = me.items[i].vdom.cn[columnIndex];
+                cell && cells.push(cell)
+            }
+        }
+
+        return cells
+    }
+
+    /**
+     * @summary The height of all rows, without the scroll room {@link #getScrollExtent} adds below the last one.
+     * Content-sized rows count their known geometry plus the estimate for rows a chunked load has not delivered.
+     * A header drag ends its proxy here when the rows stop above the grid's bottom.
+     * @returns {Number}
+     */
+    getContentHeight() {
+        let me                         = this,
+            countRecords               = me.#initialTotalSize || me.store?.count || 0,
+            { rowGeometry, rowHeight } = me;
+
+        return rowGeometry ?
+            rowGeometry.totalHeight + (countRecords - rowGeometry.count) * rowGeometry.estimate :
+            countRecords * rowHeight
+    }
+
+    /**
+     * Resolves the dataField for a physical cell id — the inverse of {@link #getCellId}.
+     * Pooled cell ids resolve through the MATERIALIZED slot binding ({@link Neo.grid.Row#createVdom}
+     * stamps `data.field` into every rendered cell): pool slots keep their render-time column
+     * binding even while `columnPositions` gets re-ordered mid-drag, so index math over the live
+     * collection goes stale one switch in. Falls back to the region-local index math only before
+     * the first render pass.
+     * @param {String} cellId
+     * @returns {String}
+     */
+    getDataField(cellId) {
+        if (cellId.includes('__cell-')) {
+            let me            = this,
+                poolIndex     = cellId.split('__cell-')[1],
+                firstRowCells = me.items?.[0]?.vdom?.cn,
+                columns       = me.gridContainer.columns,
+                { cellPoolSize, columnPositions, mountedColumns } = me,
+                column, dataField, i, len, node;
+
+            if (firstRowCells) {
+                for (i = 0, len = firstRowCells.length; i < len; i++) {
+                    node = firstRowCells[i];
+
+                    if (node.id?.split('__cell-')[1] === poolIndex && node.data?.field) {
+                        return node.data.field
+                    }
+                }
+            }
+
+            poolIndex = parseInt(poolIndex);
+
+            for (i = mountedColumns[0], len = mountedColumns[1]; i <= len; i++) {
+                if (i % cellPoolSize === poolIndex) {
+                    dataField = columnPositions.getAt(i)?.dataField;
+                    column    = dataField && columns.get(dataField);
+
+                    // Sanity check: ensure this column is actually pooled
+                    if (column && column.hideMode === 'removeDom' && !column.locked) {
+                        return column.dataField
+                    }
+                }
+            }
+        }
+
+        return cellId.split('__').pop()
+    }
+
+    /**
+     * Get the matching record by passing a row id, a cell id or an id inside a grid cell.
+     * Limited to mounted rows (must be inside the vdom).
+     * @param {String} nodeId
+     * @returns {Object|null}
+     */
+    getRecord(nodeId) {
+        let me = this,
+            record = me.getRecordByRowId(nodeId),
+            node, parentNodes;
+
+        if (record) {
+            return record
+        }
+
+        // Check if nodeId is a recordId (internalId or PK). A DOM dataset delivers every id as a string,
+        // so an integer-keyed store gets its number back.
+        record = me.store.get(nodeId) ||
+            (me.store.getKeyType()?.startsWith('int') && /^-?\d+$/.test(nodeId) ? me.store.get(Number(nodeId)) : null);
+
+        if (record) return record;
+
+        parentNodes = VDomUtil.getParentNodes(me.vdom, nodeId);
+
+        for (node of parentNodes || []) {
+            record = me.getRecordByRowId(node.componentId || node.id);
+
+            if (record) {
+                return record
+            }
+        }
+
+        return null
+    }
+
+    /**
+     * @param {Object} record
+     * @returns {String|Number}
+     */
+    getRecordId(record) {
+        return this.useInternalId ? this.store.getInternalId(record) : this.store.getKey(record)
+    }
+
+    /**
+     * @param {String} logicalId
+     * @returns {Neo.data.Model|null}
+     */
+    getRecordFromLogicalId(logicalId) {
+        let dataField = this.getDataField(logicalId);
+
+        return this.getRecord(logicalId.substring(0, logicalId.length - dataField.length - 2))
+    }
+
+    /**
+     * @summary The ids of the rows the other regions render for `rowIndex`, which the lead region's row owns, so a
+     * locked-column grid exposes one ARIA row per record instead of one per region.
+     *
+     * Every region maps a record to its pool slot as `rowIndex % items.length` (see {@link #createViewData}), so each
+     * sibling row resolves without bookkeeping. `aria-owns` places owned elements after the owner's own children,
+     * which keeps the cells in start → center → end order.
+     * @param {Number} rowIndex
+     * @returns {String|null} `null` for a body outside the lead region, or a grid with one region
+     */
+    getAriaRowOwns(rowIndex) {
+        let me              = this,
+            {gridContainer} = me;
+
+        if (!gridContainer || !me.isAriaLeadRegion) {
+            return null
+        }
+
+        let ids = [gridContainer.body, gridContainer.bodyEnd]
+            .filter(body => body && body !== me && body.items.length > 0)
+            .map(body => body.items[rowIndex % body.items.length].id);
+
+        return ids.length > 0 ? ids.join(' ') : null
+    }
+
+    /**
+     * @summary Whether this body's rows are the grid's ARIA rows: true for the first region present, which is
+     * `start` when the grid has locked-start columns and `center` otherwise. The rows of the other regions take
+     * `role="none"`, and the lead row owns them through {@link #getAriaRowOwns}.
+     * @returns {Boolean}
+     */
+    get isAriaLeadRegion() {
+        let {gridContainer} = this;
+
+        return !gridContainer || (gridContainer.bodyStart || gridContainer.body) === this
+    }
+
+    /**
+     * @summary The region this body renders: `'start'`, `'center'` or `'end'`, resolved by identity against its grid,
+     * like the scrollbar feed in {@link #afterSetAvailableWidth}.
+     * @returns {'start'|'center'|'end'}
+     */
+    get region() {
+        let {gridContainer} = this;
+
+        return gridContainer?.bodyStart === this ? 'start' : gridContainer?.bodyEnd === this ? 'end' : 'center'
+    }
+
+    /**
+     * @summary Points each rendered lead row's `aria-owns` at the rows the other regions render for its record.
+     *
+     * A sibling region can build its row pool after the lead region rendered, and a lead row whose record did not
+     * change skips its next render, so each sibling calls this after its own pass ({@link #createViewData}).
+     * @param {Boolean} [silent=false] True to leave the update to the caller's batch
+     */
+    syncAriaRowOwns(silent=false) {
+        let me    = this,
+            dirty = false;
+
+        me.items.forEach(row => {
+            if (row.record) {
+                let owns = me.getAriaRowOwns(row.rowIndex) ?? undefined;
+
+                if (row.vdom['aria-owns'] !== owns) {
+                    owns ? (row.vdom['aria-owns'] = owns) : delete row.vdom['aria-owns'];
+                    dirty = true
+                }
+            }
+        });
+
+        if (dirty) {
+            if (silent) {
+                me.hasSilentVdomChanges = true
+            } else {
+                me.updateDepth = -1;
+                me.update()
+            }
+        }
+    }
+
+    /**
+     * @summary The record a row shows, read from the row's own `rowIndex`. A row outside the lead region carries no
+     * `aria-rowindex`, so ARIA stays write-only for the engine.
+     * @param {String} rowId
+     * @returns {Record|null}
+     */
+    getRecordByRowId(rowId) {
+        let rowIndex = Neo.getComponent(rowId)?.rowIndex;
+
+        return Neo.isNumber(rowIndex) && rowIndex > -1 ? this.store.getAt(rowIndex) : null
+    }
+
+    /**
+     * @param {Object} record
+     * @returns {Neo.grid.Row|null}
+     */
+    getRow(record) {
+        let me = this,
+            rowIndex = me.store.indexOf(record),
+            itemIndex;
+
+        if (rowIndex > -1 && rowIndex >= me.mountedRows[0] && rowIndex <= me.mountedRows[1]) {
+            itemIndex = rowIndex % me.items.length;
+            return me.items[itemIndex]
+        }
+
+        return null
+    }
+
+    /**
+     * Override this method to apply custom CSS rules to grid rows
+     * @param {Object} record
+     * @param {Number} rowIndex
+     * @returns {String[]}
+     */
+    getRowClass(record, rowIndex) {
+        return ['neo-grid-row']
+    }
+
+    /**
+     * @param {Number} rowIndex
+     * @returns {String}
+     */
+    getRowId(rowIndex) {
+        let me = this,
+            poolSize = me.rowPoolSize ?? (me.availableRows + 2 * me.bufferRowRange);
+
+        return `${me.id}__row-${rowIndex % poolSize}`
+    }
+
+    /**
+     * @summary The offset in px a row renders at: its logical offset, `index × rowHeight` or the
+     * {@link #rowGeometry}'s, less the view's {@link #pageOffset}.
+     * @param {Number} rowIndex
+     * @returns {Number}
+     */
+    getRowOffset(rowIndex) {
+        let {rowGeometry, rowHeight} = this;
+        return (rowGeometry ? rowGeometry.offsetAt(rowIndex) : rowIndex * rowHeight) - this.pageOffset
+    }
+
+    /**
+     * @summary The logical scroll extent in px: {@link #getContentHeight} plus one row of scroll room below the last
+     * row
+     * @returns {Number}
+     */
+    getScrollExtent() {
+        let {rowGeometry, rowHeight} = this;
+        return this.getContentHeight() + (rowGeometry ? rowGeometry.estimate : rowHeight)
+    }
+
+    /**
+     * @summary Clears {@link #inFlightSilentVdomChanges} once a vnode tree lands (and initial mount's pre-mount writes).
+     * @override
+     * @param {Object[]|null} deltas
+     * @protected
+     */
+    afterVnodeSync(deltas) {
+        super.afterVnodeSync(deltas);
+        this.#inFlightSilentVdomChanges = false;
+        deltas === null && (this.hasSilentVdomChanges = false)
+    }
+
+    /**
+     * @summary Restores {@link #hasSilentVdomChanges} when a standalone full or dense body flight fails to land.
+     * @override
+     */
+    async executeVdomUpdate() {
+        let me = this;
+
+        await super.executeVdomUpdate();
+
+        if (!me.isDestroyed && me.#inFlightSilentVdomChanges) {
+            me.#inFlightSilentVdomChanges = false;
+            me.hasSilentVdomChanges       = true
+        }
+    }
+
+    /**
+     * @summary Claims {@link #hasSilentVdomChanges} into {@link #inFlightSilentVdomChanges} on full or dense collection.
+     * @override
+     * @param {Set<String>|null} mergedChildIds
+     * @param {Number} [depth]
+     * @param {Set<String>|null} [boundaryIds=null]
+     * @returns {Object}
+     */
+    getVdomUpdatePayload(mergedChildIds, depth, boundaryIds=null) {
+        let me = this;
+
+        if (((depth ?? me.updateDepth) === -1 || me.denseUpdate) && me.hasSilentVdomChanges) {
+            me.#inFlightSilentVdomChanges = true;
+            me.hasSilentVdomChanges       = false
+        }
+
+        return super.getVdomUpdatePayload(mergedChildIds, depth, boundaryIds)
+    }
+
+    /**
+     * @override
+     * @returns {*}
+     */
+    getVdomRoot() {
+        return this.vdom
+    }
+
+    /**
+     * @returns {Object[]} The new vdom items root
+     */
+    getVdomItemsRoot() {
+        return this.vdom
+    }
+
+    /**
+     * @override
+     * @returns {Neo.vdom.VNode}
+     */
+    getVnodeRoot() {
+        return this.vnode
+    }
+
+
+
+    /**
+     * Whether a DOM event happened inside a cell editor (`neo-grid-editor`, the class the Main thread and the
+     * selection models also key on). Such a pointer event belongs to the editor: it neither focuses the View nor
+     * reaches cell or row listeners, so a click in the input places the caret instead of selecting a cell.
+     * @param {Object} data
+     * @param {Object[]} data.path
+     * @returns {Boolean}
+     */
+    isEditorEvent({path}) {
+        return path.some(node => node.cls?.includes('neo-grid-editor'))
+    }
+
+    /**
+     * @param {Object} data
+     */
+    onCellClick(data) {
+        !this.isEditorEvent(data) && this.fireCellEvent(data, 'cellClick')
+    }
+
+    /**
+     * @param {Object} data
+     */
+    onCellDoubleClick(data) {
+        !this.isEditorEvent(data) && this.fireCellEvent(data, 'cellDoubleClick')
+    }
+
+    /**
+     *
+     */
+    onConstructed() {
+        super.onConstructed()
+    }
+
+    /**
+     * @param {Object} data
+     */
+    onRowClick(data) {
+        let me     = this,
+            {view} = me.gridContainer;
+
+        if (me.isEditorEvent(data)) {
+            return
+        }
+
+        // Focus the View, not this physical body: a row activation in ANY body resolves to one
+        // View-owned focus state (bodies are render/event delegates). preventScroll keeps the
+        // row-click from moving the scroll position; the View's `keys` still catch Up/Down from here.
+        // 'pointer' modality suppresses the accidental focus ring — a click is not a keyboard focus.
+        view.focus(view.id, false, true, 'pointer');
+        me.fireRowEvent(data, 'rowClick')
+    }
+
+    /**
+     * @param {Object} data
+     */
+    onRowDoubleClick(data) {
+        !this.isEditorEvent(data) && this.fireRowEvent(data, 'rowDoubleClick')
+    }
+
+
+
+    /**
+     * @param {Object} data
+     */
+    onStoreFilter() {
+        this.onStoreLoad({ items: this.store.items })
+    }
+
+    /**
+     * @param {Object}   data
+     * @param {Object[]} data.items
+     * @param {Boolean}  [data.forceViewData] True when rows must refresh even if record identity is stable.
+     * @param {Boolean}  [data.postChunkLoad]
+     * @param {Number}   [data.total]
+     * @protected
+     *
+     * The scroll-to-top nudge is a detached dispatch: it fires 50ms after the mount check, so by
+     * the time the message is sent the body may be destroyed (`core.Base#destroy` rejects pending
+     * timeouts with `Neo.isDestroyed`) or the destination window may be gone (`worker.Base`
+     * rejects with `code: 'NEO_DEAD_PORT'`). Both are expected outcomes of a scroll into somewhere
+     * that no longer exists, not failures to report — and because a store load runs on every
+     * collection mutation, leaving either unhandled turns a ticking feed into one uncaught
+     * rejection per tick. Anything else IS a live failure, and this chain has no caller to
+     * propagate to, so the console is the honest terminal surface.
+     */
+    onStoreLoad({ forceViewData, items, postChunkLoad, total }) {
+        let me = this,
+            { windowId } = me;
+
+        // If it's the first chunked load (data.total exists and data.items is a subset of total)
+        // Render the entire chunk for immediate scrollability
+        if (total && items.length < total) {
+            me.#initialTotalSize = total;
+            me.createViewData(false, forceViewData === true);
+            me.#initialTotalSize = 0
+        } else {
+            me.createViewData(false, forceViewData === true)
+        }
+
+        if (me.mounted && !postChunkLoad) {
+            me.timeout(50)
+                .then(() => {
+                    let {view} = me.gridContainer;
+
+                    // Paged, the top lies on the first page: the view moves the rows and the offset there together
+                    if (view.paged) {
+                        view.scrollToOffset(0)
+                    } else {
+                        return Neo.main.DomAccess.scrollTo({direction: 'top', id: view.id, value: 0, windowId})
+                    }
+                })
+                .catch(reason => {
+                    reason !== Neo.isDestroyed && !Neo.currentWorker?.isDeparture?.(reason, windowId) &&
+                        console.error('grid.Body: scroll-to-top dispatch failed', {reason, windowId})
+                })
+        }
+    }
+
+    /**
+     * @param {Object}         data
+     * @param {Object[]}       data.fields Each field object contains the keys: name, oldValue, value
+     * @param {Neo.data.Model} data.model  The model instance of the changed record
+     * @param {Object}         data.record
+     */
+    onStoreRecordChange({ fields, record }) {
+        let me         = this,
+            fieldNames = fields.map(field => field.name),
+            row;
+
+        if (fieldNames.includes(me.colspanField)) {
+            me.createViewData()
+        } else {
+            // the record's selection flag is the View's to follow (grid.View#onStoreRecordChange),
+            // once per grid; a body only repaints the row it renders. The pool is small, so an
+            // identity scan here is cheaper than asking a large store for the record's index.
+            row = me.items.find(item => item.record === record);
+
+            if (row) {
+                row.createVdom(false, false)
+            }
+
+            me.refreshNativeDragZoneRecords()
+        }
+    }
+
+    /**
+     * Used for keyboard navigation (selection models)
+     * @param {Number} index
+     * @param {Number} step
+     */
+    scrollByRows(index, step) {
+        let me = this,
+            { mountedRows, visibleRows } = me,
+            countRecords = me.store.count,
+            newIndex = index + step,
+            lastRowGap, mounted, scrollTop, visible;
+
+        if (newIndex >= countRecords) {
+            newIndex %= countRecords;
+            step = newIndex - index
+        }
+
+        while (newIndex < 0) {
+            newIndex += countRecords;
+            step += countRecords
+        }
+
+        mounted = newIndex >= mountedRows[0] && newIndex <= mountedRows[1];
+
+        // Not using >= or <=, since the first / last row might not be fully visible
+        visible = newIndex > visibleRows[0] && newIndex < visibleRows[1];
+
+        if (!visible) {
+            // Leaving the mounted area will re-calculate the visibleRows for us
+            if (mounted) {
+                visibleRows[0] += step;
+                visibleRows[1] += step
+            }
+
+            if (me.rowGeometry) {
+                // Up: the row's top meets the viewport top. Down: its bottom meets the viewport bottom.
+                me.gridContainer.view.scrollRowIntoView(newIndex, step < 0 ? 'top' : 'bottom');
+                return
+            }
+
+            if (step < 0) {
+                scrollTop = newIndex * me.rowHeight
+            } else {
+                lastRowGap = me.rowHeight - (me.availableHeight % me.rowHeight);
+                scrollTop = (newIndex - me.availableRows) * me.rowHeight + lastRowGap
+            }
+
+            me.gridContainer.view.scrollToOffset(scrollTop)
+        }
+    }
+
+    /**
+     * Sizes the row pool for the viewport. A fixed-height body counts `ceil(availableHeight / rowHeight) - 1`
+     * visible rows. In content-sized mode the visible rows run from the row at the top edge to the row the
+     * bottom edge cuts, which are at most `ceil(availableHeight / minHeight)`: a viewport filled with the
+     * shortest rows still has a pooled row for each.
+     */
+    updateAvailableRows() {
+        let me                             = this,
+            {availableHeight, rowGeometry} = me;
+
+        if (availableHeight > 0) {
+            me.availableRows = rowGeometry ?
+                Math.ceil(availableHeight / Math.max(1, rowGeometry.minHeight)) :
+                Math.ceil(availableHeight / me.rowHeight) - 1
+        }
+    }
+
+    /**
+     * Lightweight update for column resizing, triggered by drag:move.
+     * Updates the width of the resized column's cells and the left position of all following cells.
+     * @param {String} dataField The dataField of the resized column
+     * @param {Number} newWidth The new width in pixels
+     */
+    updateCellPositions(dataField, newWidth) {
+        let me = this,
+            columnPositions = me.columnPositions,
+            colPos = columnPositions.get(dataField),
+            deltaWidth = newWidth - colPos.width,
+            count = columnPositions.getCount(),
+            isFollowing = false,
+            i, pos;
+
+        if (deltaWidth === 0) {
+            return
+        }
+
+        // 1. Update the JS config caches strictly by array order
+        for (i = 0; i < count; i++) {
+            pos = columnPositions.getAt(i);
+
+            if (pos.dataField === dataField) {
+                pos.width = newWidth;
+                isFollowing = true
+            } else if (isFollowing) {
+                pos.x += deltaWidth
+            }
+        }
+
+        me.setSilent({
+            availableWidth: me.availableWidth + deltaWidth
+        });
+
+        me.vdom.width = me.availableWidth + 'px';
+
+        // 2. Update the VDOM of all active rows
+        me.items.forEach(row => {
+            let cells = row.vdom.cn,
+                j = 0, len = cells.length, cell, field;
+
+            for (; j < len; j++) {
+                cell = cells[j];
+                field = cell.data?.field;
+
+                if (field) {
+                    if (field === dataField) {
+                        cell.style.width = newWidth + 'px'
+                    } else {
+                        pos = columnPositions.get(field);
+
+                        if (pos) {
+                            // Blindly apply the cache. If it's a preceding column,
+                            // pos.x is unchanged and the VDOM engine ignores the delta.
+                            cell.style.left = pos.x + 'px'
+                        }
+                    }
+                }
+            }
+        });
+
+        me.updateDepth = 2;
+        me.update()
+    }
+
+    /**
+     * @summary Recomputes the mounted/visible column range and repaints the rows EXACTLY once.
+     *
+     * `mountedColumns` is used as the "did the columns change?" proxy in TWO places, and a pure
+     * width change (a column resize) satisfies neither — the mounted range stays equal, and
+     * `core.Config` only notifies on `!isEqual` while `core.Compare` deep-compares arrays:
+     *
+     * 1. {@link #updateMountedAndVisibleColumns} repaints rows only as a *side effect* of the range
+     *    changing (see {@link #afterSetMountedColumns}), so nothing renders at all.
+     * 2. {@link #createViewData} auto-detects a column change the same way; without it, `recycle`
+     *    stays true and the recycled cells keep the geometry that was just replaced.
+     *
+     * This closes both: the incidental render is suppressed, the range recomputed, and exactly one
+     * explicit `createViewData()` fired — with `force` propagated so a geometry change actually
+     * re-applies `columnPositions` instead of recycling past it.
+     * @param {Boolean} [force=false] True when column GEOMETRY changed (widths / positions), not
+     * merely the mounted range. Forwarded to both {@link #updateMountedAndVisibleColumns} and
+     * {@link #createViewData}, where it disables cell recycling.
+     */
+    refreshColumns(force = false) {
+        let me = this;
+
+        me.skipCreateViewData = true;
+        me.updateMountedAndVisibleColumns(force);
+        me.skipCreateViewData = false;
+        me.createViewData(false, force)
+    }
+
+    /**
+     * @param {Boolean} [force=false]
+     */
+    updateMountedAndVisibleColumns(force = false) {
+        let me = this,
+            { bufferColumnRange, cellPoolSize, columnPositions, mountedColumns, visibleColumns } = me,
+            i = 0,
+            countColumns = columnPositions.getCount(),
+            endIndex = countColumns - 1,
+            x = me.scrollLeft,
+            column, newPoolSize, startIndex = 0;
+
+        if (countColumns < 1) {
+            return
+        }
+
+        for (; i < countColumns; i++) {
+            column = columnPositions.getAt(i);
+
+            if (x >= column.x && x <= column.x + column.width) {
+                startIndex = i
+            }
+
+            if (me.containerWidth + x < column.x) {
+                endIndex = i - 1;
+                break
+            }
+        }
+
+        visibleColumns[0] = startIndex; // update the array inline
+        visibleColumns[1] = endIndex;
+
+        if (force || visibleColumns[0] <= mountedColumns[0] || visibleColumns[1] >= mountedColumns[1] || cellPoolSize === null) {
+            startIndex = Math.max(0, visibleColumns[0] - bufferColumnRange);
+            endIndex = Math.min(countColumns - 1, visibleColumns[1] + bufferColumnRange);
+
+            newPoolSize = endIndex - startIndex + 1;
+
+            // Only allow shrinking if forced (e.g., container resize or column changes)
+            // to maintain stable DOM structure during scroll
+            if (!force && cellPoolSize !== null) {
+                newPoolSize = Math.max(cellPoolSize, newPoolSize);
+            }
+
+            if (newPoolSize !== cellPoolSize) {
+                me.set({
+                    cellPoolSize: newPoolSize,
+                    mountedColumns: [startIndex, endIndex]
+                })
+            } else {
+                me.mountedColumns = [startIndex, endIndex]
+            }
+        }
+    }
+
+    /**
+     *
+     */
+    updateMountedAndVisibleRows() {
+        let me                                                                = this,
+            { bufferRowRange, availableRows, rowGeometry, startIndex, store } = me,
+            countRecords                                                      = store.count,
+            windowSize                                                        = availableRows + 2 * bufferRowRange,
+            // Content-sized rows: the visible range ends before the row the viewport's bottom edge cuts, measured
+            // from scrollTop, since a partly scrolled-out tall row leaves room for many short ones below.
+            // scrollByRows() relies on a cut row not counting as visible.
+            endIndex = rowGeometry ?
+                Math.min(countRecords, rowGeometry.indexAt(me.scrollTop + me.availableHeight)) :
+                Math.min(countRecords, startIndex + availableRows),
+            mountedStart = startIndex - bufferRowRange,
+            mountedEnd = endIndex + bufferRowRange;
+
+        me.visibleRows[0] = startIndex; // update the array inline
+        me.visibleRows[1] = endIndex;
+
+        // We want to maintain a constant window size (Modulus) to ensure row recycling works
+        // via moveNode operations instead of removeNode + insertNode.
+        // If we are at the top, extend the end to fill the window.
+        if (mountedStart < 0) {
+            mountedEnd += Math.abs(mountedStart);
+            mountedStart = 0
+        }
+
+        // Clamp to record count
+        mountedEnd = Math.min(countRecords, mountedEnd);
+
+        // If we are at the bottom (hit the ceiling), pull the start back to fill the window.
+        // This ensures we keep the DOM nodes alive for as long as possible.
+        if (mountedEnd - mountedStart < windowSize) {
+            let needed = windowSize - (mountedEnd - mountedStart);
+            mountedStart = Math.max(0, mountedStart - needed)
+        }
+
+        me.mountedRows[0] = mountedStart; // update the array inline
+        me.mountedRows[1] = mountedEnd;
+
+        // The scroll edge: the visible window reached the store's last `bufferRowRange` rows.
+        // Announced once per entry and re-armed only by a change of the VISIBLE count, so a viewport
+        // parked at the edge stays quiet on every further tick, an append that leaves it at the new
+        // edge announces again, and a store shorter than one window announces on its first layout.
+        // An append a filter hides entirely does NOT re-arm it: nothing the viewport can reach
+        // moved, and announcing on the hidden total would let a consumer walk hidden data window by
+        // window with no gesture. The total travels on the event as information. A consumer loading
+        // a remote corpus window by window requests the next one here.
+        if (countRecords > 0 && endIndex + bufferRowRange >= countRecords) {
+            if (me.#scrollEdgeAnnouncedFor !== countRecords) {
+                me.#scrollEdgeAnnouncedFor = countRecords;
+                me.fire('scrollEdge', {count: countRecords, endIndex, startIndex, total: store.allItems?.getCount?.() ?? countRecords})
+            }
+        } else {
+            me.#scrollEdgeAnnouncedFor = null
+        }
+    }
+
+    /**
+     * @summary Sizes the scroller to {@link #getScrollExtent}, up to the view's
+     * {@link Neo.grid.View#maxScrollHeight}: fixed rows past it scroll in pages. The center body then lets the view
+     * re-derive its pages.
+     * @param {Boolean} silent=false
+     */
+    updateScrollHeight(silent = false) {
+        let me           = this,
+            countRecords = me.#initialTotalSize || me.store?.count || 0,
+            // A body sized while its container creates the view knows no cap yet
+            view         = me.gridContainer?.view,
+            height;
+
+        if (countRecords > 0 && me.rowHeight > 0) {
+            height = `${Math.min(me.getScrollExtent(), view?.maxScrollHeight ?? Infinity)}px`;
+
+            if (me.vdom.height !== height) {
+                me.vdom.height = height;
+                silent && (me.hasSilentVdomChanges = true)
+            }
+
+            view?.scrollPages && me.gridContainer.body === me && view.updateScrollPages();
+            !silent && me.update()
+        }
+    }
+
+    /**
+     * @summary Latches {@link #hasSilentVdomChanges} when a `setSilent` write mutates this body's VDOM.
+     * @override
+     * @param {Function} [resolve]
+     * @param {Function} [reject]
+     */
+    updateVdom(resolve, reject) {
+        if (this.silentVdomUpdate) {
+            this.hasSilentVdomChanges = true
+        }
+
+        super.updateVdom(resolve, reject)
+    }
+
+    /**
+     * @returns {Object}
+     */
+    toJSON() {
+        let me = this;
+
+        return {
+            ...super.toJSON(),
+            animatedRowSorting    : me.animatedRowSorting,
+            bufferColumnRange     : me.bufferColumnRange,
+            bufferRowRange        : me.bufferRowRange,
+            colspanField          : me.colspanField,
+            highlightModifiedCells: me.highlightModifiedCells,
+            rowHeight             : me.rowHeight
+        }
+    }
+}
+
+/**
+ * Fires when the visible window reaches the store's last `bufferRowRange` rows — once per entry,
+ * re-armed only by a change of the visible count (see {@link Neo.grid.Body#updateMountedAndVisibleRows}).
+ * A consumer that loads a remote corpus window by window requests the next window here; a store
+ * shorter than one window announces on its first layout, an empty store never does, and an appended
+ * window a filter hides entirely does not announce again: nothing the viewport can reach moved, and
+ * a consumer that wants hidden data to count must look at `total` itself. A body that mounts re-arms:
+ * if it is at its edge on its next layout, it announces again, whatever was announced while it was
+ * unmounted (a store load reaching a hidden body runs the calculator with its last geometry).
+ * @event scrollEdge
+ * @param {Object} data
+ * @param {Number} data.count      The store's visible count the edge was announced for.
+ * @param {Number} data.endIndex   The visible window's end (exclusive).
+ * @param {Number} data.startIndex The visible window's start.
+ * @param {Number} data.total      The store's total behind its filters.
+ * @returns {Object}
+ */
+
+export default Neo.setupClass(GridBody);

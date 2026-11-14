@@ -19,11 +19,10 @@ class Password extends Text {
         /**
          * Value for the inputType_ textfield config
          * @member {String} inputType='password'
+         * @reactive
          */
         inputType: 'password'
     }
 }
 
-Neo.applyClassConfig(Password);
-
-export default Password;
+export default Neo.setupClass(Password);

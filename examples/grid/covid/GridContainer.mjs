@@ -16,6 +16,7 @@ class GridContainer extends BaseGridContainer {
         className: 'Neo.examples.grid.covid.GridContainer',
         /**
          * @member {String[]} cls=['covid-country-grid']
+         * @reactive
          */
         cls: ['covid-country-grid'],
         /**
@@ -23,7 +24,7 @@ class GridContainer extends BaseGridContainer {
          * @member {Object} columnDefaults
          */
         columnDefaults: {
-            align               : 'right',
+            cellAlign           : 'right',
             defaultSortDirection: 'DESC',
             renderer            : Util.formatNumber,
             width               : 100
@@ -32,18 +33,18 @@ class GridContainer extends BaseGridContainer {
          * @member {Object[]} columns
          */
         columns: [{
-            cls     : ['neo-index-column'],
-            dock    : 'left',
-            field   : 'index',
-            minWidth: 40,
-            text    : '#',
-            renderer: Util.indexRenderer,
-            width   : 40
+            cls      : ['neo-index-column'],
+            dataField: 'index',
+            dock     : 'left',
+            minWidth : 40,
+            text     : '#',
+            renderer : Util.indexRenderer,
+            width    : 40
         }, {
-            align               : 'left',
+            cellAlign           : 'left',
+            dataField           : 'country',
             defaultSortDirection: 'ASC',
             dock                : 'left',
-            field               : 'country',
             text                : 'Country',
             width               : 200,
 
@@ -58,56 +59,56 @@ class GridContainer extends BaseGridContainer {
                 };
             }
         }, {
-            field: 'cases',
-            text : 'Cases'
+            dataField: 'cases',
+            text     : 'Cases'
         }, {
-            field: 'casesPerOneMillion',
-            text : 'Cases / 1M'
+            dataField: 'casesPerOneMillion',
+            text     : 'Cases / 1M'
         }, {
-            field   : 'infected',
-            text    : 'Infected',
-            renderer: data => Util.formatInfected(data)
+            dataField: 'infected',
+            text     : 'Infected',
+            renderer : data => Util.formatInfected(data)
         }, {
-            field   : 'active',
-            text    : 'Active',
-            renderer: data => Util.formatNumber(data, '#64B5F6')
+            dataField: 'active',
+            text     : 'Active',
+            renderer : data => Util.formatNumber(data, '#64B5F6')
         }, {
-            field   : 'recovered',
-            text    : 'Recovered',
-            renderer: data => Util.formatNumber(data, '#28ca68')
+            dataField: 'recovered',
+            text     : 'Recovered',
+            renderer : data => Util.formatNumber(data, '#28ca68')
         }, {
-            field   : 'critical',
-            text    : 'Critical',
-            renderer: data => Util.formatNumber(data, 'orange')
+            dataField: 'critical',
+            text     : 'Critical',
+            renderer : data => Util.formatNumber(data, 'orange')
         }, {
-            field   : 'deaths',
-            text    : 'Deaths',
-            renderer: data => Util.formatNumber(data, '#fb6767')
+            dataField: 'deaths',
+            text     : 'Deaths',
+            renderer : data => Util.formatNumber(data, '#fb6767')
         }, {
-            field: 'todayCases',
-            text : 'Cases today'
+            dataField: 'todayCases',
+            text     : 'Cases today'
         }, {
-            field   : 'todayDeaths',
-            text    : 'Deaths today',
-            renderer: data => Util.formatNumber(data, '#fb6767')
+            dataField: 'todayDeaths',
+            text     : 'Deaths today',
+            renderer : data => Util.formatNumber(data, '#fb6767')
         }, {
-            field: 'tests',
-            text : 'Tests'
+            dataField: 'tests',
+            text     : 'Tests'
         }, {
-            field: 'testsPerOneMillion',
-            text : 'Tests / 1M'
+            dataField: 'testsPerOneMillion',
+            text     : 'Tests / 1M'
         }],
         /**
          * @member {Neo.controller.Component} controller=GridContainerController
+         * @reactive
          */
         controller: GridContainerController,
         /**
          * @member {Object[]} store=Store
+         * @reactive
          */
         store: Store
     }
 }
 
-Neo.applyClassConfig(GridContainer);
-
-export default GridContainer;
+export default Neo.setupClass(GridContainer);

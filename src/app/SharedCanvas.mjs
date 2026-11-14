@@ -1,0 +1,585 @@
+import Canvas from '../component/Canvas.mjs';
+
+/**
+ * @summary Abstract base class for SharedWorker Canvas components.
+ *
+ * This class abstracts the common logic for connecting an App Worker component to a
+ * SharedWorker canvas renderer. It handles:
+ * 1.  **Lifecycle**: Initializing the graph when offscreen canvas is ready.
+ * 2.  **Sizing**: Syncing DOM size to the worker via ResizeObserver.
+ * 3.  **Interaction**: Bridging pointer input (move, click, leave, down, up, wheel) to the worker through one
+ *     `updateMouseState` payload. The owner of the DOM listeners calls the forwarders: a container's `domListeners`
+ *     delegating to its canvas item, or the host's own `addDomListeners`. Subscribe `wheel` as a local listener
+ *     (`wheel: {fn, local: true, passive: false}`), which is how a node outside the main thread's global wheel
+ *     target list receives deltas.
+ * 4.  **Theming**: Syncing the component's theme to the worker.
+ * 5.  **Visibility**: Pausing the render loop while the host's window is hidden. A hidden window and the host's own
+ *     `pause()` are separate reasons, and the loop runs only while neither holds.
+ *
+ * Every call the host makes to its renderer carries `canvasId` beside `windowId`. The window routes the call to its
+ * canvas worker; the canvas lets one renderer class serve several hosts by keeping its state per canvas. A renderer
+ * that keeps one canvas, like `Neo.canvas.Base`, ignores `canvasId`.
+ *
+ * Subclasses must define:
+ * - `rendererClassName`: String name of the SharedWorker singleton (e.g. 'Neo.canvas.Header')
+ * - `rendererImportPath`: Import path for the renderer module (e.g. 'src/canvas/Header.mjs')
+ *
+ * @class Neo.app.SharedCanvas
+ * @extends Neo.component.Canvas
+ */
+class SharedCanvas extends Canvas {
+    static config = {
+        /**
+         * @member {String} className='Neo.app.SharedCanvas'
+         * @protected
+         */
+        className: 'Neo.app.SharedCanvas',
+        /**
+         * @member {Boolean} isCanvasReady_=false
+         */
+        isCanvasReady_: false,
+        /**
+         * The full class name of the SharedWorker singleton.
+         * @member {String|null} rendererClassName=null
+         */
+        rendererClassName: null,
+        /**
+         * The import path for the renderer module.
+         * @member {String|null} rendererImportPath=null
+         */
+        rendererImportPath: null,
+        /**
+         * @member {Object} _vdom
+         */
+        _vdom:
+        {tag: 'canvas'}
+    }
+
+    /**
+     * @member {String|null} canvasId=null
+     */
+    canvasId = null
+    /**
+     * @member {Object|null} canvasRect=null
+     */
+    canvasRect = null
+    /**
+     * Whether the host paused its renderer for its own reason, like a part scrolled out of view. Only the host's
+     * own `resume()` lifts it; the window becoming visible does not.
+     * @member {Boolean} hostPaused=false
+     * @protected
+     */
+    hostPaused = false
+    /**
+     * Whether the window this host lives in is hidden, as its app's `visibilitychange` reports it.
+     * @member {Boolean} windowHidden=false
+     * @protected
+     */
+    windowHidden = false
+    /**
+     * This host's renderer admission, independent of a shared namespace stub.
+     * @member {Boolean} rendererAdmitted=false
+     * @protected
+     */
+    rendererAdmitted = false
+    /**
+     * The renderer, canvas and window whose graph this host started; clearing claims ownership before awaiting remote
+     * work.
+     * @member {Object|null} rendererGraph=null
+     * @protected
+     */
+    rendererGraph = null
+
+    /** @summary Transfers only after this host admitted its renderer; shell mounting remains independent. */
+    get canTransferOffscreenCanvas() {
+        return this.rendererAdmitted
+    }
+
+    /**
+     * @param {Boolean} value
+     * @param {Boolean} oldValue
+     */
+    afterSetIsCanvasReady(value, oldValue) {
+        let me = this;
+
+        if (value) {
+            me.renderer?.setTheme({canvasId: me.getCanvasId(), theme: me.resolveColorScheme(), windowId: me.windowId});
+            (me.hostPaused || me.windowHidden) && me.renderer?.pause({canvasId: me.getCanvasId(), windowId: me.windowId});
+            me.fire('canvasReady')
+        }
+    }
+
+    /**
+     * Lifecycle hook triggered when the mounted config gets changed
+     * @param {Boolean} value
+     * @param {Boolean} oldValue
+     * @protected
+     */
+    async afterSetMounted(value, oldValue) {
+        let me = this;
+
+        if (value) {
+            await me.ready();
+
+            if (me.isDestroyed) return
+        } else {
+            me.clearRendererGraph()
+        }
+
+        super.afterSetMounted(value, oldValue)
+    }
+
+    /**
+     * Lifecycle hook triggered when the canvas is registered offscreen.
+     * Initializes the Shared Worker graph and sets up resize observation.
+     *
+     * @param {Boolean} value
+     * @param {Boolean} oldValue
+     * @protected
+     */
+    async afterSetOffscreenRegistered(value, oldValue) {
+        let me = this;
+
+        if (value) {
+            await me.ready();
+
+            if (me.isDestroyed) return;
+
+            if (!me.rendererAdmitted) {
+                Neo.worker.Canvas.unregisterCanvas({nodeId: me.getCanvasId(), windowId: me.windowId});
+                me.offscreenRegistered = false;
+                return
+            }
+
+            if (!me.rendererClassName) {
+                throw new Error('Canvas component missing rendererClassName config')
+            }
+
+            const graph = {canvasId: me.getCanvasId(), renderer: me.renderer, windowId: me.windowId};
+
+            me.rendererGraph = graph;
+            await graph.renderer.initGraph({canvasId: graph.canvasId, windowId: graph.windowId});
+
+            if (me.isDestroyed || me.rendererGraph !== graph || me.windowId !== graph.windowId) return;
+
+            me.isCanvasReady = true;
+
+            await me.updateSize()
+        } else if (oldValue) {
+            await me.clearRendererGraph()
+        }
+    }
+
+    /**
+     * @param {String|null} value
+     * @param {String|null} oldValue
+     */
+    afterSetTheme(value, oldValue) {
+        super.afterSetTheme(value, oldValue);
+
+        if (this.isCanvasReady) {
+            this.renderer.setTheme({canvasId: this.getCanvasId(), theme: this.resolveColorScheme(), windowId: this.windowId})
+        }
+    }
+
+    /**
+     * Triggered after the windowId config got changed: a host that moves into another window takes that window's
+     * current visibility and listens to it from then on.
+     * @param {String|null} value
+     * @param {String|null} oldValue
+     * @protected
+     */
+    afterSetWindowId(value, oldValue) {
+        let me = this;
+
+        super.afterSetWindowId(value, oldValue);
+
+        if (oldValue) {
+            Neo.apps[oldValue]?.un('visibilitychange', me.onWindowVisibility, me);
+            me.listenToWindow()
+        }
+    }
+
+    /**
+     * @param {Object} config
+     */
+    construct(config) {
+        let me = this;
+
+        super.construct(config);
+        me.listenToWindow();
+        Neo.currentWorker.on('connect', me.onWindowConnect, me)
+    }
+
+    /**
+     * @returns {String}
+     */
+    getCanvasId() {
+        let me = this;
+
+        if (!me.canvasId) {
+            me.canvasId = me.id
+        }
+
+        return me.canvasId
+    }
+
+    /**
+     * Resolves the SharedWorker singleton instance from the rendererClassName config.
+     * @returns {Object} The renderer singleton
+     */
+    get renderer() {
+        return this.rendererClassName ? Neo.ns(this.rendererClassName) : null
+    }
+
+    /**
+     * @param {...*} args
+     */
+    destroy(...args) {
+        let me = this;
+
+        me.app?.un('visibilitychange', me.onWindowVisibility, me);
+        Neo.currentWorker.un('connect', me.onWindowConnect, me);
+        me.clearRendererGraph();
+        super.destroy(...args)
+    }
+
+    /**
+     * @summary Releases only the graph this host started, once, using its original renderer, canvas and window.
+     * @returns {Promise<void>}
+     * @protected
+     */
+    async clearRendererGraph() {
+        const me = this, graph = me.rendererGraph;
+
+        if (!graph) return;
+
+        me.rendererGraph = null;
+        me.isCanvasReady = false;
+
+        try {
+            await graph.renderer.clearGraph({canvasId: graph.canvasId, windowId: graph.windowId})
+        } catch (error) {
+            if (error !== Neo.isDestroyed && !Neo.currentWorker.isDeparture(error, graph.windowId)) {
+                console.error('Neo.app.SharedCanvas: renderer cleanup failed', error)
+            }
+        }
+    }
+
+    /**
+     * @summary Reports one live host's refused admission without rejecting its ordinary initialization.
+     * @event canvasLoadFailed
+     * @param {String} reason module-load-failed, renderer-unavailable or worker-unavailable.
+     * @param {String} message Failure diagnostic.
+     * @protected
+     */
+    onCanvasLoadFailed(reason, message) {
+        const me = this;
+
+        me.rendererAdmitted = false;
+        me.isCanvasReady = false;
+
+        try {
+            me.fire('canvasLoadFailed', {
+                message, path: me.rendererImportPath, reason,
+                rendererClassName: me.rendererClassName, windowId: me.windowId
+            })
+        } catch (error) {
+            console.error('Neo.app.SharedCanvas: canvasLoadFailed listener failed', error)
+        }
+    }
+
+    /**
+     * @summary Admits this host only after successful module loading and remote-stub registration.
+     * A window replacement discards the old attempt and continues this initialization flight for the current binding.
+     * @returns {Promise<void>}
+     */
+    async initAsync() {
+        await super.initAsync();
+
+        let me = this;
+
+        if (!me.rendererImportPath) {
+            me.rendererAdmitted = !me.isDestroyed;
+            return
+        }
+
+        while (!me.isDestroyed) {
+            let {windowId} = me;
+
+            try {
+                await me.trap(Neo.worker.Manager.startWorker({name: 'canvas', windowId}));
+                await me.trap(Neo.currentWorker.whenCanvasReady(windowId))
+            } catch (error) {
+                if (me.isDestroyed || error === Neo.isDestroyed) return;
+                if (me.windowId !== windowId) continue;
+                if (Neo.currentWorker.isDeparture(error, windowId)) return;
+
+                console.error('Neo.app.SharedCanvas: canvas worker unavailable', error);
+                me.onCanvasLoadFailed('worker-unavailable', error.message);
+                return
+            }
+
+            if (me.isDestroyed) return;
+            if (me.windowId !== windowId) continue;
+
+            let loaded;
+
+            try {
+                loaded = await me.trap(Neo.worker.Canvas.loadModule({path: me.rendererImportPath, windowId}))
+            } catch (error) {
+                if (me.isDestroyed || error === Neo.isDestroyed) return;
+                if (me.windowId !== windowId) continue;
+
+                me.onCanvasLoadFailed('module-load-failed', error.message);
+                return
+            }
+
+            if (me.isDestroyed) return;
+            if (me.windowId !== windowId) continue;
+
+            if (loaded?.success !== true) {
+                me.onCanvasLoadFailed('module-load-failed', loaded?.error || 'Renderer module did not load');
+                return
+            }
+
+            let j = 0;
+
+            try {
+                while (!me.renderer && j < 40) {
+                    await me.timeout(50);
+                    j++
+                }
+            } catch (error) {
+                if (error === Neo.isDestroyed || me.isDestroyed) return;
+                throw error
+            }
+
+            if (me.isDestroyed) return;
+            if (me.windowId !== windowId) continue;
+
+            if (!me.renderer) {
+                me.onCanvasLoadFailed('renderer-unavailable', 'Renderer remote stub did not register');
+                return
+            }
+
+            me.rendererAdmitted = true;
+            return
+        }
+    }
+
+    /**
+     * @summary Takes the current visibility of the window this host lives in, then listens to its later reports: a
+     * window that is already hidden never reports, so waiting for a `visibilitychange` would leave the loop running.
+     * @protected
+     */
+    listenToWindow() {
+        let me = this;
+
+        me.windowHidden = Neo.currentWorker.hiddenTick.isHidden(me.windowId);
+        me.app?.on('visibilitychange', me.onWindowVisibility, me)
+    }
+
+    /**
+     * @summary Resolves a pointer in canvas-local CSS pixels without another DOM read. Native offsets belong only
+     * to the canvas target and start at its padding edge; adding its border retains this host's border-edge origin.
+     * Other reports use a matching event rectangle, or the last measured rectangle when current facts are absent.
+     * @param {Object} data The DOM event data
+     * @returns {Object|null} The local `{x, y}`, or null when the report carries no complete position.
+     */
+    getPointerPosition(data) {
+        let me                                                 = this,
+            {clientX, clientY, offsetX, offsetY, path, target} = data;
+
+        if (!Number.isFinite(clientX) || !Number.isFinite(clientY)) return null;
+
+        const canvasId = me.getCanvasId();
+
+        if (target?.id === canvasId && Number.isFinite(offsetX) && Number.isFinite(offsetY) &&
+            Number.isFinite(target.clientLeft) && Number.isFinite(target.clientTop)) {
+            return {x: offsetX + target.clientLeft, y: offsetY + target.clientTop}
+        }
+
+        const rect = (target?.id === canvasId && target.rect) ||
+            path?.find(node => node.id === canvasId)?.rect || me.canvasRect;
+
+        return rect ? {x: clientX - rect.left, y: clientY - rect.top} : null
+    }
+
+    /**
+     * @summary Forwards one pointer report to the renderer: the canvas-relative position, then the button and modifier facts
+     * the DOM event carries (`button`, `buttons`, `altKey`, `ctrlKey`, `metaKey`, `shiftKey`), then what the caller
+     * adds (`click`, `down`, `up`, `wheel`). Nothing leaves before the canvas is ready and measured.
+     * @param {Object} data The DOM event data
+     * @param {Object} [extra]
+     * @protected
+     */
+    forwardPointer(data, extra) {
+        let me           = this,
+            {canvasRect} = me;
+
+        if (me.isCanvasReady && canvasRect) {
+            let facts = me.getPointerPosition(data) || {};
+
+            // Only facts the event carries: a report without a position leaves the worker's position alone, and
+            // one without modifiers must not reset them.
+            for (const key of ['altKey', 'button', 'buttons', 'ctrlKey', 'metaKey', 'shiftKey']) {
+                if (data[key] !== undefined) {
+                    facts[key] = data[key]
+                }
+            }
+
+            me.renderer.updateMouseState({...facts, ...extra, canvasId: me.getCanvasId(), windowId: me.windowId})
+        }
+    }
+
+    /**
+     * Forwards click events to the Shared Worker.
+     * @param {Object} data
+     */
+    onClick(data) {
+        this.forwardPointer(data, {click: true})
+    }
+
+    /**
+     * Forwards a pressed button to the Shared Worker; the renderer's `onMouseDown` hook starts a drag from it.
+     * @param {Object} data
+     */
+    onMouseDown(data) {
+        this.forwardPointer(data, {down: true})
+    }
+
+    /**
+     * Pauses the Shared Worker render loop until this host's own `resume()`. A canvas that becomes ready later starts
+     * paused.
+     */
+    pause() {
+        this.hostPaused = true;
+        this.syncRenderLoop()
+    }
+
+    /**
+     * Resets the mouse state in the Shared Worker when the cursor leaves the canvas.
+     * @param {Object} data
+     */
+    onMouseLeave(data) {
+        if (this.isCanvasReady) {
+            this.renderer.updateMouseState({canvasId: this.getCanvasId(), leave: true, windowId: this.windowId})
+        }
+    }
+
+    /**
+     * Forwards mouse coordinates to the Shared Worker, with the held buttons and modifiers of the move.
+     * @param {Object} data
+     */
+    onMouseMove(data) {
+        this.forwardPointer(data)
+    }
+
+    /**
+     * Forwards a released button to the Shared Worker; the renderer's `onMouseUp` hook ends a drag on it.
+     * @param {Object} data
+     */
+    onMouseUp(data) {
+        this.forwardPointer(data, {up: true})
+    }
+
+    /**
+     * Forwards a wheel event to the Shared Worker: the deltas beside the position and modifiers, so a renderer can
+     * zoom (`ctrlKey` marks a trackpad pinch on macOS).
+     * @param {Object} data
+     */
+    onWheel(data) {
+        let {deltaMode, deltaX, deltaY, deltaZ} = data;
+
+        this.forwardPointer(data, {wheel: {deltaMode, deltaX, deltaY, deltaZ}})
+    }
+
+    /**
+     * A window finished connecting, and its visibility snapshot has landed: the host re-reads it, since the snapshot
+     * can arrive after the view was built and never reaches the app as a `visibilitychange`.
+     * @param {Object} data
+     * @param {String} data.windowId
+     * @protected
+     */
+    onWindowConnect({windowId}) {
+        let me = this;
+
+        if (windowId === me.windowId) {
+            me.windowHidden = Neo.currentWorker.hiddenTick.isHidden(windowId);
+            me.syncRenderLoop()
+        }
+    }
+
+    /**
+     * The window's app reported its visibility: a hidden window pauses the render loop, and a visible one resumes it
+     * unless the host holds its own pause.
+     * @param {Object}  data
+     * @param {Boolean} data.hidden
+     * @protected
+     */
+    onWindowVisibility({hidden}) {
+        this.windowHidden = hidden;
+        this.syncRenderLoop()
+    }
+
+    /**
+     * @summary Resizes the worker canvas while retaining the event's viewport origin for pointer conversion.
+     * @param {Object} data
+     */
+    async onDomResize(data) {
+        super.onDomResize(data);
+        await this.updateSize(data.contentRect, data.rect)
+    }
+
+    /**
+     * Lifts the host's own pause. The render loop resumes unless the window is hidden.
+     */
+    resume() {
+        this.hostPaused = false;
+        this.syncRenderLoop()
+    }
+
+    /**
+     * @summary Runs the renderer's loop exactly while neither the host nor a hidden window holds it paused.
+     * @protected
+     */
+    syncRenderLoop() {
+        let me = this;
+
+        if (me.isCanvasReady) {
+            me.renderer[me.hostPaused || me.windowHidden ? 'pause' : 'resume']({canvasId: me.getCanvasId(), windowId: me.windowId})
+        }
+    }
+
+    /**
+     * @summary Caches the viewport pointer rect and pushes dimensions to the renderer once this window's canvas worker
+     * adopted the canvas: the app worker's renderer proxy exists as soon as ANY window's group registered it, even
+     * while this window's group boots or failed. The message carries the host's `devicePixelRatio`, which a
+     * renderer drawing at device resolution sizes its buffer by.
+     * @param {Object|null} [rect] Renderer sizing rectangle.
+     * @param {Object|null} [pointerRect=rect] Viewport rectangle; resize contentRect has a padding-relative origin.
+     */
+    async updateSize(rect, pointerRect=rect) {
+        let me = this;
+
+        await me.ready();
+
+        if (!rect || rect.width === 0 || rect.height === 0) {
+            rect = pointerRect = await me.getDomRect(me.id)
+        }
+
+        if (rect) {
+            me.canvasRect = pointerRect;
+            me.offscreenRegistered && await me.renderer?.updateSize({
+                canvasId        : me.getCanvasId(),
+                devicePixelRatio: Neo.config.devicePixelRatio || 1,
+                height          : rect.height,
+                width           : rect.width,
+                windowId        : me.windowId
+            })
+        }
+    }
+}
+
+export default Neo.setupClass(SharedCanvas);

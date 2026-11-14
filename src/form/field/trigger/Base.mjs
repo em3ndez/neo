@@ -28,6 +28,7 @@ class Base extends Component {
         ntype: 'trigger',
         /**
          * @member {String} align_='end'
+         * @reactive
          */
         align: 'end',
         /**
@@ -37,9 +38,10 @@ class Base extends Component {
         /**
          * @member {Neo.form.field.Base|null} field=null
          */
-        field: null,
+        field_: null,
         /**
          * @member {String|null} iconCls_=null
+         * @reactive
          */
         iconCls_: null,
         /**
@@ -63,12 +65,8 @@ class Base extends Component {
          */
         type: 'base',
         /**
-         * @member {Object} _vdom={tabIndex: -1}
-         */
-        _vdom:
-        {tabIndex: -1},
-        /**
          * @member {Number} weight_=10
+         * @reactive
          */
         weight_: 10
     }
@@ -92,8 +90,8 @@ class Base extends Component {
                 me.field.addDomListeners([
                     {mouseenter: me.onMouseEnter, scope: me},
                     {mouseleave: me.onMouseLeave, scope: me}
-                ]);
-            }, me);
+                ])
+            }, me)
         }
     }
 
@@ -107,7 +105,17 @@ class Base extends Component {
         let cls = this.cls;
 
         NeoArray[value === 'start' ? 'add' : 'remove'](cls, 'neo-align-start');
-        this.cls = cls;
+        this.cls = cls
+    }
+
+    /**
+     * Triggered after the field config got changed
+     * @param {String} value
+     * @param {String} oldValue
+     * @protected
+     */
+    afterSetField(value, oldValue) {
+        (this.vdom.data || (this.vdom.data = {})).focus = value?.getInputElId()
     }
 
     /**
@@ -117,10 +125,10 @@ class Base extends Component {
      * @protected
      */
     afterSetHidden(value, oldValue) {
-        let style = this.style;
+        let {style} = this;
 
         style.display = value ? 'none' : 'inherit';
-        this.style = style;
+        this.style = style
     }
 
     /**
@@ -130,15 +138,15 @@ class Base extends Component {
      * @protected
      */
     afterSetIconCls(value, oldValue) {
-        let cls = this.cls;
+        let {cls} = this;
 
-        NeoArray.remove(cls, oldValue);
+        NeoArray.remove(cls, oldValue?.split(' '));
 
         if (value && value !== '') {
-            NeoArray.add(cls, value);
+            NeoArray.add(cls, value?.split(' '))
         }
 
-        this.cls = cls;
+        this.cls = cls
     }
 
     /**
@@ -148,7 +156,7 @@ class Base extends Component {
      * @protected
      */
     beforeSetAlign(value, oldValue) {
-        return this.beforeSetEnumValue(value, oldValue, 'align', 'alignValues');
+        return this.beforeSetEnumValue(value, oldValue, 'align', 'alignValues')
     }
 
     /**
@@ -164,7 +172,7 @@ class Base extends Component {
 
         delete me.field;
 
-        super.destroy(updateParentVdom, silent);
+        super.destroy(updateParentVdom, silent)
     }
 
     /**
@@ -172,7 +180,7 @@ class Base extends Component {
      */
     onMouseEnter() {
         this.isHovered = true;
-        this.hidden    = false;
+        this.hidden    = false
     }
 
     /**
@@ -180,7 +188,7 @@ class Base extends Component {
      */
     onMouseLeave() {
         this.isHovered = false;
-        this.hidden    = true;
+        this.hidden    = true
     }
 
     /**
@@ -193,11 +201,25 @@ class Base extends Component {
             scope = me.scope || me;
 
         if (me.handler) {
-            scope[me.handler].call(scope);
+            scope[me.handler].call(scope)
+        }
+    }
+
+    /**
+     * Serializes the trigger into a JSON-compatible object.
+     * @returns {Object}
+     */
+    toJSON() {
+        let me = this;
+
+        return {
+            ...super.toJSON(),
+            iconCls    : me.iconCls,
+            showOnHover: me.showOnHover,
+            type       : me.type,
+            weight     : me.weight
         }
     }
 }
 
-Neo.applyClassConfig(Base);
-
-export default Base;
+export default Neo.setupClass(Base);

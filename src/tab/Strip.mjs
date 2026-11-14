@@ -26,6 +26,7 @@ class Strip extends Component {
         tabContainerId: null,
         /**
          * @member {Boolean} useActiveTabIndicator_=true
+         * @reactive
          */
         useActiveTabIndicator_: true,
         /**
@@ -44,43 +45,34 @@ class Strip extends Component {
      * @protected
      */
     afterSetUseActiveTabIndicator(value, oldValue) {
-        if (oldValue !== undefined) {
-            let me = this;
-
-            me.vdom.cn[0].removeDom = !value;
-
-            if (me.mounted && value) {
-                me.getActiveTabRectThenMove();
-            } else {
-                me.update();
-            }
-        }
+        this.vdom.cn[0].removeDom = !value;
+        this.update()
     }
 
     /**
+     * Gets the DomRect of the active tab, then moves the indicator
      * @param {Object|null} opts
      * @param {Number} opts.oldValue
      * @param {Number} opts.value
-     * Gets the DomRect of the active tab, then moves the indicator
      */
     getActiveTabRectThenMove(opts) {
         let me           = this,
-            ids          = [],
-            tabContainer = me.getTabContainer();
+            ids          = [me.id],
+            tabContainer = me.getTabContainer(),
+            oldTab;
 
-        if (me.vnode) {
-            if (opts) {
-                ids.push(tabContainer.getTabAtIndex(opts.value), tabContainer.getTabAtIndex(opts.oldValue));
-            } else {
-                ids.push(tabContainer.getTabAtIndex(tabContainer.activeIndex));
-            }
+        // We do not need a movement, in case there is no oldValue
+        if (me.useActiveTabIndicator && me.vnode && Neo.isNumber(opts?.oldValue)) {
+            oldTab = tabContainer.getTabAtIndex(opts.oldValue);
 
-            ids = ids.map(e => e?.id).filter(Boolean);
+            // The activeIndexChange event can get triggered when removing the currently active tab,
+            // In this case, we can no longer access the related DOMRect and need to opt out.
+            if (oldTab) {
+                ids.push(tabContainer.getTabAtIndex(opts.value).id, oldTab.id);
 
-            if (me.useActiveTabIndicator) {
                 me.getDomRect(ids).then(data => {
-                    me.moveActiveIndicator(data);
-                });
+                    me.moveActiveIndicator(data)
+                })
             }
         }
     }
@@ -89,7 +81,7 @@ class Strip extends Component {
      *
      */
     getTabContainer() {
-        return Neo.getComponent(this.tabContainerId);
+        return Neo.getComponent(this.tabContainerId)
     }
 
     /**
@@ -105,8 +97,9 @@ class Strip extends Component {
      * @param {Number} rects[0].y
      */
     moveActiveIndicator(rects) {
-        let me   = this,
-            rect = rects[1] || rects[0],
+        let me           = this,
+            tabStripRect = rects.shift(),
+            rect         = rects[1] || rects[0],
             activeTabIndicator, tabContainer;
 
         if (me.useActiveTabIndicator) {
@@ -118,20 +111,20 @@ class Strip extends Component {
                 case 'top':
                     activeTabIndicator.style = {
                         height: null,
-                        left  : `${rect.left}px`,
+                        left  : `${rect.left - tabStripRect.left}px`,
                         top   : null,
                         width : `${rect.width}px`
                     };
-                    break;
+                    break
                 case 'left':
                 case 'right':
                     activeTabIndicator.style = {
                         height: `${rect.height}px`,
                         left  : null,
-                        top   : `${rect.top}px`,
+                        top   : `${rect.top - tabStripRect.top}px`,
                         width : null
                     };
-                    break;
+                    break
             }
 
             // in case there is a dynamic change (oldValue), call this method again
@@ -139,17 +132,17 @@ class Strip extends Component {
                 activeTabIndicator.style.opacity = 0;
                 me.update();
 
-                setTimeout(() => {
-                    me.moveActiveIndicator([rects[0]]);
-                }, 50)
+                me.timeout(50).then(() => {
+                    me.moveActiveIndicator([tabStripRect, rects[0]])
+                })
             } else {
                 activeTabIndicator.style.opacity = 1;
                 me.update();
 
-                setTimeout(() => {
+                me.timeout(300).then(() => {
                     activeTabIndicator.style.opacity = 0;
-                    me.update();
-                }, 300);
+                    me.update()
+                })
             }
         }
     }
@@ -165,10 +158,8 @@ class Strip extends Component {
         me.getTabContainer().on({
             activeIndexChange: me.getActiveTabRectThenMove,
             scope            : me
-        });
+        })
     }
 }
 
-Neo.applyClassConfig(Strip);
-
-export default Strip;
+export default Neo.setupClass(Strip);

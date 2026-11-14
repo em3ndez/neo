@@ -7,6 +7,14 @@ import BaseToolbar from '../../toolbar/Base.mjs';
 class Toolbar extends BaseToolbar {
     static config = {
         /**
+         * Tab-header actions are focus-gated by default. Persistent actions opt out explicitly with
+         * `showOnFocus: false` (or the deprecated `contextual: false`).
+         * @member {Object} actionDefaults={showOnFocus:true}
+         */
+        actionDefaults: {
+            showOnFocus: true
+        },
+        /**
          * @member {String} className='Neo.tab.header.Toolbar'
          * @protected
          */
@@ -21,31 +29,36 @@ class Toolbar extends BaseToolbar {
          */
         baseCls: ['neo-tab-header-toolbar', 'neo-toolbar'],
         /**
+         * The header is the `tablist` of the WAI-ARIA tabs pattern, and its tab buttons are the tabs.
+         * @member {String|null} role='tablist'
+         * @reactive
+         */
+        role: 'tablist',
+        /**
          * @member {Boolean} useActiveTabIndicator_=true
+         * @reactive
          */
         useActiveTabIndicator_: true
     }
 
     /**
-     * Triggered after the sortable config got changed
-     * @param {Boolean} value
-     * @param {Boolean} oldValue
+     * @returns {Promise<any>}
+     */
+    loadSortZoneModule() {
+        return import('../../draggable/tab/header/toolbar/SortZone.mjs')
+    }
+
+    /**
+     * Triggered after the dock config got changed. A `tablist` is horizontal unless it says
+     * otherwise, so a header docked left or right declares `aria-orientation="vertical"`.
+     * @param {String} value
+     * @param {String} oldValue
      * @protected
      */
-    afterSetSortable(value, oldValue) {
-        let me = this;
+    afterSetDock(value, oldValue) {
+        super.afterSetDock(value, oldValue);
 
-        if (value && !me.sortZone) {
-            import('../../draggable/tab/header/toolbar/SortZone.mjs').then(module => {
-                me.sortZone = Neo.create({
-                    module             : module.default,
-                    appName            : me.appName,
-                    boundaryContainerId: me.id,
-                    owner              : me,
-                    ...me.sortZoneConfig
-                })
-            })
-        }
+        this.changeVdomRootKey('aria-orientation', value === 'left' || value === 'right' ? 'vertical' : null)
     }
 
     /**
@@ -58,7 +71,7 @@ class Toolbar extends BaseToolbar {
         if (oldValue !== undefined) {
             let me = this;
 
-            me.items.forEach(item => {
+            me.getTabButtons().forEach(item => {
                 // silent updates
                 item._useActiveTabIndicator = value;
                 item.updateUseActiveTabIndicator(true)
@@ -69,51 +82,91 @@ class Toolbar extends BaseToolbar {
     }
 
     /**
-     * @protected
+     * Resolves a semantic tab insertion index to the raw toolbar position immediately before the
+     * action group.
+     * @param {Number} index
+     * @returns {Number}
      */
-    createItems() {
-        let me       = this,
-            defaults = me.itemDefaults || {};
+    getTabInsertIndex(index) {
+        let me      = this,
+            buttons = me.getTabButtons(),
+            target  = buttons[index],
+            spacer;
 
-        defaults.useActiveTabIndicator = me.useActiveTabIndicator;
-        me.itemDefaults = defaults;
+        if (target) {
+            return me.items.indexOf(target)
+        }
 
-        super.createItems()
+        spacer = me.getActionSpacer();
+
+        return spacer ? me.items.indexOf(spacer) : me.items.length
     }
 
     /**
-     * Returns the layout config matching to the dock position
+     * Returns only semantic tab-header buttons, excluding the action group and spacer.
+     * @returns {Neo.tab.header.Button[]}
+     */
+    getTabButtons() {
+        return (this.items || []).filter(item => this.isTabButton(item))
+    }
+
+    /**
+     * The single semantic membership answer shared with the tab SortZone. A tab-styled action is
+     * still an action and must never become card chrome or a drag target.
+     * @param {*} item
+     * @returns {Boolean}
+     */
+    isTabButton(item) {
+        return item?.isToolbarAction !== true
+            && item?.isToolbarActionSpacer !== true
+            && item?.baseCls?.includes('neo-tab-header-button')
+    }
+
+    /**
+     * Inserts a tab button at a semantic tab index.
+     * @param {Number} index
+     * @param {Object|Neo.tab.header.Button} item
+     * @param {Boolean} [silent=false]
+     * @param {Boolean} [removeFromPreviousParent=true]
+     * @returns {Neo.tab.header.Button}
+     */
+    insertTab(index, item, silent=false, removeFromPreviousParent=true) {
+        let bounded = Math.max(0, Math.min(Number(index) || 0, this.getTabButtons().length));
+
+        return this.insert(this.getTabInsertIndex(bounded), item, silent, removeFromPreviousParent)
+    }
+
+    /**
+     * @summary Returns the layout config matching the dock position.
      * @returns {Object} layoutConfig
      * @protected
      */
     getLayoutConfig() {
         let layoutConfig;
 
-        switch(this.dock) {
+        switch (this.dock) {
             case 'bottom':
             case 'top':
                 layoutConfig = {
-                    ntype: 'hbox',
-                    align: 'center',
-                    pack : 'start'
+                    align    : 'center',
+                    direction: 'row',
+                    pack     : 'start'
                 };
-                break;
+                break
             case 'left':
                 layoutConfig = {
-                    ntype    : 'vbox',
-                    align    : 'center',
-                    direction: 'column-reverse',
-                    pack     : 'end'
-                };
-                break;
-            case 'right':
-                layoutConfig = {
-                    ntype    : 'vbox',
                     align    : 'center',
                     direction: 'column',
                     pack     : 'start'
                 };
-                break;
+                break
+            case 'right':
+                layoutConfig = {
+                    align    : 'center',
+                    direction: 'column',
+                    pack     : 'start'
+                };
+                break
         }
 
         return layoutConfig
@@ -126,18 +179,40 @@ class Toolbar extends BaseToolbar {
      * @returns {Neo.component.Base}
      */
     moveTo(fromIndex, toIndex) {
-        let returnValue = super.moveTo(fromIndex, toIndex);
+        let me         = this,
+            buttons    = me.getTabButtons(),
+            fromButton = buttons[fromIndex],
+            toButton   = buttons[toIndex],
+            returnValue;
+
+        if (!fromButton || !toButton) {
+            return null
+        }
+
+        returnValue = super.moveTo(me.items.indexOf(fromButton), me.items.indexOf(toButton));
 
         if (fromIndex !== toIndex) {
-            this.items.forEach((item, index) => {
-                item.index = index;
+            me.getTabButtons().forEach((item, index) => {
+                item.index = index
             })
         }
 
         return returnValue
     }
+
+    /**
+     * Removes a tab button at a semantic tab index.
+     * @param {Number} index
+     * @param {Boolean} [destroyItem=true]
+     * @param {Boolean} [silent=false]
+     * @param {Boolean} [keepMounted=false]
+     * @returns {Neo.tab.header.Button|null}
+     */
+    removeTabAt(index, destroyItem=true, silent=false, keepMounted=false) {
+        let button = this.getTabButtons()[index];
+
+        return button ? this.remove(button, destroyItem, silent, keepMounted) : null
+    }
 }
 
-Neo.applyClassConfig(Toolbar);
-
-export default Toolbar;
+export default Neo.setupClass(Toolbar);

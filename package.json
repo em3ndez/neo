@@ -1,76 +1,195 @@
 {
-    "name": "neo.mjs",
-    "version": "6.5.5",
-    "description": "The webworkers driven UI framework",
-    "type": "module",
-    "repository": {
+    "name"       : "neo.mjs",
+    "version"    : "13.4.0",
+    "description": "Neo.mjs is a multi-threaded application engine — the Body of a self-evolving software organism — with object permanence, worker isolation, JSON-first UIs, and zero-build native ES modules.",
+    "type"       : "module",
+    "repository" : {
         "type": "git",
-        "url": "https://github.com/neomjs/neo.git"
+        "url" : "https://github.com/neomjs/neo.git"
     },
-    "bin": {
-        "neo-cc": "./buildScripts/createClass.mjs"
+    "bin"            : {
+        "neo-cc": "./buildScripts/create/class.mjs"
     },
-    "scripts": {
-        "add-config": "node ./buildScripts/addConfig.mjs",
-        "build-all": "node ./buildScripts/buildAll.mjs -f -n",
-        "build-all-questions": "node ./buildScripts/buildAll.mjs -f",
-        "build-my-apps": "node ./buildScripts/webpack/buildMyApps.mjs -f",
-        "build-themes": "node ./buildScripts/buildThemes.mjs -f",
-        "build-threads": "node ./buildScripts/webpack/buildThreads.mjs -f",
-        "create-app": "node ./buildScripts/createApp.mjs",
-        "create-class": "node ./buildScripts/createClass.mjs",
-        "create-component": "node ./buildScripts/createComponent.mjs",
-        "generate-docs-json": "node ./buildScripts/docs/jsdocx.mjs",
-        "inject-package-version": "node ./buildScripts/injectPackageVersion.mjs",
-        "server-start": "webpack serve -c ./buildScripts/webpack/webpack.server.config.mjs --open",
-        "test": "echo \"Error: no test specified\" && exit 1",
-        "watch-themes": "node ./buildScripts/watchThemes.mjs"
+    "engines"        : {
+        "node": ">=24.0.0"
     },
-    "keywords": [
-        "javascript",
-        "frontend",
-        "framework",
+    "scripts"        : {
+        "add-config"                           : "node ./buildScripts/create/addConfig.mjs",
+        "agent-push"                           : "node ./buildScripts/util/agent-push.mjs",
+        "add-reactive-tags"                    : "node ./buildScripts/helpers/addReactiveTags.mjs",
+        "build-all"                            : "node ./buildScripts/build/all.mjs -f -n",
+        "build-all-questions"                  : "node ./buildScripts/build/all.mjs -f",
+        "build-dist-esm"                       : "node ./buildScripts/build/esmodules.mjs",
+        "build-highlightjs"                    : "node ./buildScripts/build/highlightJs.mjs",
+        "build-themes"                         : "node ./buildScripts/build/themes.mjs -f",
+        "build-threads"                        : "node ./buildScripts/webpack/buildThreads.mjs -f",
+        "bundle-browser-deps"                  : "npm run bundle-parse5 && npm run bundle-marked && npm run bundle-mermaid && npm run bundle-monaco && npm run build-highlightjs",
+        "bundle-marked"                        : "node ./buildScripts/build/marked.mjs",
+        "bundle-mermaid"                       : "node ./buildScripts/build/mermaid.mjs",
+        "bundle-monaco"                        : "node ./buildScripts/build/monaco.mjs",
+        "bundle-parse5"                        : "node ./buildScripts/build/parse5.mjs",
+        "check-theme-surfaces"                 : "node ./buildScripts/util/check-theme-surfaces.mjs",
+        "check-class-module-scope"             : "node ./buildScripts/util/check-class-module-scope.mjs",
+        "check-engine-brain-boundary"          : "node ./buildScripts/util/check-engine-brain-boundary.mjs",
+        "check-examples-body-only"             : "node ./buildScripts/util/check-examples-body-only.mjs",
+        "check-file-sizes"                     : "node ./buildScripts/util/check-file-sizes.mjs",
+        "check-package-contents"               : "node ./buildScripts/util/check-package-contents.mjs",
+        "check-reactive-tags"                  : "node ./buildScripts/helpers/checkReactiveTags.mjs",
+        "check-relative-links"                 : "node ./buildScripts/util/check-relative-links.mjs",
+        "convert-design-tokens"                : "node ./buildScripts/helpers/convertDesignTokens.mjs",
+        "create-app"                           : "node ./buildScripts/create/app.mjs",
+        "create-app-minimal"                   : "node ./buildScripts/create/appMinimal.mjs",
+        "create-class"                         : "node ./buildScripts/create/class.mjs",
+        "create-component"                     : "node ./buildScripts/create/component.mjs",
+        "create-theme"                         : "node ./buildScripts/create/theme.mjs",
+        "generate-agents-md"                   : "neo-agent-skills-agents-md --repo neo,neo-agent-brain --out AGENTS.md --pointer",
+        "generate-docs-json"                   : "node ./buildScripts/docs/generateDocsJson.mjs",
+        "move-files"                           : "node ./buildScripts/create/move.mjs",
+        "postpack"                             : "node ./buildScripts/util/npmIgnoreComposition.mjs restore",
+        "prepack"                              : "node ./buildScripts/util/npmIgnoreComposition.mjs compose",
+        "prepare"                              : "node ./buildScripts/util/prepare.mjs",
+        "preserver-start"                      : "node ./buildScripts/util/check-installed-dependencies.mjs",
+        "seat:start"                           : "node ./buildScripts/helpers/seatStart.mjs",
+        "server-start"                         : "webpack serve -c ./buildScripts/webpack/webpack.server.config.mjs --open",
+        "test"                                 : "playwright test -c test/playwright/playwright.config.mjs",
+        "test-clipboard"                       : "playwright test -c test/playwright/playwright.config.clipboard.mjs",
+        "test-components"                      : "playwright test -c test/playwright/playwright.config.component.mjs",
+        "test-e2e"                             : "playwright test -c test/playwright/playwright.config.e2e.mjs",
+        "test-unit"                            : "playwright test -c test/playwright/playwright.config.unit.mjs",
+        "test-unit-tz"                         : "playwright test -c test/playwright/playwright.config.unit-tz.mjs",
+        "watch-themes"                         : "node ./buildScripts/helpers/watchThemes.mjs"
+    },
+    "keywords"       : [
+        "neo-mjs",
+        "neural-link",
+        "possession-interface",
+        "conversational-application-embodiment",
+        "live-application-mutability",
+        "ai-native",
+        "application-engine",
+        "web-engine",
+        "multi-threaded",
+        "omt-architecture",
+        "sharedworker",
         "webworker",
+        "offscreencanvas",
+        "multi-window",
+        "multi-window-applications",
+        "desktop-class-web-applications",
+        "object-permanence",
+        "scene-graph",
+        "virtual-dom",
+        "json-blueprints",
+        "json",
+        "dynamic-imports",
         "ecmascript",
-        "css",
-        "json"
+        "zero-build-development",
+        "no-bundling",
+        "no-transpilation",
+        "pwa",
+        "progressive-web-app",
+        "realtime",
+        "performance",
+        "scalability",
+        "security",
+        "xss-resistant",
+        "runtime-type-safety",
+        "no-jank",
+        "ui-responsiveness",
+        "data-visualization"
     ],
-    "author": "Tobias Uhlig, Rich Waters",
+    "author" : "Tobias Uhlig",
     "license": "MIT",
-    "bugs": {
+    "bugs"   : {
         "url": "https://github.com/neomjs/neo/issues"
     },
-    "homepage": "https://neomjs.github.io/pages/",
-    "dependencies": {
-        "@fortawesome/fontawesome-free": "^6.4.2",
-        "@material/mwc-button": "^0.27.0",
-        "@material/mwc-textfield": "^0.27.0",
-        "autoprefixer": "^10.4.15",
-        "chalk": "^5.3.0",
-        "clean-webpack-plugin": "^4.0.0",
-        "commander": "^11.0.0",
-        "cssnano": "^6.0.1",
-        "envinfo": "^7.10.0",
-        "fs-extra": "^11.1.1",
-        "highlightjs-line-numbers.js": "^2.8.0",
-        "inquirer": "^9.2.11",
-        "neo-jsdoc": "1.0.1",
-        "neo-jsdoc-x": "1.0.5",
-        "postcss": "^8.4.29",
-        "sass": "^1.67.0",
-        "showdown": "^2.1.0",
-        "webpack": "^5.88.2",
-        "webpack-cli": "^5.1.4",
-        "webpack-dev-server": "4.15.1",
-        "webpack-hook-plugin": "^1.0.7",
-        "webpack-node-externals": "^3.0.0"
-    },
+    "homepage"       : "https://neomjs.com/",
     "devDependencies": {
-        "siesta-lite": "5.5.2",
-        "url": "^0.11.3"
+        "@fortawesome/fontawesome-free": "^7.3.1",
+        "@playwright/test"             : "^1.63.0",
+        "acorn"                        : "^8.19.0",
+        "astring"                      : "^1.9.0",
+        "autoprefixer"                 : "^10.6.1",
+        "chalk"                        : "^6.0.1",
+        "commander"                    : "^15.0.0",
+        "cssnano"                      : "^9.3.2",
+        "envinfo"                      : "^7.21.0",
+        "esbuild"                      : "^0.28.2",
+        "fast-glob"                    : "^3.3.3",
+        "fs-extra"                     : "^11.4.1",
+        "gray-matter"                  : "^4.0.3",
+        "highlightjs-line-numbers.js"  : "^2.9.1",
+        "html-minifier-terser"         : "^7.2.0",
+        "husky"                        : "^9.1.7",
+        "inquirer"                     : "^14.2.3",
+        "js-yaml"                      : "^5.4.3",
+        "jsdoc-api"                    : "^9.3.6",
+        "lint-staged"                  : "^17.6.0",
+        "marked"                       : "^18.1.0",
+        "mermaid"                      : "^12.1.0",
+        "monaco-editor"                : "0.57.0",
+        "neo-agent-skills"             : "1.8.2",
+        "parse5"                       : "^8.0.1",
+        "postcss"                      : "^8.5.29",
+        "postcss-scss"                 : "^4.0.9",
+        "postcss-selector-parser"      : "^7.1.7",
+        "postcss-value-parser"         : "^4.2.0",
+        "sass"                         : "^1.105.1",
+        "semver"                       : "^7.8.5",
+        "terser"                       : "^5.51.2",
+        "url"                          : "^0.11.4",
+        "webpack"                      : "^5.111.1",
+        "webpack-cli"                  : "^7.2.3",
+        "webpack-dev-server"           : "^6.0.0",
+        "webpack-hook-plugin"          : "^1.0.7",
+        "ws"                           : "^8.22.0"
+    },
+    "overrides": {
+        "dompurify": "^3.4.17",
+        "gray-matter": {
+            "js-yaml": "^3.15.2"
+        },
+        "katex": "^0.18.2",
+        "lodash-es": "^4.18.0"
     },
     "funding": {
         "type": "GitHub Sponsors",
-        "url": "https://github.com/sponsors/tobiu"
+        "url" : "https://github.com/sponsors/tobiu"
+    },
+    "lint-staged": {
+        "*": [
+            "neo-agent-skills-secrets",
+            "node ./buildScripts/util/check-whitespace.mjs"
+        ],
+        "*.mjs": [
+            "node ./buildScripts/util/check-shorthand.mjs",
+            "node ./buildScripts/util/check-jsdoc-types.mjs",
+            "neo-agent-skills-ticket-archaeology",
+            "node ./buildScripts/util/check-block-alignment.mjs --fix --staged",
+            "node ./buildScripts/util/check-parse.mjs"
+        ],
+        "test/**/*.mjs": [
+            "node ./buildScripts/util/check-derived-domain.mjs",
+            "node ./buildScripts/util/check-fixed-sleeps.mjs"
+        ],
+        "{buildScripts,src}/**/*.mjs": [
+            "node ./buildScripts/util/check-engine-brain-boundary.mjs"
+        ],
+        "{apps,buildScripts,src}/**/*.mjs": [
+            "node ./buildScripts/util/check-content-root-derivations.mjs"
+        ],
+        "src/**/*.mjs": [
+            "node ./buildScripts/util/check-class-module-scope.mjs"
+        ],
+        "resources/scss/**/*.scss": [
+            "node ./buildScripts/util/check-theme-coverage.mjs",
+            "node ./buildScripts/util/check-theme-value-files.mjs"
+        ],
+        "learn/**/*.md": [
+            "node ./buildScripts/util/check-relative-links.mjs"
+        ],
+        "{package.json,.husky/pre-commit,.github/workflows/**,buildScripts/util/check-guard-ci-parity.mjs,buildScripts/util/check-guard-ci-parity-registry.json}": [
+            "node ./buildScripts/util/check-guard-ci-parity.mjs"
+        ]
     }
 }

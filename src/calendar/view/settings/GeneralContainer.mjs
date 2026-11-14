@@ -18,6 +18,7 @@ class GeneralContainer extends Container {
         className: 'Neo.calendar.view.settings.GeneralContainer',
         /**
          * @member {Object} layout={ntype:'vbox',align:'stretch'}
+         * @reactive
          */
         layout: {ntype: 'vbox', align: 'stretch'}
     }
@@ -28,7 +29,7 @@ class GeneralContainer extends Container {
     createItems() {
         let me       = this,
             calendar = me.up('calendar-maincontainer'),
-            data     = me.data;
+            {data}   = me;
 
         me.items = [{
             module    : NumberField,
@@ -52,7 +53,7 @@ class GeneralContainer extends Container {
             listeners     : {change: me.onRadioDataChange, scope: me},
             name          : 'locale',
             style         : {marginTop: '5px'},
-            valueLabelText: 'default'
+            valueLabel    : 'default'
         }, {
             module        : RadioField,
             checked       : data.locale === 'de-DE',
@@ -64,7 +65,7 @@ class GeneralContainer extends Container {
             listeners     : {change: me.onRadioDataChange, scope: me},
             name          : 'locale',
             style         : {marginTop: '5px'},
-            valueLabelText: 'de-DE'
+            valueLabel    : 'de-DE'
         }, {
             module        : RadioField,
             checked       : data.locale === 'en-US',
@@ -76,7 +77,7 @@ class GeneralContainer extends Container {
             listeners     : {change: me.onRadioDataChange, scope: me},
             name          : 'locale',
             style         : {marginTop: '5px'},
-            valueLabelText: 'en-US'
+            valueLabel    : 'en-US'
         }, {
             module        : RadioField,
             checked       : data.locale === 'es-ES',
@@ -88,7 +89,7 @@ class GeneralContainer extends Container {
             listeners     : {change: me.onRadioDataChange, scope: me},
             name          : 'locale',
             style         : {marginTop: '5px'},
-            valueLabelText: 'es-ES'
+            valueLabel    : 'es-ES'
         }, {
             module        : RadioField,
             checked       : data.locale === 'fr-FR',
@@ -100,7 +101,7 @@ class GeneralContainer extends Container {
             listeners     : {change: me.onRadioDataChange, scope: me},
             name          : 'locale',
             style         : {marginTop: '5px'},
-            valueLabelText: 'fr-FR'
+            valueLabel    : 'fr-FR'
         }, {
             module        : RadioField,
             checked       : data.weekStartDay === 0,
@@ -259,21 +260,21 @@ class GeneralContainer extends Container {
             }]
         }];
 
-        super.createItems();
+        super.createItems()
     }
 
     /**
      * @param {Object} data
      */
     onConfigChange(data) {
-        this.up('calendar-maincontainer')[data.component.name] = data.value;
+        this.up('calendar-maincontainer')[data.component.name] = data.value
     }
 
     /**
      * @param {Object} data
      */
     onDataChange(data) {
-        this.getModel().setData(data.component.name, data.value);
+        this.setState(data.component.name, data.value)
     }
 
     /**
@@ -281,11 +282,9 @@ class GeneralContainer extends Container {
      */
     onRadioDataChange(data) {
         if (data.value) {
-            this.getModel().setData(data.component.name, data.component.fieldValue);
+            this.setState(data.component.name, data.component.fieldValue)
         }
     }
 }
 
-Neo.applyClassConfig(GeneralContainer);
-
-export default GeneralContainer;
+export default Neo.setupClass(GeneralContainer);

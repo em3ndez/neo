@@ -66,7 +66,7 @@ class Gallery extends BaseGallery {
 
         return {
             cls     : ['neo-gallery-item', 'image-wrap', 'view', 'neo-transition-1000'],
-            id      : me.getItemVnodeId(record[me.keyProperty]),
+            id      : me.getItemVnodeId(me.store.getKey(record)),
             tabIndex: '-1',
             style: {
                 height: me.itemHeight + 'px',
@@ -84,7 +84,13 @@ class Gallery extends BaseGallery {
      * @returns {String}
      */
     getItemId(vnodeId) {
-        return vnodeId.split('__')[1];
+        let itemId = vnodeId.split('__')[1];
+
+        if (this.store.getKeyType()?.includes('int')) {
+            itemId = parseInt(itemId)
+        }
+
+        return itemId
     }
 
     /**
@@ -93,13 +99,13 @@ class Gallery extends BaseGallery {
     onStoreLoad(items) {
         super.onStoreLoad(items);
 
-        setTimeout(() => {
-            this.selectOnMount = true;
-            this.afterSetMounted(true, false);
-        }, 200);
+        let me = this;
+
+        me.timeout(200).then(() => {
+            me.selectOnMount = true;
+            me.afterSetMounted(true, false)
+        })
     }
 }
 
-Neo.applyClassConfig(Gallery);
-
-export default Gallery;
+export default Neo.setupClass(Gallery);

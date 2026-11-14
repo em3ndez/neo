@@ -1,6 +1,6 @@
-import Base      from './Base.mjs';
 import Container from '../container/Base.mjs'
-import NeoArray  from "../util/Array.mjs";
+import NeoArray  from '../util/Array.mjs';
+import Plugin    from './Base.mjs';
 
 /**
  * Popover usable as tooltip
@@ -18,15 +18,15 @@ import NeoArray  from "../util/Array.mjs";
  *             ntype  : 'panel',
  *             headers: [{
  *                 dock: 'top',
- *                 html: 'HEADER'
+ *                 text: 'HEADER'
  *             }],
  *             items  : [{
- *                 html: 'This is a comment about the button'
+ *                 text: 'This is a comment about the button'
  *             }]
  *         }]
  *     }]
  */
-class Popover extends Base {
+class Popover extends Plugin {
     /**
      * Valid values for align
      * @member {String[]} alignValues=['bc-tc','tc-bc','tl-tr','tr-tl','cl-cr','cr-cl',null]
@@ -101,7 +101,7 @@ class Popover extends Base {
      */
     addPopover() {
         const me      = this,
-              owner   = me.owner,
+              {owner} = me,
               parent  = Neo.get(me.owner.parentId),
               popover = {
                   module: Container,
@@ -185,6 +185,4 @@ class Popover extends Base {
     }
 }
 
-Neo.applyClassConfig(Popover);
-
-export default Popover;
+export default Neo.setupClass(Popover);

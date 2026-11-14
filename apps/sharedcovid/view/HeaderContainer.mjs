@@ -1,6 +1,6 @@
+import ComboBox     from '../../../src/form/field/ComboBox.mjs';
 import Container    from '../../../src/container/Base.mjs';
 import CountryStore from '../store/Countries.mjs';
-import SelectField  from '../../../src/form/field/Select.mjs';
 
 /**
  * @class SharedCovid.view.HeaderContainer
@@ -19,10 +19,12 @@ class HeaderContainer extends Container {
         baseCls: ['covid-header-container'],
         /**
          * @member {Number} height=70
+         * @reactive
          */
         height: 120,
         /**
          * @member {Object} layout={ntype: 'hbox', align: 'stretch'}
+         * @reactive
          */
         layout: {ntype: 'hbox', align: 'stretch'},
         /**
@@ -37,7 +39,7 @@ class HeaderContainer extends Container {
 
             vdom: {
                 tag: 'img',
-                src: 'https://raw.githubusercontent.com/neomjs/pages/master/resources/images/apps/covid/covid_logo_dark.jpg'
+                src: 'https://raw.githubusercontent.com/neomjs/pages/main/resources_pub/images/apps/covid/covid_logo_dark.jpg'
             }
         }, {
             ntype : 'container',
@@ -56,7 +58,7 @@ class HeaderContainer extends Container {
                     cls : ['covid-numberbox'],
                     vdom: {
                         cn: [
-                            {cls: ['covid-numberbox-title',  'cases'],  html:'Cases'},
+                            {cls: ['covid-numberbox-title',  'cases'],  text:'Cases'},
                             {cls: ['covid-numberbox-number', 'cases']}
                         ]
                     }
@@ -64,7 +66,7 @@ class HeaderContainer extends Container {
                     cls : ['covid-numberbox'],
                     vdom: {
                         cn: [
-                            {cls: ['covid-numberbox-title',  'active'], html:'Active'},
+                            {cls: ['covid-numberbox-title',  'active'], text:'Active'},
                             {cls: ['covid-numberbox-number', 'active']}
                         ]
                     }
@@ -72,7 +74,7 @@ class HeaderContainer extends Container {
                     cls : ['covid-numberbox'],
                     vdom: {
                         cn: [
-                            {cls: ['covid-numberbox-title',  'recovered'], html:'Recovered'},
+                            {cls: ['covid-numberbox-title',  'recovered'], text:'Recovered'},
                             {cls: ['covid-numberbox-number', 'recovered']}
                         ]
                     }
@@ -80,7 +82,7 @@ class HeaderContainer extends Container {
                     cls : ['covid-numberbox'],
                     vdom: {
                         cn: [
-                            {cls: ['covid-numberbox-title',  'deaths'], html:'Deaths'},
+                            {cls: ['covid-numberbox-title',  'deaths'], text:'Deaths'},
                             {cls: ['covid-numberbox-number', 'deaths']}
                         ]
                     }
@@ -97,7 +99,7 @@ class HeaderContainer extends Container {
                             'data-show-count': 'true',
                             'data-size'      : 'large',
                             href             : 'https://github.com/neomjs/neo',
-                            html             : 'Star'
+                            text             : 'Star'
                         }]
                     }
                 }, {
@@ -111,7 +113,7 @@ class HeaderContainer extends Container {
                             'data-icon'      : 'octicon-heart',
                             'data-size'      : 'large',
                             href             : 'https://github.com/sponsors/tobiu',
-                            html             : 'Sponsor'
+                            text             : 'Sponsor'
                         }]
                     }
                 }]
@@ -124,7 +126,7 @@ class HeaderContainer extends Container {
                 },
 
                 items : [{
-                    module       : SelectField,
+                    module       : ComboBox,
                     displayField : 'country',
                     flex         : 'none',
                     height       : 25,
@@ -178,6 +180,4 @@ class HeaderContainer extends Container {
     }
 }
 
-Neo.applyClassConfig(HeaderContainer);
-
-export default HeaderContainer;
+export default Neo.setupClass(HeaderContainer);

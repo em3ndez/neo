@@ -1,10 +1,7 @@
-import Base from './Base.mjs';
-
 /**
  * @class Neo.core.Util
- * @extends Neo.core.Base
  */
-class Util extends Base {
+class Util {
     /**
      * A regex to remove camel case syntax
      * @member {RegExp} decamelRegEx=/([a-z])([A-Z])/g
@@ -13,36 +10,14 @@ class Util extends Base {
      */
     static decamelRegEx = /([a-z])([A-Z])/g
 
-    static config = {
-        /**
-         * @member {String} className='Neo.core.Util'
-         * @protected
-         */
-        className: 'Neo.core.Util',
-        /**
-         * @member {String} ntype='core-util'
-         * @protected
-         */
-        ntype: 'core-util'
-    }
-
     /**
      * @param {Object} scope
      * @param {String[]} values
      */
     static bindMethods(scope, values) {
         values.forEach(value => {
-            scope[value] = scope[value].bind(scope);
-        });
-    }
-
-    /**
-     * Makes the first character of a string uppercase
-     * @param {String} value
-     * @returns {Boolean|String} Returns false for non string inputs
-     */
-    static capitalize(value) {
-        return value[0].toUpperCase() + value.slice(1)
+            scope[value] = scope[value].bind(scope)
+        })
     }
 
     /**
@@ -63,17 +38,17 @@ class Util extends Base {
             parts = el.split((/:(.+)/)).map(function (x) {
                 let num = parseFloat(x);
 
-                return x == num ? num : x.trim();
+                return x == num ? num : x.trim()
             });
 
             if (parts[0] !== '') {
                 parts[0] = parts[0].replace(/-([a-z])/g, (str, letter) => {
-                    return letter.toUpperCase();
+                    return letter.toUpperCase()
                 });
 
                 obj[parts[0]] = parts[1]
             }
-            return obj;
+            return obj
         }, {})
     }
 
@@ -137,7 +112,8 @@ class Util extends Base {
      * @returns {Boolean}
      */
     static isEmpty(value) {
-        if (value === null || value === undefined) {
+        // intentional == to catch null and undefined
+        if (value == null) {
             return true
         }
 
@@ -184,7 +160,27 @@ class Util extends Base {
      * @returns {Boolean}
      */
     static isObject(value) {
-        return value !== null && typeof value === 'object' && !Array.isArray(value)
+        return value?.constructor?.name === 'Object'
+    }
+
+    /**
+     * Returns true if the passed value is a promise.
+     * We are intentionally not checking for `value instanceof Promise`,
+     * to support any "thenable" objects for flexibility.
+     * @param {Object} value The value to test
+     * @returns {Boolean}
+     */
+    static isPromise(value) {
+        return typeof value?.then === 'function'
+    }
+
+    /**
+     * Returns true if the passed value is a neo data record
+     * @param {Object} value The value to test
+     * @returns {Boolean}
+     */
+    static isRecord(value) {
+        return value?.constructor?.name === 'Record'
     }
 
     /**
@@ -194,6 +190,15 @@ class Util extends Base {
      */
     static isString(value) {
         return typeof value === 'string'
+    }
+
+    /**
+     * Converts a snake_case string into camelCase.
+     * @param {String} value The snake_case string.
+     * @returns {String} The camelCase string.
+     */
+    static snakeToCamel(value) {
+        return value.replace(/(_\w)/g, m => m[1].toUpperCase());
     }
 
     /**
@@ -218,14 +223,14 @@ class Util extends Base {
     }
 }
 
-Neo.applyClassConfig(Util);
+const ns = Neo.ns('Neo.core', true);
+ns.Util = Util;
 
 // aliases
 Neo.applyFromNs(Neo, Util, {
     bindMethods      : 'bindMethods',
     createStyleObject: 'createStyleObject',
     createStyles     : 'createStyles',
-    capitalize       : 'capitalize',
     decamel          : 'decamel',
     isArray          : 'isArray',
     isBoolean        : 'isBoolean',
@@ -234,7 +239,10 @@ Neo.applyFromNs(Neo, Util, {
     isFunction       : 'isFunction',
     isNumber         : 'isNumber',
     isObject         : 'isObject',
+    isPromise        : 'isPromise',
+    isRecord         : 'isRecord',
     isString         : 'isString',
+    snakeToCamel     : 'snakeToCamel',
     toArray          : 'toArray'
 }, true);
 

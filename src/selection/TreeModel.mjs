@@ -22,7 +22,7 @@ class TreeModel extends ListModel {
      * @param {Object} data
      */
     onKeyDownEnter(data) {
-        Neo.log('onKeyDownEnter', data)
+        // Neo.log('onKeyDownEnter', data)
     }
 
     /**
@@ -30,10 +30,8 @@ class TreeModel extends ListModel {
      * @param {Number} step
      */
     onNavKey(data, step) {
-        Neo.log('onNavKey', data, step)
+        // Neo.log('onNavKey', data, step)
     }
 }
 
-Neo.applyClassConfig(TreeModel);
-
-export default TreeModel;
+export default Neo.setupClass(TreeModel);

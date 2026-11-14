@@ -1,0 +1,310 @@
+# Whitebox E2E Testing with Neural Link
+
+Traditional end-to-end (E2E) testing treats the application as a "black box," interacting purely through DOM element locators (e.g. `page.locator('button')`) and asserting visual outputs. In heavily virtualized environments like Neo.mjs, these tests can become flaky as DOM nodes are frequently recycled and state often resides in remote workers asynchronously decoupled from the main thread.
+
+To tackle this, the Neo.mjs team pioneered the **Neural Link Bridge**. It allows our testing frameworks to penetrate the worker boundary, giving tests direct, synchronous access to the Neo.mjs runtime state. This is **Whitebox E2E Testing**.
+
+## Why Whitebox E2E?
+
+1. **State Over Locators:** Instead of attempting to find an ephemeral DOM node, you find the exact logical Component Instance (e.g., `GridContainer`, `ComboBox`) in the App Worker.
+2. **Direct Value Assertions:** You can read exact runtime values (`component.value`, `component.store.getCount()`) bypassing asynchronous DOM polling.
+3. **Targeted Interaction Navigation:** You combine Playwright's native DOM simulation with the semantic guarantees that the internal component is fully initialized and mapped to the UI.
+
+## Setup Instructions
+
+Whitebox tests are executed using typical Playwright tools but rely on the `neo-config.json` configuration and a specific E2E config suite.
+
+**1. Enable Neural Link**
+Inside your application directory (`examples/yourApp/`), you must ensure your `neo-config.json` mounts the AI client:
+
+```json
+{
+    "appPath": "app.mjs",
+    "theme"  : ["neo-theme-dark", "neo-theme-light"],
+    "useAiClient": true
+}
+```
+
+**2. Test Suite Config Target**
+You MUST specify the E2E specific playwright config (`playwright.config.e2e.mjs`) when running these tests to ensure valid timeouts and environments.
+
+```bash
+npx playwright test test/playwright/e2e/<domain>/YourTestNL.spec.mjs -c test/playwright/playwright.config.e2e.mjs
+```
+
+**3. Choose the Dispatch Path (Dedicated-Worker Adapter vs. Bridge)**
+The `neuralLink` fixture supports two dispatch paths, selected by `NEO_AGENTOS_RUNTIME_ROOT`:
+- **Dedicated-Worker Adapter (`NEO_AGENTOS_RUNTIME_ROOT` unset):** Dispatches directly to the page's own dedicated App Worker (`test/playwright/dedicatedWorkerNeuralLink.mjs`) with no Brain checkout and no WebSocket. The fixture routes `neo-config.json` with `allowAiClientInTests: true` (so the App Worker boots the AI service registry without dialing a Bridge), addresses the captured dedicated App Worker handle directly (never searching by `appName`), mints a fresh `{agentId, sessionId}` writer pair for each test through `Neo.ai.Client#handleTestRequest`, and releases/sweeps that pair via `Neo.ai.Client#handleAgentDisconnected` during fixture teardown even when a test throws.
+- **Neural Link Bridge (`NEO_AGENTOS_RUNTIME_ROOT` set to an absolute `neo-agent-brain` checkout):** Loads the Brain's Neural Link services and dispatches over WebSocket through the Bridge. Set `NEO_AGENTOS_RUNTIME_ROOT=/abs/path/to/neo-agent-brain` (with `npm ci` installed) to run the Bridge path. While it is unset, `playwright.config.e2e.mjs` deselects every `neuralLink` spec that `test/playwright/externalBrainSelection.mjs` does not list as adapter-eligible.
+
+## Hosted CI
+
+The engine tier (`.github/workflows/test-e2e.yml`) runs without a Brain, so its population is the Brain-free specs, the adapter-eligible ones included.
+
+No CI test job provisions a Brain. The specs that need one run only locally, with `NEO_AGENTOS_RUNTIME_ROOT` set: the Bridge's own sessions, imports of Brain services, and the window specs the off-socket adapter cannot run yet. Run the ones your change reaches before you hand it off. `LOCAL_ONLY` in `e2eCiSelection.mjs` names each one with its reason, and the tier refuses to start while a Neural Link spec is in neither `ADAPTER_ELIGIBLE_SPECS` nor `LOCAL_ONLY`, so a new spec is never silently left out of CI.
+
+The shared scope classifier picks the tier's population:
+- A **`dev` push** runs the tier in **full**, on fourteen shards.
+- A **pull request** whose change reaches the E2E impact boundary runs only the specs it can reach. `buildScripts/util/e2eSpecReach.mjs` maps each spec to the app it navigates and that app's static import closure, plus the helpers the spec imports. `selectSpecs` in `e2eCiSelection.mjs` then picks:
+  - every spec that reaches a changed file, or whose app fetches it;
+  - every changed spec;
+  - the specs the map cannot place, which run with every selection.
+
+  The matrix shrinks to the selection's share, and a selection with none of the tier's specs starts no job.
+- Some changes run every spec instead:
+  - a foundation path: `src/core`, the worker, main-thread and vdom entry points, the canvas workers, top-level `src/*.mjs`, and the theme;
+  - a file that loads modules by name or by computed path;
+  - a module no static import names, because a computed import can still load it;
+  - a file the map cannot place;
+  - a change whose files are all e2e specs.
+- Any other pull request selects **none** and starts no job. The *Classify test scope* summary names the reason and each changed file's boundary rule.
+
+The tier's job summary names what the selection ran and why, spec by spec. A `dev` red after a selective green belongs to the merged pull request's author: their change is the one the selection judged unable to reach the spec. They triage it first, rerunning a chronic flaker on record and noting it on that flaker's ticket, and otherwise fixing forward or reverting.
+
+Each shard's test step stops at five minutes.
+
+The shards split the tier by measured time, not by test count. `buildScripts/util/e2eEngineDurations.json` holds each file's seconds, and `e2eCiSelection.mjs` gives each file, longest first, to the shard with the least time so far. A file the table does not list yet counts as its median, so a new spec needs no table edit. When the shards' times drift from the table, rebuild it from a full `dev` run's log:
+
+```bash
+gh run view <run-id> --log | node buildScripts/util/e2eCiSelection.mjs --engine-durations > buildScripts/util/e2eEngineDurations.json
+```
+
+The coverage summary names every class of spec the tier leaves out, with its owner: the local-only specs, the Workstation specs a hosted runner cannot composite, and each exclusion `e2eCiSelection.mjs` declares.
+
+## Connecting the Neural Link (Fixtures)
+
+Whitebox E2E tests are located in `test/playwright/e2e/`. Instead of manually establishing WebSocket connections, the Neo.mjs team provides a powerful Playwright fixture called `neuralLink`.
+
+When `NEO_AGENTOS_RUNTIME_ROOT` is unset, `neuralLink` runs in-process against the page's captured dedicated App Worker via `Neo.ai.Client#handleTestRequest`, opening zero WebSockets. When `NEO_AGENTOS_RUNTIME_ROOT` names an absolute `neo-agent-brain` checkout, the fixture connects to a Bridge already listening on `aiConfig.port`, and spawns one when none is. You never need a Bridge running first — the fixture supplies the working directory a spawn requires, by walking up from its own location to the package that declares the Bridge npm script.
+
+It deliberately does not use `process.cwd()`. Playwright resolves `testDir` from the config file and never changes directory, so `npx playwright test -c /abs/path/config.mjs` invoked from anywhere is a valid run whose worker cwd is that anywhere. Where no ancestor declares the script, the fixture leaves the working directory unset and the spawn refuses by name, rather than starting `npm` somewhere it cannot resolve.
+
+### Core Connection Boilerplate
+When tests launch, you can use the `neuralLink` parameter injected by Playwright. This abstracts away the internal component architecture and exposes a simple SDK.
+
+```javascript
+import { test, expect } from '../../fixtures.mjs'; // Use custom fixtures!
+
+test.describe('Grid BigData App (Neural Link)', () => {
+
+    test('Verify connection and inspect state', async ({ page, neuralLink }) => {
+        // 1. Navigate to the app inside the browser worker
+        await page.goto('examples/grid/bigData/index.html');
+
+        // 2. Connect the fixture to the running App Worker
+        //
+        // Session resolution: `connectToApp()` IDENTITY-BINDS to this page's own App Worker —
+        // it polls the page's `Neo.worker.App.getWorkerId()` remote (bounded wait) and passes
+        // that id to the bridge's exact-id session match. The appName argument is a FALLBACK
+        // only (older builds without the remote, or non-Neo pages). This matters whenever a
+        // second same-named app is connected to the bridge (e.g. a developer's open dev tab):
+        // appName resolution binds the OLDEST matching session, so without the identity bind
+        // the test's worker queries would silently read the other app while `page.mouse`
+        // drives this page.
+        //
+        // Examples use their fully qualified namespace as the fallback name:
+        const nlApp = await neuralLink.connectToApp('Neo.examples.grid.bigData');
+
+        // Full Applications use their named string identifier:
+        // const nlApp = await neuralLink.connectToApp('Workstation');
+
+        // Tests go here...
+    });
+});
+```
+
+## Component Queries & State Inspection
+
+The core of Whitebox testing rests on `queryComponent`. By calling it through the `nlApp` fixture, you find components by semantic layout rather than DOM classes.
+
+```javascript
+// Extract exact properties directly from the instance!
+const queryResult = await nlApp.queryComponent(
+    { ntype: 'combobox', name: 'amountRows' }, // Selector
+    ['value'] // Return Properties
+);
+
+// Important: Return properties are nested under `.properties`
+// Store records and complex objects are serialized.
+expect(queryResult.properties.value.id).toBe("20000");
+```
+
+### Advanced Discovery
+
+Queries can also be hierarchically bounded by looking for children inside specific component graphs.
+
+```javascript
+test('Verify foundational grid structure', async ({ page, neuralLink }) => {
+    await page.goto('examples/grid/bigData/index.html');
+
+    // Securely bridge to the specific Application Worker
+    const nlApp = await neuralLink.connectToApp('Neo.examples.grid.bigData');
+
+    // 1. Fetch MainView (It will always return the root wrapper)
+    const viewResult = await nlApp.queryComponent({ className: 'Neo.examples.grid.bigData.MainContainer' });
+
+    // 2. Discover children inside the root scope
+    // Note: The fixture currently masks rootId natively if we query globally,
+    // but the underlying API fully supports ID-scoped boundaries.
+    const gridResult = await nlApp.queryComponent({ ntype: 'grid-container' });
+
+    expect(gridResult.id).toBeDefined();
+});
+```
+
+## The Expanded Fixture API
+
+While `queryComponent` and `getComponent` cover basic state inspection, `nlApp` provides a robust, native suite of tools to perfectly manipulate and measure the Application Worker from Playwright.
+
+### Layout & VDOM Validation
+Instead of brittle CSS selectors, you can use Neo.mjs layout tools to query the Virtual DOM and extract physical measurements, natively executed inside the browser.
+
+```javascript
+// Locate internal VNode elements to check render boundaries
+const rowVdom = await nlApp.queryVdom({ cls: 'neo-grid-row' });
+
+// Get exact screen boundaries of multiple components simultaneously
+const rects = await nlApp.getDomRect(['component-id-1', 'component-id-2']);
+
+// Directly extract CSS variables or specific computed values
+const styles = await nlApp.getComputedStyles('component-id-1', ['--neo-grid-row-height', 'display']);
+```
+
+### Interaction Simulation
+If Playwright's synthetic DOM clicks fail or suffer from z-index races on complex components, you can manually dispatch native browser events straight onto the VNode target via the component ID.
+
+```javascript
+// Bypass Playwright DOM clicking, and dispatch to the VNode listener natively
+await nlApp.simulateEvent([
+    {
+        action: 'click',
+        targetId: 'my-grid-row-1'
+    }
+]);
+```
+
+`simulateEvent` is the raw escape hatch for caller-authored event sequences. For a complete
+drag gesture, use `driveDrag`: Engine resolves live node/window geometry, reads the source
+window's live Pointer-sensor thresholds, dispatches one atomic source-document gesture, and returns
+a receipt distinguishing raw event dispatch from correlated `drag:start` / `drag:move` /
+`drag:end` observations:
+
+```javascript
+const receipt = await nlApp.driveDrag({
+    source     : {targetId: splitterId, windowId},
+    destination: {deltaX: 60, deltaY: 0},
+    steps      : 8,
+    durationMs : 160
+});
+
+expect(receipt).toMatchObject({success: true, phase: 'complete', released: true});
+expect(receipt.observed.moveCount).toBeGreaterThan(0);
+```
+
+The physical receipt deliberately says nothing about the component's semantic outcome. Assert the
+grid order, splitter size, or dock document separately through Neural Link.
+
+Use Playwright's native mouse when the test must **hold** the pointer down, inspect mid-gesture
+state, press Escape, or interleave application-specific readiness waits. `driveDrag` owns a whole
+transaction; it is not a pause/resume API. A native stepped move remains the right pattern for those
+interactive assertions:
+
+```javascript
+// Held pointer-drag for mid-interaction assertions:
+await page.mouse.move(startX, startY);
+await page.mouse.down();
+await page.mouse.move(targetX, targetY, { steps: 60 });
+await page.mouse.up();
+```
+
+See `test/playwright/e2e/grid/ColumnCrossBodyDnD.spec.mjs` for a worked locked-column drag (in-region landing + cross-region re-home) that pairs the gesture with Neural Link worker assertions.
+
+### Topology, Nodes, & Namespaces
+Get a bird's eye view of the entire runtime environment, discovering connected workers or resolving the class hierarchy.
+
+```javascript
+// Map component hierarchy dynamically
+const compTree = await nlApp.getComponentTree(undefined, 2); // Depth limit 2
+
+// View all connected Apps / Windows
+const workers = await nlApp.getWorkerTopology();
+const windows = await nlApp.getWindowTopology();
+
+// Verify that specific classes loaded successfully
+const hasGrid = await nlApp.checkNamespace('Neo.grid.Container');
+```
+
+### Runtime & App State
+Tools exist to inspect stores, active listeners, global config, or drag states.
+
+```javascript
+// View what raw events are actually bound to this specific layout block
+const listeners = await nlApp.getDomEventListeners('my-grid-container');
+
+// Dump the full raw store records (paginated) without querying the component
+const storeData = await nlApp.inspectStore('my-data-store', 50, 0);
+
+// Review global configurations
+const globalConfig = await nlApp.manageNeoConfig('get');
+```
+
+### Advanced Metaprogramming
+The Neural Link Fixture exposes powerful introspection and runtime patching capabilities for high-level whitebox debugging.
+
+> [!WARNING]
+> The `patchCode` method requires `Neo.config.enableHotPatching = true` to be set in your `neo-config.json`. Due to significant security concerns, hot patching is disabled by default and should **never** be enabled in production environments.
+
+```javascript
+// Extract the fully resolved configuration blueprint and API hooks for a class
+const blueprint = await nlApp.inspectClass('Neo.button.Base');
+
+// View the exact source code of a method currently loaded in memory
+const methodSource = await nlApp.getMethodSource('Neo.button.Base', 'onClick');
+
+// Dynamically replace the method implementation during E2E testing
+await nlApp.patchCode(
+    'Neo.button.Base',
+    'onClick',
+    'function(data) { console.log("Patched!"); }'
+);
+```
+
+## Legacy RMA vs Neural Link
+
+Before Neural Link, Early Neo.mjs testing relied on Remote Method Access (RMA) using the `window.Neo` object mapped from the browser context to the worker (e.g. `await page.evaluate(() => Neo.worker.App.getConfigs(...))`).
+
+This legacy strategy, provided by the fallback `neo` fixture, suffers from serialization drops and lacks targeted debugging interfaces. The `neuralLink` SDK (`nlApp`) completely supersedes these legacy calls and connects directly to the core MCP server logic via postMessage boundaries. You should **always** use `neuralLink` for Neo native testing. Legacy RMA is strictly retained as a fallback layer for React/Angular wrapped Neo integrations where the Neural Link is disabled.
+
+## A Complete Example Walkthrough
+
+Let's look at how Whitebox testing effectively validates complex grid data inputs, without writing a single CSS locator for the inner workings.
+
+This test simulates interaction on the Grid row counter and uses Neural Link to assert the engine accurately digested the new variable asynchronously.
+
+```javascript
+test('Simulate DOM selection and verify Neo.mjs engine data', async ({ page, neuralLink }) => {
+    await page.goto('examples/grid/bigData/index.html');
+
+    // Bound the bridge to the specific namespace to prevent inference races
+    const nlApp = await neuralLink.connectToApp('Neo.examples.grid.bigData');
+
+    // 1. Visually identify the ComboBox using typical Playwright Locator on the DOM wrapper layer
+    const rowComboBox = page.locator('.neo-combobox').filter({ hasText: 'Amount Rows' });
+
+    // Simulate standard user input
+    await rowComboBox.click();
+    await page.keyboard.press('ArrowDown');
+    await page.keyboard.press('Enter');
+
+    // 2. Validate Engine Memory. Was the data actually stored by the Application Worker?
+    const queryResult = await nlApp.queryComponent(
+        { ntype: 'combobox', name: 'amountRows' },
+        ['value']
+    );
+
+    // Instead of looking for DOM text reading '40k', we verify what the class actually believes to be true.
+    expect(queryResult.properties.value.id).toBe("40000");
+});
+```
+
+Using this architecture, you get the absolute best of both paradigms: Playwright manages browser/input simulation with massive parity while the Neural Link ensures you never have to guess about component health or internal state logic.

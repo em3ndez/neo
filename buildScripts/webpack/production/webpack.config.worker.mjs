@@ -1,11 +1,12 @@
-import fs      from 'fs-extra';
-import path    from 'path';
-import webpack from 'webpack';
+import fs                        from 'fs-extra';
+import path                      from 'path';
+import canvasModuleContextPlugin from '../canvasModuleContextPlugin.mjs';
+import workerContextRebasePlugin from '../workerContextRebasePlugin.mjs';
 
 const cwd            = process.cwd(),
       requireJson    = path => JSON.parse(fs.readFileSync((path))),
       packageJson    = requireJson(path.resolve(cwd, 'package.json')),
-      neoPath        = packageJson.name === 'neo.mjs' ? './' : './node_modules/neo.mjs/',
+      neoPath        = packageJson.name.includes('neo.mjs') ? './' : './node_modules/neo.mjs/',
       buildTarget    = requireJson(path.resolve(neoPath, 'buildScripts/webpack/production/buildTarget.json')),
       filenameConfig = requireJson(path.resolve(neoPath, 'buildScripts/webpack/json/build.json')),
       entry          = {};
@@ -28,12 +29,14 @@ export default env => {
         entry,
         target: 'webworker',
 
+        experiments: {
+            outputModule: true
+        },
+
+        // The rebase runs first, so the Canvas admission sees the workspace's app-space root
         plugins: [
-            new webpack.ContextReplacementPlugin(/.*/, context => {
-                if (!insideNeo && context.context.includes('/src/worker')) {
-                    context.request = '../../' + context.request;
-                }
-            })
+            workerContextRebasePlugin(insideNeo, cwd),
+            ...env.worker === 'canvas' ? [canvasModuleContextPlugin(insideNeo, cwd)] : []
         ],
 
         output: {
@@ -42,12 +45,14 @@ export default env => {
             filename: chunkData => {
                 let name = chunkData.chunk.name;
 
-                if (filenameConfig.workers.hasOwnProperty(name)) {
+                if (Object.hasOwn(filenameConfig.workers, name)) {
                     return filenameConfig.workers[name].output;
                 }
             },
 
-            path: path.resolve(cwd, buildTarget.folder)
+            library   : {type: 'module'},
+            path      : path.resolve(cwd, buildTarget.folder),
+            publicPath: 'auto'
         }
     }
 };

@@ -16,6 +16,7 @@ class Component extends BaseComponent {
         className: 'RealWorld.view.article.Component',
         /**
          * @member {Object|null} author_=null
+         * @reactive
          */
         author_: null,
         /**
@@ -24,6 +25,7 @@ class Component extends BaseComponent {
         baseCls: ['article-page'],
         /**
          * @member {String|null} body_=null
+         * @reactive
          */
         body_: null,
         /**
@@ -38,6 +40,7 @@ class Component extends BaseComponent {
         commentComponents: [],
         /**
          * @member {Object[]|null} comments_=null
+         * @reactive
          */
         comments_: null,
         /**
@@ -46,22 +49,27 @@ class Component extends BaseComponent {
         createCommentComponent: null,
         /**
          * @member {String|null} createdAt_=null
+         * @reactive
          */
         createdAt_: null,
         /**
          * @member {Boolean} favorited_=false
+         * @reactive
          */
         favorited_: false,
         /**
          * @member {Number|null} favoritesCount_=null
+         * @reactive
          */
         favoritesCount_: null,
         /**
          * @member {Array|null} tagList_=null
+         * @reactive
          */
         tagList_: null,
         /**
          * @member {String|null} title_=null
+         * @reactive
          */
         title_: null,
         /**
@@ -80,33 +88,34 @@ class Component extends BaseComponent {
                             {tag: 'a', cls: ['author'], flag: 'username'},
                             {tag: 'span', cls: ['date'], flag: 'createdAt'}
                         ]},
-                        {tag: 'button', cls: ['btn', 'btn-sm', 'btn-outline-secondary', 'follow-button'], cn: [
+                        {tag: 'button', cls: ['btn', 'btn-sm', 'btn-outline-secondary', 'follow-button'], flag: 'follow-button', cn: [
                             {tag: 'i', flag: 'followIcon'},
                             {vtype: 'text', flag: 'followAuthor'},
                             {vtype: 'text', flag: 'username'}
                         ]},
                         {tag: 'button', cls: ['btn', 'btn-sm', 'btn-outline-secondary', 'edit-button'], flag: 'edit-button', removeDom: true, cn: [
                             {tag: 'i', cls: ['ion-edit']},
-                            {vtype: 'text', html: ' Edit Article'}
+                            {vtype: 'text', text: ' Edit Article'}
                         ]},
                         {vtype: 'text', html: '&nbsp;&nbsp;'},
                         {tag: 'button', cls: ['btn', 'btn-sm', 'btn-outline-primary', 'favorite-button'], flag: 'favorited', cn: [
                             {tag: 'i', cls: ['ion-heart']},
                             {vtype: 'text', html: '&nbsp;'},
-                            {vtype: 'text'},
-                            {vtype: 'text', html: ' Post '},
+                            {vtype: 'text', flag: 'favorite-text'},
+                            {vtype: 'text', text: ' Post '},
                             {tag: 'span', cls: ['counter'], flag: 'favoritesCount'}
                         ]},
                         {tag: 'button', cls: ['btn', 'btn-sm', 'btn-outline-danger', 'delete-button'], flag: 'delete-button', removeDom: true, cn: [
                             {tag: 'i', cls: ['ion-trash-a']},
-                            {vtype: 'text', html: ' Delete Article'}
+                            {vtype: 'text', text: ' Delete Article'}
                         ]}
                     ]}
                 ]}
             ]},
             {cls: ['container', 'page'], cn: [
                 {cls: ['row', 'article-content'], cn: [
-                    {cls: ['col-md-12'], flag: 'body', cn: []}
+                    // cn[0]: the body's html (afterSetBody), cn[1]: the tag list (afterSetTagList), which arrives first
+                    {cls: ['col-md-12'], flag: 'body', cn: [{removeDom: true}]}
                 ]},
                 {tag: 'hr'},
                 {cls: ['article-actions'], flag: 'article-actions', cn: [
@@ -114,9 +123,9 @@ class Component extends BaseComponent {
                         {tag: 'a', flag: 'userimage', cn: [{tag: 'img'}]},
                         {cls: ['info'], cn: [
                             {tag: 'a', cls: ['author'], flag: 'username'},
-                            {tag: 'span', cls: ['date'], html: 'January 20th'}
+                            {tag: 'span', cls: ['date'], flag: 'createdAt'}
                         ]},
-                        {tag: 'button', cls: ['btn', 'btn-sm', 'btn-outline-secondary', 'follow-button'], cn: [
+                        {tag: 'button', cls: ['btn', 'btn-sm', 'btn-outline-secondary', 'follow-button'], flag: 'follow-button', cn: [
                             {tag: 'i', flag: 'followIcon'},
                             {vtype: 'text', flag: 'followAuthor'},
                             {vtype: 'text', flag: 'username'}
@@ -125,8 +134,8 @@ class Component extends BaseComponent {
                         {tag: 'button', cls: ['btn', 'btn-sm', 'btn-outline-primary', 'favorite-button'], flag: 'favorited', cn: [
                             {tag: 'i', cls: ['ion-heart']},
                             {vtype: 'text', html: '&nbsp;'},
-                            {vtype: 'text'},
-                            {vtype: 'text', html: ' Post '},
+                            {vtype: 'text', flag: 'favorite-text'},
+                            {vtype: 'text', text: ' Post '},
                             {tag: 'span', cls: ['counter'], flag: 'favoritesCount'}
                         ]}
                     ]}
@@ -168,11 +177,13 @@ class Component extends BaseComponent {
 
         me.createCommentComponent = Neo.create({
             module   : CreateCommentComponent,
+            appName  : me.appName,
             parentId : me.id,
-            userImage: currentUser?.image || null
+            userImage: currentUser?.image || null,
+            windowId : me.windowId
         });
 
-        VDomUtil.getByFlag(me.vdom, 'comments-section').cn.unshift(me.createCommentComponent.vdom);
+        VDomUtil.getByFlag(me.vdom, 'comments-section').cn.unshift(me.createCommentComponent.createVdomReference());
         me.update();
 
         super.onConstructed();
@@ -190,7 +201,7 @@ class Component extends BaseComponent {
                 vdom = me.vdom;
 
             VDomUtil.getFlags(vdom, 'followAuthor').forEach(node => {
-                node.html = value.following ? ' Unfollow ' : ' Follow ';
+                node.text = value.following ? ' Unfollow ' : ' Follow ';
             });
 
             VDomUtil.getFlags(vdom, 'followIcon').forEach(node => {
@@ -204,11 +215,11 @@ class Component extends BaseComponent {
 
             VDomUtil.getFlags(vdom, 'username').forEach(node => {
                 node.href = '#/profile/' + value.username;
-                node.html = value.username;
+                node.text = value.username;
             });
 
             me.update();
-            me.onCurrentUserChange();
+            me.onCurrentUserChange()
         }
     }
 
@@ -220,16 +231,18 @@ class Component extends BaseComponent {
      */
     afterSetBody(value, oldValue) {
         if (value) {
-            Neo.main.addon.Markdown.markdownToHtml(value).then(html => {
-                VDomUtil.getByFlag(this.vdom, 'body').cn[0] = {
-                    cn: [{
-                        tag: 'p',
-                        html
-                    }]
+            let me = this;
+
+            Neo.main.addon.Markdown.markdownToHtml({
+                markdown: value,
+                windowId: me.windowId
+            }).then(html => {
+                VDomUtil.getByFlag(me.vdom, 'body').cn[0] = {
+                    cn: [{tag: 'p', html}]
                 };
 
-                this.update();
-            });
+                me.update()
+            })
         }
     }
 
@@ -247,7 +260,7 @@ class Component extends BaseComponent {
 
             if (!me.commentComponent) {
                 module = await import('./CommentComponent.mjs');
-                me.commentComponent = module.default;
+                me.commentComponent = module.default
             }
 
             container.cn = [container.cn.shift()]; // keep the CreateCommentComponent
@@ -264,14 +277,17 @@ class Component extends BaseComponent {
                 if (!me.commentComponents[index]) {
                     me.commentComponents[index] = Neo.create({
                         module  : me.commentComponent,
+                        appName : me.appName,
                         parentId: me.id,
+                        windowId: me.windowId,
                         ...config
                     });
                 } else {
-                    me.commentComponents[index].set(config, true);
+                    // A referenced comment renders its own changes: the parent's update leaves it in place
+                    me.commentComponents[index].set(config);
                 }
 
-                container.cn.push(me.commentComponents[index].vdom);
+                container.cn.push(me.commentComponents[index].createVdomReference());
             });
 
             me.update();
@@ -286,11 +302,16 @@ class Component extends BaseComponent {
      */
     afterSetCreatedAt(value, oldValue) {
         if (value) {
-            VDomUtil.getByFlag(this.vdom, 'createdAt').html = new Intl.DateTimeFormat('en-US', {
+            let text = new Intl.DateTimeFormat('en-US', {
                 day  : 'numeric',
                 month: 'long',
                 year : 'numeric'
             }).format(new Date(value));
+
+            // The banner and the article actions each show the date
+            VDomUtil.getFlags(this.vdom, 'createdAt').forEach(node => {
+                node.text = text
+            });
 
             this.update();
         }
@@ -306,7 +327,7 @@ class Component extends BaseComponent {
         let me = this;
 
         VDomUtil.getFlags(me.vdom, 'favorited').forEach(node => {
-            node.cn[2].html = value ? 'Unfavorite' : 'Favorite';
+            VDomUtil.getByFlag(node, 'favorite-text').text = value ? 'Unfavorite' : 'Favorite';
 
             NeoArray.add(node.cls, value ? 'btn-primary' : 'btn-outline-primary');
             NeoArray.remove(node.cls, value ? 'btn-outline-primary' : 'btn-primary');
@@ -331,10 +352,10 @@ class Component extends BaseComponent {
     afterSetFavoritesCount(value, oldValue) {
         if (Neo.isNumber(value)) {
             VDomUtil.getFlags(this.vdom, 'favoritesCount').forEach(node => {
-                node.html = `(${value})`;
+                node.text = `(${value})`;
             });
 
-            this.update();
+            this.update()
         }
     }
 
@@ -360,7 +381,7 @@ class Component extends BaseComponent {
                 tagList.cn.push({
                     tag : 'li',
                     cls : ['tag-default', 'tag-pill', 'tag-outline'],
-                    html: item
+                    text: item
                 })
             });
 
@@ -381,14 +402,14 @@ class Component extends BaseComponent {
      * @protected
      */
     afterSetTitle(value, oldValue) {
-        VDomUtil.getByFlag(this.vdom, 'title').html = value;
-        this.update();
+        VDomUtil.getByFlag(this.vdom, 'title').text = value;
+        this.update()
     }
 
     /**
      *
      */
-    onCurrentUserChange() {console.log('### onCurrentUserChange');
+    onCurrentUserChange() {
         let me          = this,
             currentUser = me.getController().currentUser,
             vdom        = me.vdom,
@@ -397,10 +418,9 @@ class Component extends BaseComponent {
         if (me.author && currentUser) {
             isCurrentUser = me.author.username === currentUser.username;
 
-            vdom.cn[0].cn[0].cn[1].cn[2].removeDom = isCurrentUser; // follow user button
-            vdom.cn[0].cn[0].cn[1].cn[5].removeDom = isCurrentUser; // favorite post button
-
-            VDomUtil.getByFlag(vdom, 'article-actions').removeDom = isCurrentUser;
+            VDomUtil.getFlags(vdom, 'follow-button').forEach(node => node.removeDom = isCurrentUser);
+            VDomUtil.getFlags(vdom, 'favorited').forEach(node => node.removeDom = isCurrentUser);
+            VDomUtil.getByFlag(vdom, 'article-actions').removeDom = isCurrentUser; // this one is unique
             VDomUtil.getByFlag(vdom, 'delete-button')  .removeDom = !isCurrentUser;
             VDomUtil.getByFlag(vdom, 'edit-button')    .removeDom = !isCurrentUser;
 
@@ -443,6 +463,4 @@ class Component extends BaseComponent {
     }
 }
 
-Neo.applyClassConfig(Component);
-
-export default Component;
+export default Neo.setupClass(Component);

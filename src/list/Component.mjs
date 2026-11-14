@@ -1,11 +1,11 @@
-import Base from './Base.mjs';
+import List from './Base.mjs';
 
 /**
  * A base class for lists which will use component based list items
  * @class Neo.list.Component
  * @extends Neo.list.Base
  */
-class Component extends Base {
+class Component extends List {
     static config = {
         /**
          * @member {String} className='Neo.list.Component'
@@ -33,8 +33,22 @@ class Component extends Base {
         super.afterSetAppName(value, oldValue);
 
         value && this.items?.forEach(item => {
-            item.appName = value;
-        });
+            item.appName = value
+        })
+    }
+
+    /**
+     * Triggered after the windowId config got changed
+     * @param {Number|null} value
+     * @param {Number|null} oldValue
+     * @protected
+     */
+    afterSetWindowId(value, oldValue) {
+        super.afterSetWindowId(value, oldValue);
+
+        value && this.items?.forEach(item => {
+            item.windowId = value
+        })
     }
 
     /**
@@ -44,10 +58,10 @@ class Component extends Base {
         let items = this.items || [];
 
         items.forEach(item => {
-            item.destroy();
+            item.destroy()
         });
 
-        super.destroy(...args);
+        super.destroy(...args)
     }
 
     /**
@@ -55,7 +69,7 @@ class Component extends Base {
      * @returns {String}
      */
     getComponentId(index) {
-        return `${this.id}__${index}__component`;
+        return `${this.id}__${index}__component`
     }
 
     /**
@@ -63,7 +77,7 @@ class Component extends Base {
      * @returns {String}
      */
     getItemId(recordId) {
-        return `${this.id}__${this.store.indexOf(recordId)}`;
+        return `${this.id}__${this.store.indexOf(recordId)}`
     }
 
     /**
@@ -72,7 +86,7 @@ class Component extends Base {
      */
     getItemRecordId(vnodeId) {
         let itemId = vnodeId.split('__')[1];
-        return this.store.getAt(parseInt(itemId))[this.getKeyProperty()];
+        return this.store.getKey(this.store.getAt(parseInt(itemId)))
     }
 
     /**
@@ -83,10 +97,11 @@ class Component extends Base {
      */
     onStoreSort(data) {
         this.sortItems(data);
-        super.onStoreSort(data);
+        super.onStoreSort(data)
     }
 
     /**
+     * @summary Reorders active components while retaining spare owned slots for later growth and teardown.
      * @param {Object} data
      * @param {Object[]} data.items
      * @param {Object[]} data.previousItems
@@ -95,22 +110,25 @@ class Component extends Base {
     sortItems(data) {
         let me       = this,
             newItems = [],
-            fromIndex, key, previousKeys;
+            fromIndex, previousKeys;
 
         if (me.items) {
-            key          = me.getKeyProperty();
-            previousKeys = data.previousItems.map(e => e[key]);
-
-            data.items.forEach(item => {
-                fromIndex = previousKeys.indexOf(item[key]);
-                newItems.push(me.items[fromIndex]);
+            me.items.forEach(item => {
+                item.setSilent({id: null})
             });
 
-            me.items = newItems;
+            previousKeys = data.previousItems.map(e => me.store.getKey(e));
+
+            data.items.forEach(item => {
+                fromIndex = previousKeys.indexOf(me.store.getKey(item));
+                newItems.push(me.items[fromIndex])
+            });
+
+            const active = new Set(newItems);
+            me.updateDepth = -1;
+            me.items = newItems.concat(me.items.filter(item => !active.has(item)))
         }
     }
 }
 
-Neo.applyClassConfig(Component);
-
-export default Component;
+export default Neo.setupClass(Component);

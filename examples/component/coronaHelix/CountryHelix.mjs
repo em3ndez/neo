@@ -27,10 +27,12 @@ class CountryHelix extends Helix {
         /**
          * The vertical delta between each helix item (increasing this value will create a spiral)
          * @member {Number} deltaY=1.2
+         * @reactive
          */
         deltaY: 1.2,
         /**
          * @member {Object} itemTpl_
+         * @reactive
          */
         itemTpl:
         {cls: ['surface', 'neo-helix-item'], style: {}, tabIndex: '-1', cn: [
@@ -74,11 +76,13 @@ class CountryHelix extends Helix {
         /**
          * The radius of the Helix in px
          * @member {Number} radius=2500
+         * @reactive
          */
         radius: 2500,
         /**
          * The rotationAngle of the Helix in degrees
          * @member {Number} rotationAngle=720
+         * @reactive
          */
         rotationAngle: 720,
         /**
@@ -88,16 +92,19 @@ class CountryHelix extends Helix {
         showCloneInfo: false,
         /**
          * @member {Neo.data.Store} store=CountryStore
+         * @reactive
          */
         store: CountryStore,
         /**
          * The translateX value gets included into each helix item
          * @member {Number} translateY=500
+         * @reactive
          */
         translateY: 500,
         /**
          * The translateX value gets included into each helix item
          * @member {Number} translateZ_=-2300
+         * @reactive
          */
         translateZ: -2300
     }
@@ -113,7 +120,7 @@ class CountryHelix extends Helix {
             firstChild = vdomItem.cn[0].cn[0],
             table      = firstChild.cn[1];
 
-        vdomItem.id = me.getItemVnodeId(record[me.keyProperty]);
+        vdomItem.id = me.getItemVnodeId(me.store.getKey(record));
 
         firstChild.cn[0].cn[0].src  = me.getCountryFlagUrl(record.country);
         firstChild.cn[0].cn[1].html = record.country;
@@ -126,7 +133,7 @@ class CountryHelix extends Helix {
         table.cn[1].cn[4].html = record.todayDeaths;
         table.cn[2].cn[4].html = record.critical;
 
-        return vdomItem;
+        return vdomItem
     }
 
     /**
@@ -191,7 +198,7 @@ class CountryHelix extends Helix {
 
         imageName = map[imageName] || imageName;
 
-        return 'https://raw.githubusercontent.com/neomjs/pages/master/resources/images/flaticon/country_flags/png/' + imageName + '.png'
+        return 'https://raw.githubusercontent.com/neomjs/pages/main/resources_pub/images/flaticon/country_flags/png/' + imageName + '.png'
     }
     /**
      * @returns {String}
@@ -202,7 +209,7 @@ class CountryHelix extends Helix {
             translateY = (me.offsetHeight - 2700) / 6,
             translateZ = 100400 + me.perspective / 1.5;
 
-        return 'matrix3d(1,0,0,0,0,1,0,0,0,0,1,0,'+translateX+','+translateY+','+translateZ+',1)';
+        return 'matrix3d(1,0,0,0,0,1,0,0,0,0,1,0,'+translateX+','+translateY+','+translateZ+',1)'
     }
 
     /**
@@ -210,10 +217,14 @@ class CountryHelix extends Helix {
      * @returns {String}
      */
     getItemId(vnodeId) {
-        return vnodeId.split('__')[1];
+        let itemId = vnodeId.split('__')[1];
+
+        if (this.store.getKeyType()?.includes('int')) {
+            itemId = parseInt(itemId)
+        }
+
+        return itemId
     }
 }
 
-Neo.applyClassConfig(CountryHelix);
-
-export default CountryHelix;
+export default Neo.setupClass(CountryHelix);

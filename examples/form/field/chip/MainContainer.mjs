@@ -40,9 +40,9 @@ class MainContainer extends ConfigurationViewport {
             style    : {marginTop: '10px'}
         }, {
             module   : CheckBox,
-            checked  : me.exampleComponent.hidePickerOnSelect,
-            labelText: 'hidePickerOnSelect',
-            listeners: {change: me.onConfigChange.bind(me, 'hidePickerOnSelect')},
+            checked  : me.exampleComponent.editable,
+            labelText: 'editable',
+            listeners: {change: me.onConfigChange.bind(me, 'editable')},
             style    : {marginTop: '10px'}
         }, {
             module        : Radio,
@@ -52,7 +52,7 @@ class MainContainer extends ConfigurationViewport {
             listeners     : {change: me.onRadioChange.bind(me, 'labelPosition', 'top')},
             name          : 'labelPosition',
             style         : {marginTop: '10px'},
-            valueLabelText: 'top'
+            valueLabel    : 'top'
         }, {
             module        : Radio,
             checked       : me.exampleComponent.labelPosition === 'right',
@@ -60,7 +60,7 @@ class MainContainer extends ConfigurationViewport {
             labelText     : '',
             listeners     : {change: me.onRadioChange.bind(me, 'labelPosition', 'right')},
             name          : 'labelPosition',
-            valueLabelText: 'right'
+            valueLabel    : 'right'
         }, {
             module        : Radio,
             checked       : me.exampleComponent.labelPosition === 'bottom',
@@ -68,7 +68,7 @@ class MainContainer extends ConfigurationViewport {
             labelText     : '',
             listeners     : {change: me.onRadioChange.bind(me, 'labelPosition', 'bottom')},
             name          : 'labelPosition',
-            valueLabelText: 'bottom'
+            valueLabel    : 'bottom'
         }, {
             module        : Radio,
             checked       : me.exampleComponent.labelPosition === 'left',
@@ -76,7 +76,7 @@ class MainContainer extends ConfigurationViewport {
             labelText     : '',
             listeners     : {change: me.onRadioChange.bind(me, 'labelPosition', 'left')},
             name          : 'labelPosition',
-            valueLabelText: 'left'
+            valueLabel    : 'left'
         }, {
             module        : Radio,
             checked       : me.exampleComponent.labelPosition === 'inline',
@@ -84,7 +84,7 @@ class MainContainer extends ConfigurationViewport {
             labelText     : '',
             listeners     : {change: me.onRadioChange.bind(me, 'labelPosition', 'inline')},
             name          : 'labelPosition',
-            valueLabelText: 'inline'
+            valueLabel    : 'inline'
         }, {
             module   : TextField,
             labelText: 'labelText',
@@ -106,9 +106,9 @@ class MainContainer extends ConfigurationViewport {
             value    : me.exampleComponent.placeholderText
         }, {
             module   : CheckBox,
-            checked  : me.exampleComponent.typeAhead,
-            labelText: 'typeAhead',
-            listeners: {change: me.onConfigChange.bind(me, 'typeAhead')},
+            checked  : me.exampleComponent.readOnly,
+            labelText: 'readOnly',
+            listeners: {change: me.onConfigChange.bind(me, 'readOnly')},
             style    : {marginTop: '10px'}
         }, {
             module   : NumberField,
@@ -119,7 +119,7 @@ class MainContainer extends ConfigurationViewport {
             stepSize : 5,
             style    : {marginTop: '10px'},
             value    : me.exampleComponent.width
-        }];
+        }]
     }
 
     createExampleComponent() {
@@ -129,15 +129,15 @@ class MainContainer extends ConfigurationViewport {
             labelPosition: 'inline',
             labelText    : 'US States',
             labelWidth   : 80,
-            width        : 200,
+            value        : ['CA', 'NY'],
+            valueField   : 'abbreviation',
+            width        : 300,
 
             store: {
                 module: MainStore
             }
-        });
+        })
     }
 }
 
-Neo.applyClassConfig(MainContainer);
-
-export default MainContainer;
+export default Neo.setupClass(MainContainer);

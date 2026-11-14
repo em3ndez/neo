@@ -21,10 +21,11 @@ class CountryGallery extends Gallery {
          * @member {Object} bind
          */
         bind: {
-            country: {twoWay: true, value: data => data.country}
+            country: {key: 'country', twoWay: true}
         },
         /**
          * @member {String|null} country_=null
+         * @reactive
          */
         country_: null,
         /**
@@ -34,6 +35,7 @@ class CountryGallery extends Gallery {
         itemHeight: 280,
         /**
          * @member {Object} itemTpl_
+         * @reactive
          */
         itemTpl:
         {cls: ['neo-gallery-item', 'image-wrap', 'view', 'neo-transition-1000'], tabIndex: '-1', cn: [
@@ -45,24 +47,24 @@ class CountryGallery extends Gallery {
                     ]},
                     {tag: 'table', cls: ['neo-content-table'], cn: [
                         {tag: 'tr', cn: [
-                            {tag: 'td', html: 'Cases'},
+                            {tag: 'td', text: 'Cases'},
                             {tag: 'td', cls: ['neo-align-right']},
                             {tag: 'td', style: {width: '100%'}},
-                            {tag: 'td', html: 'Cases today'},
+                            {tag: 'td', text: 'Cases today'},
                             {tag: 'td', cls: ['neo-align-right']}
                         ]},
                         {tag: 'tr', cn: [
-                            {tag: 'td', html: 'Deaths'},
+                            {tag: 'td', text: 'Deaths'},
                             {tag: 'td', cls: ['neo-align-right', 'neo-content-deaths']},
                             {tag: 'td', style: {width: '100%'}},
-                            {tag: 'td', html: 'Deaths today'},
+                            {tag: 'td', text: 'Deaths today'},
                             {tag: 'td', cls: ['neo-align-right', 'neo-content-deaths']}
                         ]},
                         {tag: 'tr', cn: [
-                            {tag: 'td', html: 'Recovered'},
+                            {tag: 'td', text: 'Recovered'},
                             {tag: 'td', cls: ['neo-align-right', 'neo-content-recovered']},
                             {tag: 'td', style: {width: '100%'}},
-                            {tag: 'td', html: 'Critical'},
+                            {tag: 'td', text: 'Critical'},
                             {tag: 'td', cls: ['neo-align-right', 'neo-content-critical']}
                         ]}
                     ]}
@@ -86,25 +88,36 @@ class CountryGallery extends Gallery {
         selectOnMount: false,
         /**
          * @member {Neo.data.Store} store=CountryStore
+         * @reactive
          */
         store: CountryStore
     }
+/**
+ * Triggered after the country config got changed.
+ * We need to distinguish between manual view-based selections (like keynav or clicks) and
+ * programmatic selections that originate from other widgets (like the combobox or hash change).
+ * @param {String|null} value
+ * @param {String|null} oldValue
+ * @protected
+ */
+afterSetCountry(value, oldValue) {
+    if (oldValue !== undefined) {
+        let me             = this,
+            selectionModel = me.selectionModel,
+            recordId       = value;
 
-    /**
-     * Triggered after the country config got changed
-     * @param {String|null} value
-     * @param {String|null} oldValue
-     * @protected
-     */
-    afterSetCountry(value, oldValue) {
-        if (oldValue !== undefined) {
-            let selectionModel = this.selectionModel;
-
-            if (value && !selectionModel.isSelected(value)) {
-                selectionModel.select(value, false);
+        if (me.useInternalId && value) {
+            let record = me.store.get(value);
+            if (record) {
+                recordId = me.getRecordId(record);
             }
         }
+
+        if (recordId && !selectionModel.isSelected(recordId)) {
+            selectionModel.select(recordId);
+        }
     }
+}
 
     /**
      * Override this method to get different item-markups
@@ -119,7 +132,7 @@ class CountryGallery extends Gallery {
             fN         = Util.formatNumber,
             table      = firstChild.cn[1];
 
-        vdomItem.id = me.getItemVnodeId(record[me.keyProperty]);
+        vdomItem.id = me.getItemVnodeId(me.getRecordId(record));
 
         vdomItem.cn[0].style.height = me.itemHeight + 'px';
 
@@ -127,15 +140,15 @@ class CountryGallery extends Gallery {
         firstChild.style.width  = me.itemWidth  + 'px';
 
         firstChild.cn[0].cn[0].src  = Util.getCountryFlagUrl(record.country);
-        firstChild.cn[0].cn[1].html = record.country;
+        firstChild.cn[0].cn[1].text = record.country;
 
-        table.cn[0].cn[1].html = fN({value: record.cases});
-        table.cn[1].cn[1].html = fN({value: record.deaths});
-        table.cn[2].cn[1].html = fN({value: record.recovered});
+        table.cn[0].cn[1].text = fN({value: record.cases});
+        table.cn[1].cn[1].text = fN({value: record.deaths});
+        table.cn[2].cn[1].text = fN({value: record.recovered});
 
-        table.cn[0].cn[4].html = fN({value: record.todayCases});
-        table.cn[1].cn[4].html = fN({value: record.todayDeaths});
-        table.cn[2].cn[4].html = fN({value: record.critical});
+        table.cn[0].cn[4].text = fN({value: record.todayCases});
+        table.cn[1].cn[4].text = fN({value: record.todayDeaths});
+        table.cn[2].cn[4].text = fN({value: record.critical});
 
         return vdomItem;
     }
@@ -145,7 +158,13 @@ class CountryGallery extends Gallery {
      * @returns {String} itemId
      */
     getItemId(vnodeId) {
-        return vnodeId.split('__')[1];
+        let itemId = vnodeId.split('__')[1];
+
+        if (this.store.getKeyType()?.includes('int')) {
+            itemId = parseInt(itemId)
+        }
+
+        return itemId
     }
 
     /**
@@ -153,7 +172,8 @@ class CountryGallery extends Gallery {
      * @param {String[]} items
      */
     onSelect(items) {
-        this.country = items[0] || null;
+        let record = items[0] ? this.store.get(items[0]) : null;
+        this.country = record ? record.country : null;
     }
 
     /**
@@ -162,13 +182,13 @@ class CountryGallery extends Gallery {
     onStoreLoad(items) {
         super.onStoreLoad(items);
 
-        setTimeout(() => {
-            this.selectOnMount = true;
-            this.afterSetMounted(true, false);
-        }, 400);
+        let me = this;
+
+        me.timeout(400).then(() => {
+            me.selectOnMount = true;
+            me.afterSetMounted(true, false)
+        })
     }
 }
 
-Neo.applyClassConfig(CountryGallery);
-
-export default CountryGallery;
+export default Neo.setupClass(CountryGallery);

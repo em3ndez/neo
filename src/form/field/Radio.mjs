@@ -1,7 +1,7 @@
-import CheckBox         from './CheckBox.mjs';
-import ComponentManager from '../../manager/Component.mjs';
+import CheckBox from './CheckBox.mjs';
 
 /**
+ * @summary A radio input with form-scoped selection, group values and shared required-group errors.
  * @class Neo.form.field.Radio
  * @extends Neo.form.field.CheckBox
  */
@@ -27,6 +27,7 @@ class Radio extends CheckBox {
         iconCls: ['far', 'fa-circle'],
         /**
          * @member {String} inputType='radio'
+         * @reactive
          */
         inputType: 'radio'
     }
@@ -64,26 +65,17 @@ class Radio extends CheckBox {
     }
 
     /**
-     * Radios do not fire a change event for "uncheck", so we need to iterate over other radios with the same name.
+     * @summary Keeps the other group members' checked configs in step with native radio exclusivity.
      */
     uncheckGroupItems() {
-        let me = this,
-            radios;
+        let me = this;
 
-        // discuss: we could limit this to radios inside the same form, IF a top level form is used
-        radios = ComponentManager.find({
-            ntype: 'radiofield',
-            name : me.name
-        });
-
-        radios.forEach(item => {
+        me.getGroupItems(true).forEach(item => {
             if (item.id !== me.id && item._checked) {
-                item.checked = false;
+                item.checked = false
             }
         })
     }
 }
 
-Neo.applyClassConfig(Radio);
-
-export default Radio;
+export default Neo.setupClass(Radio);

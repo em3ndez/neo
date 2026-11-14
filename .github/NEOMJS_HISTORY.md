@@ -17,7 +17,7 @@ Just to make a point on how much time & effort has already been spent on neo.mjs
 
 &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;1 commits Nils Dehl
 
-<img alt="neo.mjs commit history" src="https://raw.githubusercontent.com/neomjs/pages/master/resources/images/neomjs-commit-history.png">
+<img alt="neo.mjs commit history" src="https://raw.githubusercontent.com/neomjs/pages/main/resources_pub/images/neomjs-commit-history.png">
 
 I would also like to add a ***big thank you*** to everyone who provided feedback prior to the public release!
 
@@ -26,4 +26,3 @@ Tobi
 
 <br><br>
 Copyright (c) 2015 - today, <a href="https://www.linkedin.com/in/tobiasuhlig/">Tobias Uhlig</a>
-& <a href="https://www.linkedin.com/in/richwaters/">Rich Waters</a>

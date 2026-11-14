@@ -13,15 +13,18 @@ class List extends BaseList {
         className: 'Neo.examples.list.animate.List',
         /**
          * @member {Boolean} animate=true
+         * @reactive
          */
         animate: true,
         /**
          * @member {String[]} cls=['neo-examples-list-animate']
+         * @reactive
          */
         cls: ['neo-examples-list-animate'],
         /**
          * Value in px
          * @member {Number} itemHeight=200
+         * @reactive
          */
         itemHeight: 200,
         /**
@@ -31,6 +34,7 @@ class List extends BaseList {
         /**
          * Value in px
          * @member {Number} itemWidth=300
+         * @reactive
          */
         itemWidth: 300
     }
@@ -53,10 +57,8 @@ class List extends BaseList {
                     {cls: ['neo-is-online'], id: `${id}__isonline`, removeDom: !record.isOnline}
                 ]}
             ]}
-        ];
+        ]
     }
 }
 
-Neo.applyClassConfig(List);
-
-export default List;
+export default Neo.setupClass(List);

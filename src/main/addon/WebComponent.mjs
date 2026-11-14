@@ -1,10 +1,9 @@
-import Base from '../../core/Base.mjs';
+import Base from './Base.mjs';
 
 /**
  * Addon to register WebComponents
  * @class Neo.main.addon.WebComponent
- * @extends Neo.core.Base
- * @singleton
+ * @extends Neo.main.addon.Base
  */
 class WebComponent extends Base {
     static config = {
@@ -12,12 +11,7 @@ class WebComponent extends Base {
          * @member {String} className='Neo.main.addon.WebComponent'
          * @protected
          */
-        className: 'Neo.main.addon.WebComponent',
-        /**
-         * @member {Boolean} singleton=true
-         * @protected
-         */
-        singleton: true
+        className: 'Neo.main.addon.WebComponent'
     }
 
     /**
@@ -25,8 +19,7 @@ class WebComponent extends Base {
      */
     construct(config) {
         super.construct(config);
-
-        this.registerElementLoader();
+        this.registerElementLoader()
     }
 
     /**
@@ -35,19 +28,21 @@ class WebComponent extends Base {
     registerElementLoader() {
         customElements.define('element-loader', class extends HTMLElement {
             async connectedCallback() {
-                let me      = this,
-                    content = await (await fetch(me.getAttribute('src'))).text(),
-                    styles;
+                let me = this,
+                    content, styles;
 
-                me.attachShadow({mode: 'open'}).innerHTML = content;
+                // move OPs will trigger the connectedCallback() again
+                if (!me.shadowRoot) {
+                    content = await (await fetch(me.getAttribute('src'))).text();
 
-                styles = me.querySelector('style');
-                styles && me.shadowRoot.append(styles);
+                    me.attachShadow({mode: 'open'}).innerHTML = content;
+
+                    styles = me.querySelector('style');
+                    styles && me.shadowRoot.append(styles)
+                }
             }
         });
     }
 }
 
-let instance = Neo.applyClassConfig(WebComponent);
-
-export default instance;
+export default Neo.setupClass(WebComponent);

@@ -24,14 +24,17 @@ class Fieldset extends FormContainer {
         baseCls: ['neo-fieldset'],
         /**
          * @member {Boolean} collapsed_=false,
+         * @reactive
          */
         collapsed_: false,
         /**
          * @member {Boolean} collapsible_=true,
+         * @reactive
          */
         collapsible_: true,
         /**
          * @member {Boolean} disableItemsOnCollapse_=true,
+         * @reactive
          */
         disableItemsOnCollapse_: true,
         /**
@@ -41,10 +44,12 @@ class Fieldset extends FormContainer {
         hasLabelClickListener: false,
         /**
          * @member {String} iconClsChecked_='far fa-check'
+         * @reactive
          */
         iconClsChecked_: 'far fa-check',
         /**
          * @member {String} iconClsUnchecked_='far fa-square'
+         * @reactive
          */
         iconClsUnchecked_: 'far fa-square',
         /**
@@ -64,6 +69,7 @@ class Fieldset extends FormContainer {
         legendConfig: null,
         /**
          * @member {String} title_=''
+         * @reactive
          */
         title_: '',
         /**
@@ -94,28 +100,28 @@ class Fieldset extends FormContainer {
 
                         if (value) {
                             if (item.disabled) {
-                                me.itemsDisabledMap.push(item.id);
+                                me.itemsDisabledMap.push(item.id)
                             } else {
-                                item._disabled = true; // silent update
+                                item._disabled = true // silent update
                             }
                         } else {
                             if (!me.itemsDisabledMap.includes(item.id)) {
-                                item._disabled = false; // silent update
+                                item._disabled = false // silent update
                             }
                         }
                     }
 
-                    item.vdom.removeDom = value;
+                    item.vdom.removeDom = value
                 }
             });
 
             if (!value) {
                 // reset the disabled items map when expanding
-                me.itemsDisabledMap = [];
+                me.itemsDisabledMap = []
             }
         }
 
-        me.update();
+        me.update()
     }
 
     /**
@@ -125,14 +131,14 @@ class Fieldset extends FormContainer {
      * @protected
      */
     afterSetCollapsible(value, oldValue) {
-        let me  = this,
-            cls = me.cls;
+        let me            = this,
+            {cls, legend} = me;
 
         NeoArray[value ? 'add' : 'remove'](cls, 'neo-collapsible');
         me.cls = cls;
 
-        if (me.legend) {
-            me.legend.useIcon = value;
+        if (legend) {
+            legend.useIcon = value;
         }
 
         if (value && !me.hasLabelClickListener) {
@@ -141,7 +147,7 @@ class Fieldset extends FormContainer {
             me.addDomListeners({
                 click   : me.onLegendClick,
                 delegate: 'neo-legend'
-            });
+            })
         }
     }
 
@@ -153,7 +159,7 @@ class Fieldset extends FormContainer {
      */
     afterSetIconClsChecked(value, oldValue) {
         if (oldValue !== undefined) {
-            this.updateLegend();
+            this.updateLegend()
         }
     }
 
@@ -165,7 +171,7 @@ class Fieldset extends FormContainer {
      */
     afterSetIconClsUnchecked(value, oldValue) {
         if (oldValue !== undefined) {
-            this.updateLegend();
+            this.updateLegend()
         }
     }
 
@@ -176,7 +182,7 @@ class Fieldset extends FormContainer {
      * @protected
      */
     afterSetTitle(value, oldValue) {
-        this.updateLegend();
+        this.updateLegend()
     }
 
     /**
@@ -185,7 +191,7 @@ class Fieldset extends FormContainer {
     onConstructed() {
         super.onConstructed();
 
-        this.collapsed && this.afterSetCollapsed(true, false);
+        this.collapsed && this.afterSetCollapsed(true, false)
     }
 
     /**
@@ -195,44 +201,49 @@ class Fieldset extends FormContainer {
         let me = this;
 
         if (me.collapsible) {
-            me.collapsed = !me.collapsed;
+            me.collapsed = !me.collapsed
         }
     }
 
     /**
-     *
+     * @summary Syncs the legend with the current title and icon. An empty pair takes the legend out of the DOM, any
+     * other pair renders it, creating the legend on first use. The legend changes silently, so the fieldset's own
+     * update carries it whole, even when a child's update merges into that cycle.
      */
     updateLegend() {
-        let me      = this,
-            iconCls = me.collapsed ? me.iconClsUnchecked : me.iconClsChecked,
-            title   = me.title;
+        let me              = this,
+            iconCls         = me.collapsed ? me.iconClsUnchecked : me.iconClsChecked,
+            {legend, title} = me;
 
         if (iconCls === '' && title === '') {
-            if (me.legend) {
-                me.legend.vdom.reomveDom = true;
+            if (legend) {
+                legend.vdom.removeDom = true;
+                me.updateDepth        = 2;
+                me.denseUpdate        = true
             }
         } else {
-            if (me.legend) {
-                me.legend.setSilent({
+            if (legend) {
+                me.updateDepth = 2;
+                me.denseUpdate = true;
+
+                legend.setSilent({
                     iconCls,
                     text: title
                 });
 
-                delete me.legend.vdom.reomveDom;
+                delete legend.vdom.removeDom
             } else {
                 me.legend = me.insert(0, {
                     module: Legend,
                     iconCls,
                     text  : title,
                     ...me.legendConfig
-                });
+                })
             }
         }
 
-        me.update();
+        me.update()
     }
 }
 
-Neo.applyClassConfig(Fieldset);
-
-export default Fieldset;
+export default Neo.setupClass(Fieldset);

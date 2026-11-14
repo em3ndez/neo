@@ -1,4 +1,4 @@
-import Model  from '../../src/data/Model.mjs';
+import Model from '../../src/data/Model.mjs';
 
 /**
  * @class Neo.examples.tableStore.MainModel
@@ -10,20 +10,18 @@ class MainModel extends Model {
 
         fields: [{
             name: 'country',
-            type: 'string'
+            type: 'html'
         }, {
             name: 'firstname',
-            type: 'string'
+            type: 'html'
         }, {
             name: 'githubId',
             type: 'string'
         }, {
             name: 'lastname',
-            type: 'string'
+            type: 'html'
         }]
     }
 }
 
-Neo.applyClassConfig(MainModel);
-
-export default MainModel;
+export default Neo.setupClass(MainModel);

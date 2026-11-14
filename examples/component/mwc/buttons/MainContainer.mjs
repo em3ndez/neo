@@ -45,7 +45,7 @@ class MainContainer extends Viewport {
                     label: 'dense'
                 }],
 
-                tabButtonConfig: {
+                header: {
                     iconCls: 'fa fa-home',
                     text   : 'Tab 1'
                 }
@@ -78,7 +78,7 @@ class MainContainer extends Viewport {
                     label: 'dense'
                 }],
 
-                tabButtonConfig: {
+                header: {
                     iconCls: 'fa fa-play-circle',
                     text   : 'Tab 2'
                 }
@@ -87,6 +87,4 @@ class MainContainer extends Viewport {
     }
 }
 
-Neo.applyClassConfig(MainContainer);
-
-export default MainContainer;
+export default Neo.setupClass(MainContainer);

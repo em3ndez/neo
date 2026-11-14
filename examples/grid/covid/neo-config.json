@@ -3,6 +3,6 @@
     "basePath"        : "../../../",
     "environment"     : "development",
     "mainPath"        : "./Main.mjs",
-    "mainThreadAddons": ["DragDrop", "Stylesheet"],
-    "themes"          : ["neo-theme-dark", "neo-theme-light"]
+    "mainThreadAddons": ["DragDrop", "Navigator", "ResizeObserver", "Stylesheet"],
+    "themes"          : ["neo-theme-dark"]
 }

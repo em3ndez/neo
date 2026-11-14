@@ -112,7 +112,7 @@ class EventDragZone extends DragZone {
      *
      */
     addBodyCursorCls() {
-        Neo.applyDeltas(this.appName, {id: 'document.body', cls: {add: ['neo-cursor-move']}});
+        Neo.applyDeltas(this.windowId, {id: 'document.body', cls: {add: ['neo-cursor-move']}})
     }
 
     /**
@@ -123,13 +123,13 @@ class EventDragZone extends DragZone {
     adjustEndDate(date) {
         if (date.getHours() === 0 && date.getMinutes() === 0) {
             // if an event ends at 24:00, change it to 23:59 => otherwise the day increases by 1
-            date.setMinutes(date.getMinutes() - 1);
+            date.setMinutes(date.getMinutes() - 1)
         } else if (!(date.getHours() === 23 && date.getMinutes() === 59) && date.getMinutes() % this.intervalSize !== 0) {
             // otherwise switch non interval based values back
-            date.setMinutes(date.getMinutes() + 1);
+            date.setMinutes(date.getMinutes() + 1)
         }
 
-        return date;
+        return date
     }
 
     /**
@@ -144,20 +144,22 @@ class EventDragZone extends DragZone {
 
             // check if the node did not get removed yet
             if (me.dragProxy?.vdom.cn[0].id) {
-                Neo.applyDeltas(me.appName, {
+                Neo.applyDeltas(me.windowId, {
                     action  : 'moveNode',
                     id      : me.dragProxy.id,
                     index   : 0,
                     parentId: value
-                });
+                })
             }
         }
     }
 
     /**
      * @param {Object} data
+     * @param {Boolean} createComponent=true
+     * @returns {Object|Neo.draggable.DragProxyComponent}
      */
-    createDragProxy(data) {
+    async createDragProxy(data, createComponent=true) {
         let me        = this,
             component = Neo.getComponent(me.getDragElementRoot().id) || me.owner,
             vdom      = me.dragProxyConfig?.vdom,
@@ -170,6 +172,7 @@ class EventDragZone extends DragZone {
             appName         : me.appName,
             moveInMainThread: me.moveInMainThread,
             parentId        : me.proxyParentId,
+            windowId        : me.windowId,
 
             ...me.dragProxyConfig,
 
@@ -181,15 +184,15 @@ class EventDragZone extends DragZone {
         config.cls.push('neo-focus');
 
         if (component) {
-            config.cls.push(component.getTheme());
+            config.cls.push(component.getTheme())
         }
 
         if (clone.cls && !me.useProxyWrapper) {
-            config.cls.push(...clone.cls);
+            config.cls.push(...clone.cls)
         }
 
         if (me.addDragProxyCls) {
-            NeoArray.add(config.cls, me.dragProxyCls);
+            NeoArray.add(config.cls, me.dragProxyCls)
         }
 
         Object.assign(config.style, {
@@ -198,45 +201,55 @@ class EventDragZone extends DragZone {
             width : `${data.width}px`
         });
 
-        me.dragProxy = Neo.create(config);
+        if (createComponent) {
+            return me.dragProxy = Neo.create(config)
+        }
+
+        return config
     }
 
     /**
-     * DragEnd equals drop, since we can only drag to valid positions
-     * todo: ESC key
-     * @param {Object} data
+     * @summary Commits the dragged event's new start and end dates on drop, or skips the commit when `data.cancelled` is set and re-renders the week view from the unchanged record.
+     * @param {Object} [data]
      */
     dragEnd(data) {
         super.dragEnd(data);
 
-        let me     = this,
-            owner  = me.owner,
-            record = me.eventRecord,
+        let me      = this,
+            {owner} = me,
+            record  = me.eventRecord,
             endDate, startDate;
 
-        if (me.keepStartDate) {
-            endDate   = me.newEndDate;
-            startDate = me.newStartDate || record.startDate;
+        if (data?.cancelled) {
+            me.removeBodyCursorCls();
+            owner.updateEvents()
         } else {
-            startDate = new Date(VDomUtil.findVdomChild(owner.vdom, me.proxyParentId).vdom.flag + 'T00:00:00.000Z');
-            startDate.setHours(me.axisStartTime);
-            startDate.setMinutes(me.currentInterval * me.intervalSize);
-
-            if (me.keepEndDate) {
-                endDate   = me.newEndDate   || record.endDate;
-                startDate = me.newStartDate || startDate;
+            if (me.keepStartDate) {
+                endDate   = me.newEndDate;
+                startDate = me.newStartDate || record.startDate
             } else {
-                endDate = DateUtil.clone(startDate);
-                endDate.setMinutes(endDate.getMinutes() + me.eventDuration);
+                let [year, month, day] = VDomUtil.find(owner.vdom, me.proxyParentId).vdom.flag.split('-').map(Number);
+                startDate = new Date(year, month - 1, day);
+                startDate.setHours(me.axisStartTime);
+                startDate.setMinutes(me.currentInterval * me.intervalSize);
+
+                if (me.keepEndDate) {
+                    endDate   = me.newEndDate   || record.endDate;
+                    startDate = me.newStartDate || startDate
+                } else {
+                    endDate = DateUtil.clone(startDate);
+                    endDate.setMinutes(endDate.getMinutes() + me.eventDuration)
+                }
             }
+
+            endDate = me.adjustEndDate(endDate);
+
+            // A drop back onto the starting slot changes no field and fires no recordChange: the proxy teardown
+            // still needs one restore pass. A moved drop re-renders through the store's recordChange listeners.
+            if (+record.startDate === +startDate && +record.endDate === +endDate) owner.updateEvents();
+
+            record.set({endDate, startDate})
         }
-
-        endDate = me.adjustEndDate(endDate);
-
-        record.setSilent({
-            endDate,
-            startDate
-        });
 
         Object.assign(me, {
             currentInterval: 0,
@@ -246,13 +259,7 @@ class EventDragZone extends DragZone {
             newEndDate     : null,
             newStartDate   : null,
             proxyParentId  : null
-        });
-
-        // todo: updating a record field which is included inside a sorter should trigger collection.doSort()
-        // see: https://github.com/neomjs/neo/issues/2392
-
-        owner.getModel().getStore('events').doSort();
-        owner.updateEvents();
+        })
     }
 
     /**
@@ -260,20 +267,13 @@ class EventDragZone extends DragZone {
      */
     dragMove(data) {
         let me              = this,
-            axisEndTime     = me.axisEndTime,
-            axisStartTime   = me.axisStartTime,
-            columnHeight    = me.columnHeight,
-            eventDuration   = me.eventDuration,
+            {axisEndTime, axisStartTime, columnHeight, eventDuration, intervalSize, keepEndDate, keepStartDate, owner} = me,
             i               = 0,
-            intervalSize    = me.intervalSize,
-            keepEndDate     = me.keepEndDate,
-            keepStartDate   = me.keepStartDate,
             path            = data.targetPath,
             len             = path.length,
-            owner           = me.owner,
             record          = me.eventRecord,
             switchDirection = false,
-            timeAxis        = owner.timeAxis,
+            {timeAxis}      = owner,
             axisStartDate, currentInterval, deltas, duration, endDate, eventIntervals, height, intervalHeight,
             intervals, limitInterval, minimumEventIntervals, position, startDate, startInterval;
 
@@ -282,7 +282,7 @@ class EventDragZone extends DragZone {
                 for (; i < len; i++) {
                     if (path[i].cls.includes('neo-c-w-column')) {
                         me.proxyParentId = path[i].id;
-                        break;
+                        break
                     }
                 }
             }
@@ -304,7 +304,7 @@ class EventDragZone extends DragZone {
                     startDate.setHours(axisStartTime);
                     startDate.setMinutes(0);
 
-                    eventDuration = (endDate - startDate) / 60 / 1000; // duration in minutes
+                    eventDuration = (endDate - startDate) / 60 / 1000 // duration in minutes
                 }
             }
 
@@ -315,13 +315,13 @@ class EventDragZone extends DragZone {
                     endDate.setHours(axisEndTime);
                     endDate.setMinutes(0);
 
-                    eventDuration = (endDate - startDate) / 60 / 1000; // duration in minutes
+                    eventDuration = (endDate - startDate) / 60 / 1000 // duration in minutes
                 }
             }
 
             if (!keepEndDate) {
                 // events must not end after the last visible interval
-                currentInterval = Math.min(currentInterval, intervals - (eventDuration / intervalSize));
+                currentInterval = Math.min(currentInterval, intervals - (eventDuration / intervalSize))
             }
 
             deltas = [{
@@ -343,7 +343,7 @@ class EventDragZone extends DragZone {
                     if (me.enableResizingAcrossOppositeEdge) {
                         if (me.forceUpdate && currentInterval > limitInterval -minimumEventIntervals && currentInterval < limitInterval + minimumEventIntervals) {
                             // when we resize back to the original direction, keep the min interval until we snap back
-                            return;
+                            return
                         } else if (currentInterval >= limitInterval + minimumEventIntervals) {
                             switchDirection = true;
                             me.forceUpdate  = true;
@@ -360,15 +360,15 @@ class EventDragZone extends DragZone {
                             me.newStartDate = startDate;
 
                             duration = (endDate - startDate) / 60 / 60 / 1000; // duration in hours
-                            deltas[0].style.top = `calc(${limitInterval * intervalHeight / columnHeight * 100}% + 1px)`;
+                            deltas[0].style.top = `calc(${limitInterval * intervalHeight / columnHeight * 100}% + 1px)`
                         } else {
                             me.forceUpdate  = false;
-                            me.newStartDate = null;
+                            me.newStartDate = null
                         }
                     }
 
                     if (!switchDirection) {
-                        currentInterval = Math.min(currentInterval, limitInterval - minimumEventIntervals);
+                        currentInterval = Math.min(currentInterval, limitInterval - minimumEventIntervals)
                     }
 
                 } else if (keepStartDate) {
@@ -398,40 +398,40 @@ class EventDragZone extends DragZone {
                             position = (eventDuration / intervalSize + currentInterval) * intervalHeight; // snap to valid intervals
                             position = position / columnHeight * 100;
 
-                            deltas[0].style.top = `calc(${position}% + 1px)`;
+                            deltas[0].style.top = `calc(${position}% + 1px)`
                         } else if (me.forceUpdate && currentInterval < limitInterval + minimumEventIntervals) {
                             // when we resize back to the original direction, keep the min interval until we snap back
-                            return;
+                            return
                         } else if (me.forceUpdate && currentInterval >= limitInterval + minimumEventIntervals) {
                             if (me.currentInterval !== currentInterval) {
                                 me.forceUpdate  = false;
                                 me.newStartDate = null;
-                                deltas[0].style.top = `calc(${startInterval * intervalHeight / columnHeight * 100}% + 1px)`;
+                                deltas[0].style.top = `calc(${startInterval * intervalHeight / columnHeight * 100}% + 1px)`
                             }
                         }
                     }
 
                     if (!switchDirection) {
-                        currentInterval = Math.max(currentInterval, limitInterval + minimumEventIntervals);
+                        currentInterval = Math.max(currentInterval, limitInterval + minimumEventIntervals)
                     }
                 }
             }
 
             if (!keepStartDate) {
                 // events must not start before the first visible interval
-                currentInterval = Math.max(0, currentInterval);
+                currentInterval = Math.max(0, currentInterval)
             }
 
             if (me.currentInterval !== currentInterval) {
                 if (!switchDirection) {
                     if (!keepEndDate) {
                         endDate.setHours(axisStartTime);
-                        endDate.setMinutes(eventDuration + currentInterval * intervalSize);
+                        endDate.setMinutes(eventDuration + currentInterval * intervalSize)
                     }
 
                     if (keepStartDate) {
                         me.newEndDate = endDate;
-                        duration = (endDate - record.startDate) / 60 / 60 / 1000; // duration in hours
+                        duration = (endDate - record.startDate) / 60 / 60 / 1000 // duration in hours
                     } else {
                         startDate.setHours(axisStartTime);
                         startDate.setMinutes(currentInterval * intervalSize);
@@ -439,29 +439,29 @@ class EventDragZone extends DragZone {
                         position = currentInterval * intervalHeight; // snap to valid intervals
                         position = position / columnHeight * 100;
 
-                        deltas[0].style.top = `calc(${position}% + 1px)`;
+                        deltas[0].style.top = `calc(${position}% + 1px)`
                     }
 
                     if (keepEndDate) {
-                        duration = (record.endDate - startDate) / 60 / 60 / 1000; // duration in hours
+                        duration = (record.endDate - startDate) / 60 / 60 / 1000 // duration in hours
                     }
                 }
 
                 endDate = me.adjustEndDate(endDate);
 
                 deltas.push({
-                    id       : me.dragProxy.vdom.cn[2].id,
-                    innerHTML: owner.intlFormat_time.format(endDate)
+                    id         : me.dragProxy.vdom.cn[2].id,
+                    textContent: owner.intlFormat_time.format(endDate)
                 });
 
                 if (keepEndDate || keepStartDate) {
                     height = Math.round(duration / (axisEndTime - axisStartTime) * 100 * 1000) / 1000;
-                    deltas[0].style.height = `calc(${height}% - 2px)`;
+                    deltas[0].style.height = `calc(${height}% - 2px)`
                 }
 
                 deltas.push({
-                    id       : me.dragProxy.vdom.cn[0].id,
-                    innerHTML: owner.intlFormat_time.format(startDate)
+                    id         : me.dragProxy.vdom.cn[0].id,
+                    textContent: owner.intlFormat_time.format(startDate)
                 });
 
                 // check if the node got added yet
@@ -475,7 +475,7 @@ class EventDragZone extends DragZone {
                                 cls: {add: ['neo-overflow']}
                             });
 
-                            me.hasOverflow = true;
+                            me.hasOverflow = true
                         }
                     } else if (me.hasOverflow) {
                         deltas.push({
@@ -483,59 +483,62 @@ class EventDragZone extends DragZone {
                             cls: {remove: ['neo-overflow']}
                         });
 
-                        me.hasOverflow = false;
+                        me.hasOverflow = false
                     }
 
-                    Neo.applyDeltas(me.appName, deltas);
+                    Neo.applyDeltas(me.windowId, deltas)
                 }
             }
 
-            me.currentInterval = currentInterval;
+            me.currentInterval = currentInterval
         }
     }
 
     /**
+     * @summary Syncs main-thread DragDrop scrollContainer configs, measures event/column geometry, and opens the drag proxy.
      * @param {Object} data
      */
-    dragStart(data) {
-        let me = this,
-            eventDuration, offsetX, offsetY;
-
-        me.owner.getDomRect([me.getDragElementRoot().id, data.path[1].id]).then(rects => {
-            eventDuration = (me.eventRecord.endDate - me.eventRecord.startDate) / 60 / 1000;
-            offsetX       = data.clientX - rects[0].left;
+    async dragStart(data) {
+        let me        = this,
+            [, rects] = await Promise.all([
+                Neo.main.addon.DragDrop?.setConfigs({
+                    appName : me.appName,
+                    windowId: me.windowId,
+                    ...me.getMainThreadConfigs()
+                }),
+                me.owner.getDomRect([me.getDragElementRoot().id, data.path[1].id])
+            ]),
+            eventDuration = (me.eventRecord.endDate - me.eventRecord.startDate) / 60 / 1000,
+            offsetX       = data.clientX - rects[0].left,
             offsetY       = data.clientY - rects[0].top;
 
-            Object.assign(me, {
-                columnHeight   : rects[1].height,
-                columnTop      : rects[1].top,
-                dragElementRect: rects[0],
-                eventDuration  : Math.round(eventDuration / me.intervalSize) * me.intervalSize,
-                offsetX,
-                offsetY
-            });
-
-            me.createDragProxy(rects[0]);
-
-            me.fire('dragStart', {
-                dragElementRect: rects[0],
-                id             : me.id,
-                offsetX,
-                offsetY
-            });
-
-            me.dragMove(data);
+        Object.assign(me, {
+            columnHeight   : rects[1].height,
+            columnTop      : rects[1].top,
+            dragElementRect: rects[0],
+            eventDuration  : Math.round(eventDuration / me.intervalSize) * me.intervalSize,
+            offsetX,
+            offsetY
         });
+
+        await me.createDragProxy(rects[0]);
+
+        me.fire('dragStart', {
+            dragElementRect: rects[0],
+            id             : me.id,
+            offsetX,
+            offsetY
+        });
+
+        me.dragMove(data)
     }
 
     /**
      *
      */
     removeBodyCursorCls() {
-        Neo.applyDeltas(this.appName, {id: 'document.body', cls: {remove: ['neo-cursor-move']}});
+        Neo.applyDeltas(this.windowId, {id: 'document.body', cls: {remove: ['neo-cursor-move']}})
     }
 }
 
-Neo.applyClassConfig(EventDragZone);
-
-export default EventDragZone;
+export default Neo.setupClass(EventDragZone);

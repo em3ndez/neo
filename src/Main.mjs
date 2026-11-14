@@ -1,13 +1,77 @@
-import Neo           from './Neo.mjs';
-import * as core     from './core/_export.mjs';
-import DomAccess     from './main/DomAccess.mjs';
-import DomEvents     from './main/DomEvents.mjs';
-import Observable    from './core/Observable.mjs';
-import WorkerManager from './worker/Manager.mjs';
+import Neo                   from './Neo.mjs';
+import * as core             from './core/_export.mjs';
+import {generateUUID}       from './util/UUID.mjs';
+import ClassHierarchyManager from './manager/ClassHierarchy.mjs';
+import DomAccess             from './main/DomAccess.mjs'; // has to get imported before DeltaUpdates
+import DeltaUpdates          from './main/DeltaUpdates.mjs';
+import DomEvents             from './main/DomEvents.mjs';
+import Observable            from './core/Observable.mjs';
+import WorkerManager         from './worker/Manager.mjs';
+
+let nativeWindowRoute;
+
+/**
+ * @summary Consumes the opener's one-time exact-window capability once per target document.
+ * @description The token is useful only while the opener still owns a matching pending `WindowProxy`. It is
+ * removed on the first attempt, then the admitted route is cached inside this exact target realm so geometry
+ * observation and the shared-worker connect handshake can read the same authority in either order. A reload
+ * creates a new realm and loses the cache; URL/name inference and same-name reuse still cannot reconstruct it.
+ * Cross-origin or independently opened windows deliberately remain unaddressable.
+ * @param {Window} win
+ * @returns {{capabilities: {close: Boolean, focus: Boolean, position: Boolean, resize: Boolean}, nativeHandleKey: String, ownerWindowId: String, targetWindowId: String}|null}
+ */
+const resolveNativeWindowRoute = win => {
+    if (nativeWindowRoute !== undefined) {
+        return nativeWindowRoute
+    }
+
+    nativeWindowRoute = null;
+
+    try {
+        const
+            opener     = win?.opener,
+            openerMain = opener?.Neo?.Main,
+            storageKey = openerMain?.nativeRouteStorageKey,
+            token      = storageKey && win.sessionStorage?.getItem(storageKey);
+
+        if (!opener || opener.closed || !openerMain || !token) {
+            return nativeWindowRoute
+        }
+
+        win.sessionStorage.removeItem(storageKey);
+
+        const route = openerMain.consumeNativeWindowRoute({
+            targetWindowId: WorkerManager.windowId,
+            token,
+            win
+        });
+
+        if (route) {
+            nativeWindowRoute = route;
+
+            win.addEventListener('pagehide', () => {
+                nativeWindowRoute = null;
+
+                try {
+                    openerMain.releaseNativeWindowRoute({...route, win})
+                } catch {
+                    // The opener may have closed or crossed origin first; its route is unreachable either way.
+                }
+            }, {once: true})
+        }
+
+        return nativeWindowRoute
+    } catch {
+        // Cross-origin opener/sessionStorage access is expected to fail closed. The window stays visible in
+        // topology but intentionally exposes no native control route.
+        return nativeWindowRoute
+    }
+};
 
 /**
  * @class Neo.Main
  * @extends Neo.core.Base
+ * @mixes Neo.core.Observable
  * @singleton
  */
 class Main extends core.Base {
@@ -30,6 +94,26 @@ class Main extends core.Base {
          */
         mode: 'read',
         /**
+         * @member {String} nativeRouteStorageKey='neo-native-window-route'
+         * @protected
+         */
+        nativeRouteStorageKey: 'neo-native-window-route',
+        /**
+         * @member {Number} nativeRouteTtl=5000
+         * @protected
+         */
+        nativeRouteTtl: 5000,
+        /**
+         * @member {Object} nativeWindowCapabilities
+         * @protected
+         */
+        nativeWindowCapabilities: {
+            close   : false,
+            focus   : true,
+            position: true,
+            resize  : false
+        },
+        /**
          * @member {Object} openWindows={}
          * @protected
          */
@@ -41,25 +125,59 @@ class Main extends core.Base {
         readQueue: [],
         /**
          * Remote method access for other workers
-         * @member {Object} remote={app: [//...]}
+         * @member {Object} remote
          * @protected
          */
         remote: {
-            app: [
+            // Four narrow keys beside the full `app` list, each exposing `log` and nothing else, so
+            // an error raised in any SharedWorker can reach a console a page can read. The manifest
+            // key IS the target worker id (`core.Base#promiseRemotes`), and that fan-out is already
+            // existence-guarded by `origin.hasWorker(worker)` — `useCanvasWorker`, `useTaskWorker`
+            // and `useVdomWorker` are defaults-off, so most apps run two of the five and a key for
+            // an absent worker is inert. A conditional manifest would add a second existence check
+            // behind the one that works.
+            canvas: ['log'],
+            data  : ['log'],
+            task  : ['log'],
+            vdom  : ['log'],
+            app   : [
                 'alert',
+                'brainHealth',
                 'editRoute',
+                'fleetRequest',
                 'getByPath',
                 'getWindowData',
                 'importAddon',
+                'log',
                 'redirectTo',
+                'reloadWindow',
                 'setNeoConfig',
                 'setRoute',
+                'setTopologyIdentity',
+                'clearTopologyIdentity',
+                'closeTopologyWindow',
                 'windowClose',
+                'windowCloseAll',
+                'windowFocus',
                 'windowMoveTo',
+                'windowNativeClose',
+                'windowNativeFocus',
+                'windowNativeGetGeometry',
+                'windowNativeIsClosed',
+                'windowNativeMoveTo',
+                'windowNativeResizeTo',
                 'windowOpen',
                 'windowResizeTo'
             ]
         },
+        /**
+         * The visible-document queue drain's timer dam, in milliseconds; see
+         * {@link #scheduleRenderQueueDrain}. Generously above one healthy frame (17-34ms) and far
+         * below a perceivable stall, so a presenting document virtually always drains on a real frame.
+         * @member {Number} renderQueueDamDelay=100
+         * @protected
+         */
+        renderQueueDamDelay: 100,
         /**
          * @member {Boolean} running=false
          * @protected
@@ -85,16 +203,33 @@ class Main extends core.Base {
          */
         totalFrameCount: 0,
         /**
-         * @member {Array} updateQueue=[]
+         * @member {Number} windowMovePollAttempts=6
          * @protected
          */
-        updateQueue: [],
+        windowMovePollAttempts: 6,
+        /**
+         * @member {Number} windowMovePollDelay=50
+         * @protected
+         */
+        windowMovePollDelay: 50,
         /**
          * @member {Array} writeQueue=[]
          * @protected
          */
         writeQueue: []
     }
+
+    /**
+     * @member {Map} #nativeWindowRoutes
+     * @private
+     */
+    #nativeWindowRoutes = new Map()
+
+    /**
+     * @member {Map} #pendingWindowRoutes
+     * @private
+     */
+    #pendingWindowRoutes = new Map()
 
     /**
      * @param {Object} config
@@ -105,17 +240,15 @@ class Main extends core.Base {
         let me = this;
 
         WorkerManager.on({
-            'automount'        : me.onRender,
-            'message:mountDom' : me.onMountDom,
-            'message:updateDom': me.onUpdateDom,
-            'updateVdom'       : me.onUpdateVdom,
-            scope              : me
+            'automount' : me.onRender,
+            'updateVdom': me.onUpdateVdom,
+            scope       : me
         });
 
         DomEvents.on('domContentLoaded', me.onDomContentLoaded, me);
 
         if (document.readyState !== 'loading') {
-            DomEvents.onDomContentLoaded();
+            DomEvents.onDomContentLoaded()
         }
     }
 
@@ -125,7 +258,7 @@ class Main extends core.Base {
      * @param {String} data.message
      */
     alert(data) {
-        alert(data.message);
+        alert(data.message)
     }
 
     /**
@@ -138,30 +271,63 @@ class Main extends core.Base {
             hashArr = [];
 
         if (typeof data === 'string') {
-            data = DomEvents.parseHash(data);
+            data = DomEvents.parseHash(data)
         }
 
         Object.assign(hashObj, data);
+        delete hashObj.windowId;
 
         Object.entries(hashObj).forEach(([key, value]) => {
             if (value !== null) {
-                hashArr.push(encodeURIComponent(key) + '=' + encodeURIComponent(value));
+                hashArr.push(encodeURIComponent(key) + '=' + encodeURIComponent(value))
             }
         });
 
-        window.location.hash = hashArr.join('&');
+        window.location.hash = hashArr.join('&')
+    }
+
+    /**
+     * @summary Pull whole-Brain health from the Electron shell's lifecycle owner, when one hosts us.
+     * Resolves the owner's `{state, cause}` payload. Without a shell (dev-server mode) it returns a
+     * typed unavailable envelope, so consumers read absence as transport truth, never daemon truth.
+     * @returns {Promise<Object>|Object}
+     */
+    brainHealth() {
+        return globalThis.neoShell?.brainHealth
+            ? globalThis.neoShell.brainHealth()
+            : {ok: false, error: 'brain: shell health capability unavailable'}
+    }
+
+    /**
+     * @summary Forward one credential-free Fleet wire request through the named preload capability.
+     * Endpoint and bearer ownership stay in Electron main; this page-main method only bridges the
+     * App Worker RMA call onto the capability-shaped preload API.
+     * @param {Object} data
+     * @param {Object} data.request `{method, params}`.
+     * @returns {Promise<Object>|Object}
+     */
+    fleetRequest({request} = {}) {
+        return globalThis.neoShell?.fleetRequest
+            ? globalThis.neoShell.fleetRequest(request)
+            : Promise.reject(new Error('fleet: shell request capability unavailable'))
     }
 
     /**
      * Request specific accessible window attributes by path into the app worker.
      * Keep in mind that this excludes anything DOM related or instances.
-     * Example: Neo.Main.getByPath({path: 'navigator.language'}).then(data => {})
+     * In case your path matches a method, you can also pass params for it.
+     * @example:
+     *     Neo.Main.getByPath({path: 'navigator.language', windowId}).then(data => {})
+     * @example:
+     *     Neo.Main.getByPath({path: 'CSS.supports', params: ['display: flex'], windowId}).then(data => {})
      * @param {Object} data
+     * @param {Array}  data.params=[]
      * @param {String} data.path
      * @returns {*}
      */
-    getByPath(data) {
-        return Neo.nsWithArrays(data.path)
+    getByPath({params=[], path}) {
+        let target = Neo.nsWithArrays(path);
+        return Neo.isFunction(target) ? target(...params) : target
     }
 
     /**
@@ -169,15 +335,20 @@ class Main extends core.Base {
      * @returns {Object}
      */
     getWindowData() {
-        let win    = window,
-            screen = win.screen;
+        let win      = window,
+            {screen} = win;
 
         return {
-            innerHeight: win.innerHeight,
-            innerWidth : win.innerWidth,
-            outerHeight: win.outerHeight,
-            outerWidth : win.outerWidth,
-            screen: {
+            hidden         : win.document.hidden, // a window can connect hidden and never flip
+            innerHeight    : win.innerHeight,
+            innerWidth     : win.innerWidth,
+            mozInnerScreenX: win.mozInnerScreenX, // Firefox specific
+            mozInnerScreenY: win.mozInnerScreenY, // Firefox specific
+            nativeRoute    : resolveNativeWindowRoute(win),
+            nativeEffect   : win.neoNativeGeometryEffects?.at(-1) ?? null,
+            outerHeight    : win.outerHeight,
+            outerWidth     : win.outerWidth,
+            screen         : {
                 availHeight: screen.availHeight,
                 availLeft  : screen.availLeft,
                 availTop   : screen.availTop,
@@ -190,7 +361,98 @@ class Main extends core.Base {
             },
             screenLeft: win.screenLeft,
             screenTop : win.screenTop,
-        };
+            // Measured by `main.addon.WindowPosition`'s pointer probe when this window is observed;
+            // absent until a sample lands, and absent forever on a window nobody observes. Consumers
+            // fall back to deriving the viewport from assumed border widths, which is what every
+            // window did before this existed.
+            viewportOffset: win.neoViewportOffset ?? null
+        }
+    }
+
+    /**
+     * Console levels {@link #log} may dispatch to. Anything else falls back to `log`.
+     * @member {String[]} consoleMethods=['log','warn','error','info']
+     * @static
+     * @protected
+     */
+    static consoleMethods = ['log', 'warn', 'error', 'info']
+
+    /**
+     * @summary Reads the content size a `window.open()` feature string asks for.
+     * @param {String} windowFeatures e.g. `height=240,left=10,top=10,width=320`
+     * @returns {{height: Number, width: Number}|null} Both finite and positive, otherwise null
+     * @static
+     */
+    static parseWindowFeatureSize(windowFeatures) {
+        const size = {};
+
+        String(windowFeatures ?? '').split(',').forEach(feature => {
+            const [key, value] = feature.split('=').map(part => part.trim().toLowerCase());
+
+            (key === 'width'  || key === 'innerwidth')  && (size.width  = Number(value));
+            (key === 'height' || key === 'innerheight') && (size.height = Number(value))
+        });
+
+        return size.width > 0 && size.height > 0 && Number.isFinite(size.width + size.height) ? size : null
+    }
+
+    /**
+     * @summary Writes the identity the App Worker bound this window to, so the next page load presents it again
+     * (the worker manager reads it into every worker registration). `Neo.manager.Transaction` asks for
+     * this after it minted, cold-created or forked a Group for the window; a plain bind or rebind writes
+     * nothing, because the carrier already holds what it presented.
+     * @param {Object} data
+     * @param {String} data.groupId
+     * @param {String} data.workspaceKey
+     * @param {String} data.generationToken
+     * @param {Boolean} [data.onlyIfEmpty=false] Compensates a refused close without overwriting a newer carrier.
+     * @returns {Boolean} Whether the carrier accepted the write.
+     */
+    setTopologyIdentity({generationToken, groupId, workspaceKey, onlyIfEmpty=false}) {
+        try {
+            if (onlyIfEmpty && window.sessionStorage.getItem(WorkerManager.topologyIdentityStorageKey) !== null) return false;
+            window.sessionStorage.setItem(WorkerManager.topologyIdentityStorageKey, JSON.stringify({generationToken, groupId, workspaceKey}));
+            return true
+        } catch {
+            return false
+        }
+    }
+
+    /**
+     * @summary Clears only the closing Group's carrier; a different root's identity is untouched.
+     * @param {Object} data
+     * @param {String} data.groupId The Group whose close-all operation was durably acknowledged.
+     * @param {String} [data.generationToken] When given, only this lineage's carrier clears, so a same-Group
+     * successor that bound while the clear was in flight keeps its identity.
+     * @returns {Boolean}
+     */
+    clearTopologyIdentity({generationToken, groupId}) {
+        try {
+            const key     = WorkerManager.topologyIdentityStorageKey,
+                  current = JSON.parse(window.sessionStorage.getItem(key) || 'null');
+            if (current?.groupId !== groupId) return false;
+            if (generationToken !== undefined && current.generationToken !== generationToken) return false;
+            window.sessionStorage.removeItem(key);
+            return true
+        } catch {
+            return false
+        }
+    }
+
+    /**
+     * @summary Ends this render target after its Group's durable close cleared the carrier.
+     * @description Each realm closes itself, including popups whose opener reloaded. A browser-owned
+     * tab that refuses close navigates to a blank document, releasing its worker port just the same.
+     * The scheduled effect lets the remote response leave first; Group disconnect is the receipt.
+     * @returns {Boolean} Whether closure was scheduled; a carried identity refuses the request.
+     */
+    closeTopologyWindow() {
+        if (window.sessionStorage.getItem(WorkerManager.topologyIdentityStorageKey) !== null) return false;
+        setTimeout(() => {
+            window.close();
+            if (!window.closed) window.location.replace('about:blank')
+        }, 0);
+        return true
     }
 
     /**
@@ -200,17 +462,74 @@ class Main extends core.Base {
      * @returns {Boolean}
      */
     async importAddon(data) {
-        let name = data.name,
-            module;
+        let module = await this.importAddonModule(data.name);
 
-        if (name.startsWith('WS/')) {
-            module = await import(`../../../src/main/addon/${name.substring(3)}.mjs`)
-        } else {
-            module = await import(`./main/addon/${name}.mjs`)
+        // The calling worker holds a proxy for this addon only once its remotes are registered, and that
+        // registration is a round trip to the worker (`core.Base#initRemote`), which no fixed delay bounds.
+        // It is NOT full readiness: `main.addon.Base#initAsync` registers first and awaits its library files
+        // after, so a lazily loading addon answers here while `isReady` is still false — which is the
+        // contract, since the caller wants the proxy, not the library. `onDomContentLoaded` waits on the
+        // same promise for the same reason.
+        await this.registerAddon(module.default).remotesReady();
+
+        return true
+    }
+
+    /**
+     * Imports one main thread addon module. A `WS/` name addresses the consuming workspace's own addons. An
+     * engine running from its installed package finds them at the workspace root, three levels above its `src/`.
+     * Only an emitted `dist/esm` engine shares a tree with them, in its own `main/addon/`. `environment` alone
+     * cannot tell the two apart: a `dist/esm` config still runs from the package when its page loads the
+     * MicroLoader there. Both specifiers stay literal, so webpack still resolves each as a context of its own.
+     * An extension-free `node_modules/<package>/<path>/<Addon>` name addresses an installed package. Main's
+     * logical installed URL supplies the dependency root; source and emitted trees keep their own node_modules
+     * root. Package contexts are admitted by the declaring dependency's `neo.mainAddons` roots at build time.
+     * @param {String} name
+     * @returns {Promise<Object>}
+     */
+    importAddonModule(name) {
+        if (name.startsWith('node_modules/')) {
+            const modulePath = name.substring(13), parts = modulePath.split('/');
+
+            if (parts.length < (modulePath.startsWith('@') ? 3 : 2) ||
+                parts.some(part => !part || part === '.' || part === '..' || /[\\?#%]/.test(part)) ||
+                modulePath.endsWith('.mjs')) {
+                throw new Error('Package Main addons require an extension-free node_modules/<package>/<path> name')
+            }
+
+            return import.meta.url.includes('/node_modules/neo.mjs/')
+                ? import(`../../${modulePath}.mjs`)
+                : import(`../node_modules/${modulePath}.mjs`)
         }
 
-        this.addon[module.default.constructor.name] = module.default;
+        let isWorkspaceAddon = name.startsWith('WS/');
 
+        if (isWorkspaceAddon && (Neo.config.environment !== 'dist/esm' || import.meta.url.includes('/node_modules/neo.mjs/'))) {
+            return import(`../../../src/main/addon/${name.substring(3)}.mjs`)
+        }
+
+        return import(`./main/addon/${isWorkspaceAddon ? name.substring(3) : name}.mjs`)
+    }
+
+    /**
+     * Remote console access to main threads.
+     * You can use appName or windowId to target specific windows.
+     * @param {Object} data
+     * @param {String} [data.appName]
+     * @param {String} data.value
+     * @param {String} [data.method] defaults to 'log'
+     * @param {Number} [data.windowId]
+     * @returns {Boolean}
+     */
+    log(data) {
+        // An ALLOWLIST, not a `typeof` probe. `typeof console[method] === 'function'` is satisfied by
+        // `constructor`, `toString`, `valueOf` and `hasOwnProperty` — all inherited, all callable, and
+        // all writing nothing. That turns a loud main-thread TypeError into a SILENT DROP, which is
+        // the failure this channel exists to remove rather than reproduce. Validated because the
+        // method is reachable from every worker now, not only from `app`.
+        const {method} = data;
+
+        console[Main.consoleMethods.includes(method) ? method : 'log'](data.value);
         return true
     }
 
@@ -218,44 +537,48 @@ class Main extends core.Base {
      *
      */
     async onDomContentLoaded() {
-        let me               = this,
-            config           = Neo.config,
-            mainThreadAddons = config.mainThreadAddons,
-            imports          = [],
+        let me                                                = this,
+            {config}                                          = Neo,
+            imports                                           = [],
+            {environment, mainThreadAddons, useServiceWorker} = config,
             modules;
+
+        me.addon = {};
+
+        if (window.__NEO_SSR__) {
+            config.useSSR = true;
+            let module = await import('./main/addon/ServerSideRendering.mjs');
+            me.registerAddon(module.default)
+        }
 
         DomAccess.onDomContentLoaded();
 
-        // we need different publicPath values for the main thread inside the webpack based dist envs,
-        // depending on the hierarchy level of the app entry point
-        if (config.environment !== 'development') {
-            __webpack_require__.p = config.basePath.substring(6);
-        }
-
-        // intended for the online examples where we need an easy way to add GA to every generated app
+        // Intended for the online examples where we need an easy way to add GA to every generated app
         if (config.useGoogleAnalytics && !mainThreadAddons.includes('AnalyticsByGoogle')) {
-            mainThreadAddons.push('AnalyticsByGoogle');
+            mainThreadAddons.push('AnalyticsByGoogle')
         }
 
-        if (config.useServiceWorker && !mainThreadAddons.includes('ServiceWorker')) {
-            mainThreadAddons.push('ServiceWorker');
+        if ((
+                useServiceWorker === true ||
+                useServiceWorker === environment ||
+                (useServiceWorker === 'dist/production' && environment === 'dist/esm')
+            ) &&
+            !mainThreadAddons.includes('ServiceWorker')
+        ) {
+            mainThreadAddons.push('ServiceWorker')
         }
 
         mainThreadAddons.forEach(addon => {
-            if (addon.startsWith('WS/')) {
-                imports.push(import(`../../../src/main/addon/${addon.substring(3)}.mjs`));
-            } else {
-                imports.push(import(`./main/addon/${addon}.mjs`));
-            }
+            imports.push(me.importAddonModule(addon))
         });
 
         modules = await Promise.all(imports);
 
-        me.addon = {};
+        const instances = modules.map(module => me.registerAddon(module.default));
 
-        modules.forEach(module => {
-            me.addon[module.default.constructor.name] = module.default;
-        });
+        await Promise.all(instances.map(instance => instance.remotesReady()));
+
+        await me.remotesReady();
 
         WorkerManager.onWorkerConstructed({
             origin: 'main'
@@ -265,29 +588,9 @@ class Main extends core.Base {
     /**
      * @param {Object} data
      */
-    onMountDom(data) {
-        this.queueWrite(data);
-
-        WorkerManager.sendMessage(data.origin || 'app', {
-            action : 'reply',
-            replyId: data.id,
-            success: true
-        })
-    }
-
-    /**
-     * @param {Object} data
-     */
     onRender(data) {
         data.data.replyId = data.replyId;
-        this.queueWrite(data.data);
-    }
-
-    /**
-     * @param {Object} data
-     */
-    onUpdateDom(data) {
-        this.queueUpdate(data);
+        this.queueWrite(data.data)
     }
 
     /**
@@ -295,7 +598,7 @@ class Main extends core.Base {
      */
     onUpdateVdom(data) {
         data.data.replyId = data.replyId;
-        this.queueUpdate(data.data);
+        this.queueWrite(data.data)
     }
 
     /**
@@ -305,17 +608,33 @@ class Main extends core.Base {
      * @protected
      */
     processQueue(queue, start) {
-        let me    = this,
-            limit = me.timeLimit,
+        let me     = this,
+            {mode} = me,
+            limit  = me.timeLimit,
             operation;
 
         while (operation = queue.shift()) {
             if (new Date() - start > limit) {
                 queue.unshift(operation);
-                return requestAnimationFrame(me.renderFrame.bind(me));
+                return me.scheduleRenderQueueDrain()
             } else {
-                DomAccess[me.mode](operation);
-                WorkerManager.resolveDomOperationPromise(operation.replyId);
+                // Per-operation containment: a throwing delta must neither swallow this operation's
+                // reply nor escape the loop and drop the replies of everything still queued behind it.
+                // A dropped reply permanently wedges every component awaiting that update batch
+                // (isVdomUpdating never clears) — the failure must settle the promise (reject)
+                // and stay loud instead.
+                try {
+                    if (mode === 'read') {
+                        DomAccess.read(operation)
+                    } else {
+                        DeltaUpdates.update(operation)
+                    }
+
+                    WorkerManager.resolveDomOperationPromise(operation.replyId)
+                } catch (err) {
+                    console.error('processQueue: DOM operation failed', mode, err, operation);
+                    WorkerManager.rejectDomOperationPromise(operation.replyId, err)
+                }
             }
         }
     }
@@ -330,21 +649,7 @@ class Main extends core.Base {
 
         if (!me.running) {
             me.running = true;
-            requestAnimationFrame(me.renderFrame.bind(me));
-        }
-    }
-
-    /**
-     * @param {Object} data
-     * @protected
-     */
-    queueUpdate(data) {
-        let me = this;
-        me.updateQueue.push(data);
-
-        if (!me.running) {
-            me.running = true;
-            requestAnimationFrame(me.renderFrame.bind(me));
+            me.scheduleRenderQueueDrain()
         }
     }
 
@@ -358,8 +663,49 @@ class Main extends core.Base {
 
         if (!me.running) {
             me.running = true;
-            requestAnimationFrame(me.renderFrame.bind(me));
+            me.scheduleRenderQueueDrain()
         }
+    }
+
+    /**
+     * @summary Schedules the next Main-thread DOM queue drain without stranding hidden or frame-starved documents.
+     *
+     * Visible documents stay aligned to the browser's paint cycle. But a visible document can still
+     * receive no frames (an occluded or throttled window, a stalled compositor), and one frame that
+     * never comes would keep `running` set, so every later write and its worker reply would wait
+     * forever. The frame arm therefore races a timer dam ({@link #renderQueueDamDelay}): whichever
+     * fires first drains the queue and cancels the other, the same law the ResizeObserver and DockFlip
+     * addons follow (paint-gated carriers need a paint-independent arm). Hidden documents can suspend
+     * animation frames indefinitely, so they drain on a task directly. Either way, delayed worker
+     * replies settle only after their DOM operations are applied.
+     *
+     * @returns {Boolean} True once the queue drain has been scheduled
+     * @protected
+     */
+    scheduleRenderQueueDrain() {
+        const me = this;
+
+        if (document.hidden) {
+            me.timeout(0).then(() => me.renderFrame());
+            return true
+        }
+
+        let frameId = null,
+            settled = false,
+            timerId = null;
+
+        const drain = framed => {
+            if (settled) return;
+
+            settled = true;
+            framed ? clearTimeout(timerId) : cancelAnimationFrame(frameId);
+            me.renderFrame()
+        };
+
+        frameId = requestAnimationFrame(() => drain(true));
+        timerId = setTimeout(() => drain(false), me.renderQueueDamDelay);
+
+        return true
     }
 
     /**
@@ -367,7 +713,38 @@ class Main extends core.Base {
      * @param {String} data.url
      */
     redirectTo(data) {
-        window.location.href = data.url;
+        window.location.href = data.url
+    }
+
+    /**
+     * Helper method to register main thread addons
+     * @param {Neo.core.Base} addon Can either be a neo class or instance
+     * @returns {Neo.core.Base} The addon instance
+     */
+    registerAddon(addon) {
+        if (Neo.typeOf(addon) === 'NeoClass') {
+            // Addons could get imported multiple times. Ensure to only create an instance once.
+            if (Neo.typeOf(Neo.ns(addon.prototype.className)) !== 'NeoInstance') {
+                addon = Neo.create(addon);
+
+                // Main thread addons need to get registered as singletons inside the neo namespace
+                Neo.applyToGlobalNs(addon)
+            } else {
+                addon = Neo.ns(addon.prototype.className);
+            }
+        }
+
+        this.addon[addon.constructor.name] = addon;
+
+        return addon
+    }
+
+    /**
+     * @param {Object} data
+     * @param {Boolean} [data.force]
+     */
+    reloadWindow(data) {
+        location.reload(data?.force)
     }
 
     /**
@@ -377,38 +754,30 @@ class Main extends core.Base {
     renderFrame() {
         let me      = this,
             read    = me.readQueue,
-            update  = me.updateQueue,
             write   = me.writeQueue,
             reading = me.mode === 'read',
             start   = new Date();
 
         if (Neo.config.logDeltaUpdates) {
             me.totalFrameCount++;
-            console.log('Total Frames: ' + me.totalFrameCount);
+            console.log('Total Frames: ' + me.totalFrameCount)
         }
 
         if (reading || !write.length) {
             me.mode = 'read';
             if (me.processQueue(read, start)) {
-                return;
-            }
-        }
-
-        if (update.length) {
-            me.mode = 'update';
-            if (me.processQueue(update, start)) {
-                return;
+                return
             }
         }
 
         if (write.length) {
             me.mode = 'write';
             if (me.processQueue(write, start)) {
-                return;
+                return
             }
         }
 
-        me.running = false;
+        me.running = false
     }
 
     /**
@@ -418,7 +787,11 @@ class Main extends core.Base {
      * @param {*} data.value
      */
     setNeoConfig(data) {
-        Neo.config[data.key] = data.value;
+        let {key, value} = data;
+
+        Neo.config[key] = data.value;
+
+        key === 'renderCountDeltas' && DeltaUpdates.set({[key]: value})
     }
 
     /**
@@ -427,53 +800,655 @@ class Main extends core.Base {
      * @param {String} data.value
      */
     setRoute(data) {
-        window.location.hash = data.value;
+        window.location.hash = data.value
+    }
+
+    /**
+     * Consumes one opener-minted capability and binds its opaque handle key to the exact connected target.
+     * This method is intentionally absent from the App-Worker remote manifest: only the same-origin target
+     * main thread calls it directly through its opener during `getWindowData()`.
+     * @param {Object} data
+     * @param {String} data.targetWindowId
+     * @param {String} data.token
+     * @param {Window} data.win
+     * @returns {Object|null} The serializable worker-private route, or `null` when the grant is stale/invalid.
+     */
+    consumeNativeWindowRoute({targetWindowId, token, win}) {
+        const pending = this.#pendingWindowRoutes.get(token);
+
+        this.#pendingWindowRoutes.delete(token);
+
+        if (
+            !pending || pending.expiresAt < Date.now() || !targetWindowId ||
+            pending.entry.win !== win || this.openWindows[pending.entry.windowName] !== pending.entry
+        ) {
+            return null
+        }
+
+        const
+            {entry}      = pending,
+            capabilities = {
+                close   : entry.nativeCapabilities.close    && typeof win.close  === 'function',
+                focus   : entry.nativeCapabilities.focus    && typeof win.focus  === 'function',
+                position: entry.nativeCapabilities.position && typeof win.moveTo === 'function',
+                resize  : entry.nativeCapabilities.resize   && typeof win.resizeTo === 'function'
+            },
+            route = {
+                capabilities,
+                nativeHandleKey: entry.nativeHandleKey,
+                ownerWindowId  : entry.ownerWindowId,
+                targetWindowId
+            };
+
+        this.#nativeWindowRoutes.set(entry.nativeHandleKey, {entry, targetWindowId});
+
+        return route
+    }
+
+    /**
+     * Releases an active private generation when its exact target document unloads or reloads.
+     * Like consumption, this is a direct same-origin main-thread handshake and is not App-Worker remote API.
+     * @param {Object} data
+     * @param {String} data.nativeHandleKey
+     * @param {String} data.targetWindowId
+     * @param {Window} data.win
+     * @returns {Boolean}
+     */
+    releaseNativeWindowRoute({nativeHandleKey, targetWindowId, win}) {
+        const route = this.#nativeWindowRoutes.get(nativeHandleKey);
+
+        if (!route || route.targetWindowId !== targetWindowId || route.entry.win !== win) {
+            return false
+        }
+
+        this.#invalidateNativeWindowEntry(route.entry);
+
+        return true
+    }
+
+    /**
+     * Removes every pending/active capability associated with one semantic popup generation.
+     * @param {Object} entry
+     * @private
+     */
+    #invalidateNativeWindowEntry(entry) {
+        if (!entry) return;
+
+        this.#nativeWindowRoutes.delete(entry.nativeHandleKey);
+
+        for (const [token, pending] of this.#pendingWindowRoutes) {
+            if (pending.entry === entry) {
+                this.#pendingWindowRoutes.delete(token)
+            }
+        }
+    }
+
+    /**
+     * Resolves a private handle key only when its target generation, owner registry entry, grant, and native method
+     * are all still live.
+     * @param {Object} data
+     * @param {String} data.nativeHandleKey
+     * @param {String} data.targetWindowId
+     * @param {'close'|'focus'|'position'|'resize'} capability
+     * @returns {Object|null}
+     * @private
+     */
+    #getNativeWindowRoute({nativeHandleKey, targetWindowId}, capability) {
+        const
+            route   = this.#nativeWindowRoutes.get(nativeHandleKey),
+            entry   = route?.entry,
+            methods = {close: 'close', focus: 'focus', position: 'moveTo', resize: 'resizeTo'};
+
+        if (
+            !route || route.targetWindowId !== targetWindowId ||
+            this.openWindows[entry.windowName] !== entry ||
+            entry.win.closed || entry.nativeCapabilities[capability] !== true ||
+            typeof entry.win[methods[capability]] !== 'function'
+        ) {
+            entry?.win?.closed && this.#invalidateNativeWindowEntry(entry);
+            return null
+        }
+
+        return route
+    }
+
+    /**
+     * @summary Focuses one exact native handle and verifies the target document accepted focus.
+     * @param {Window} win
+     * @returns {Promise<Boolean>}
+     * @private
+     */
+    async #focusWindow(win) {
+        if (!win || win.closed || typeof win.focus !== 'function') {
+            return false
+        }
+
+        try {
+            win.focus()
+        } catch {
+            return false
+        }
+
+        // The verification asks the TARGET, not the opener: did the popup's document take focus?
+        // Asking the opener ("did I blur?") answers about the wrong subject — headless platforms
+        // let every window claim focus simultaneously, so the opener never blurs even when the
+        // popup genuinely focused. The answer feeds user-facing announcements, so it polls
+        // briefly and must not lie in either direction; a same-origin read is expected (vessels
+        // are same-app popups), and an inaccessible document degrades to the opener-blur
+        // fallback rather than a throw.
+        for (let attempt = 0; attempt < 6; attempt++) {
+            await this.timeout(50);
+
+            try {
+                if (win.document.hasFocus()) {
+                    return true
+                }
+            } catch {
+                if (!document.hasFocus()) {
+                    return true
+                }
+            }
+        }
+
+        return false
+    }
+
+    /**
+     * @summary Lets a mutated render target publish its complete observed geometry.
+     * @description Browser window movement and resize have no guaranteed matching event. Publishing
+     * the target realm's complete snapshot closes the mutation-to-observation edge without ever
+     * projecting requested coordinates or extents into manager truth. Cross-origin or not-yet-
+     * initialized targets remain valid physical handles; geometry publication is best-effort and
+     * cannot change the strict platform verdict.
+     * @param {Window} win
+     * @private
+     */
+    #publishWindowGeometry(win) {
+        try {
+            const observer = win.Neo?.main?.addon?.WindowPosition;
+
+            if (typeof observer?.publishGeometry === 'function') {
+                observer.publishGeometry()
+            } else {
+                observer?.checkMovement?.()
+            }
+        } catch {
+            // Cross-origin target realms are intentionally opaque.
+        }
+    }
+
+    /**
+     * @summary Moves one exact native handle and verifies the target reached the requested coordinates.
+     * @param {Window} win
+     * @param {Number|String} requestedX
+     * @param {Number|String} requestedY
+     * @returns {Promise<Boolean>}
+     * @private
+     */
+    async #moveWindow(win, requestedX, requestedY) {
+        const
+            x = Number(requestedX),
+            y = Number(requestedY);
+
+        let admitted = false;
+
+        if (!win || win.closed || typeof win.moveTo !== 'function' || !Number.isFinite(x) || !Number.isFinite(y)) {
+            return false
+        }
+
+        try {
+            win.moveTo(x, y)
+        } catch {
+            this.#publishWindowGeometry(win);
+            return false
+        }
+
+        for (let attempt = 0; attempt < this.windowMovePollAttempts; attempt++) {
+            if (Math.abs(win.screenX - x) <= 1 && Math.abs(win.screenY - y) <= 1) {
+                admitted = true;
+                break
+            }
+
+            await this.timeout(this.windowMovePollDelay)
+        }
+
+        this.#publishWindowGeometry(win);
+
+        return admitted
+    }
+
+    /**
+     * @summary Resizes one exact native handle and verifies the target reached the requested outer extent.
+     * `Window#resizeTo()` speaks outer dimensions, so callers must translate from any inner-layout
+     * geometry before crossing this physical-capability boundary.
+     * @param {Window} win
+     * @param {Number|String} requestedWidth
+     * @param {Number|String} requestedHeight
+     * @returns {Promise<Boolean>}
+     * @private
+     */
+    async #resizeWindow(win, requestedWidth, requestedHeight) {
+        const
+            height = Number(requestedHeight),
+            width  = Number(requestedWidth);
+
+        let admitted = false;
+
+        if (
+            !win || win.closed || typeof win.resizeTo !== 'function' ||
+            !Number.isFinite(width) || width <= 0 || !Number.isFinite(height) || height <= 0
+        ) {
+            return false
+        }
+
+        try {
+            win.resizeTo(width, height)
+        } catch {
+            this.#publishWindowGeometry(win);
+            return false
+        }
+
+        for (let attempt = 0; attempt < this.windowMovePollAttempts; attempt++) {
+            if (Math.abs(win.outerWidth - width) <= 1 && Math.abs(win.outerHeight - height) <= 1) {
+                admitted = true;
+                break
+            }
+
+            await this.timeout(this.windowMovePollDelay)
+        }
+
+        this.#publishWindowGeometry(win);
+
+        return admitted
     }
 
     /**
      * Closes popup windows
      * @param {Object} data
-     * @param {Array|String} data.names
+     * @param {String|String[]} data.names
+     * @returns {Boolean} True when every named live handle accepted the close request.
      */
     windowClose(data) {
-        if (!Array.isArray(data.names)) {
-            data.names = [data.names];
+        const names = Array.isArray(data.names) ? data.names : [data.names];
+
+        let closed = names.length > 0;
+
+        names.forEach(name => {
+            const
+                entry = this.openWindows[name],
+                win   = entry?.win;
+
+            if (!win || win.closed || typeof win.close !== 'function') {
+                closed = false
+            } else {
+                win.close()
+            }
+
+            this.#invalidateNativeWindowEntry(entry);
+            delete this.openWindows[name]
+        });
+
+        return closed
+    }
+
+    /**
+     * Closes all popup windows
+     * @param {Object} data
+     */
+    windowCloseAll(data) {
+        Object.values(this.openWindows).forEach(entry => {
+            entry.win.close();
+            this.#invalidateNativeWindowEntry(entry)
+        });
+
+        this.openWindows = {}
+    }
+
+    /**
+     * Focus a named popup window — Boolean admission, the `windowOpen` discipline applied to
+     * focus: the platform may decline silently, so the answer is the VERIFIED outcome (did this
+     * opener actually lose focus to the popup), never the attempt. A keyboard-command flow rides
+     * its keystroke's user activation through this verb; a `false` answer is a legitimate
+     * degraded terminal for the caller to announce, not an error.
+     *
+     * Omitting `windowName` targets this window's OPENER instead — the popup-origin return path:
+     * the popup holds the keystroke's user activation, so routing the call to the popup's main
+     * thread (via `windowId`) lets IT ask its opener to take focus, the direction focus-stealing
+     * rules permit. Same Boolean-admission verification either way.
+     * @param {Object} data
+     * @param {String} [data.windowName] Named popup to focus; absent = this window's opener.
+     * @returns {Promise<Boolean>} true when the target window verifiably took focus.
+     */
+    async windowFocus(data) {
+        return this.#focusWindow(data.windowName ? this.openWindows[data.windowName]?.win : window.opener)
+    }
+
+    /**
+     * @summary Moves a popup window. Its handle lives in the window that opened it, and a drag running in a popup
+     * can move a vessel the main window opened, so a window holding no handle by that name asks its opener.
+     * @param {Object} data
+     * @param {String} data.windowName
+     * @param {Number|String} data.x
+     * @param {Number|String} data.y
+     * @returns {Promise<Boolean>} True when the popup reaches the requested screen coordinates.
+     */
+    async windowMoveTo(data) {
+        const win = this.openWindows[data.windowName]?.win;
+
+        if (!win) {
+            try {
+                const openerMain = window.opener?.Neo?.Main;
+
+                if (openerMain) return openerMain.windowMoveTo(data)
+            } catch {/* A cross-origin opener throws on access, and holds no handle of this app */}
         }
 
-        data.names.forEach(name => {
-            this.openWindows[name].close();
-            delete this.openWindows[name];
-        })
+        return this.#moveWindow(win, data.x, data.y)
     }
 
     /**
-     * Move a popup window
+     * @summary Closes an exact owner-granted native handle generation and verifies the platform did it.
      * @param {Object} data
-     * @param {String} data.windowName
-     * @param {String} data.x
-     * @param {String} data.y
+     * @param {String} data.nativeHandleKey
+     * @param {String} data.targetWindowId
+     * @returns {Promise<Boolean>} true once the popup is verifiably closed; false while it is not.
      */
-    windowMoveTo(data) {
-        this.openWindows[data.windowName].moveTo(data.x, data.y);
+    async windowNativeClose(data) {
+        const route = this.#getNativeWindowRoute(data, 'close');
+
+        if (!route) return false;
+
+        const {entry} = route,
+              {win}   = entry;
+
+        try {
+            win.close()
+        } catch {
+            return false
+        }
+
+        // The answer is the VERIFIED outcome, never the attempt — the discipline #focusWindow applies
+        // to focus. A popup the OS is still dragging by its titlebar may keep the close deferred; the
+        // caller (a native-titlebar drop's retirement) retries at a fixed cadence until the release
+        // lets it through, and it can only do that while the route is still here — so the entry is
+        // retired only once the window is gone.
+        for (let attempt = 0; attempt < 6 && !win.closed; attempt++) {
+            await this.timeout(50)
+        }
+
+        if (!win.closed) {
+            return false
+        }
+
+        this.#invalidateNativeWindowEntry(entry);
+
+        if (this.openWindows[entry.windowName] === entry) {
+            delete this.openWindows[entry.windowName]
+        }
+
+        return true
     }
 
     /**
-     * Open a new popup window and return if successfull
+     * Focuses an exact owner-granted native handle generation.
      * @param {Object} data
-     * @param {String} data.url
-     * @param {String} data.windowFeatures
-     * @param {String} data.windowName
+     * @param {String} data.nativeHandleKey
+     * @param {String} data.targetWindowId
+     * @returns {Promise<Boolean>}
+     */
+    async windowNativeFocus(data) {
+        const route = this.#getNativeWindowRoute(data, 'focus');
+
+        if (!route || !await this.#focusWindow(route.entry.win)) {
+            return false
+        }
+
+        return this.#getNativeWindowRoute(data, 'focus') === route
+    }
+
+    /**
+     * Reads the exact owner-granted native handle generation's current outer extent and viewport
+     * origin. The caller uses this only as volatile recovery authority immediately before a
+     * physical effect; manager topology remains the shared observation surface.
+     * @param {Object} data
+     * @param {String} data.nativeHandleKey
+     * @param {String} data.targetWindowId
+     * @returns {{height:Number,width:Number,x:Number,y:Number}|null}
+     */
+    windowNativeGetGeometry(data) {
+        const
+            route = this.#getNativeWindowRoute(data, 'position'),
+            win   = route?.entry?.win,
+            value = win && {
+                height: Number(win.outerHeight),
+                width : Number(win.outerWidth),
+                x     : Number(win.screenX),
+                y     : Number(win.screenY)
+            };
+
+        return value && Object.values(value).every(Number.isFinite) && value.height > 0 && value.width > 0
+            ? value
+            : null
+    }
+
+    /**
+     * @summary Observes an exact physical handle after its document's control route was released.
+     * Reload invalidates control authority but leaves the WindowProxy open. A missing or replaced
+     * handle is unknown, never evidence of closure; this read grants no native control capability.
+     * @param {Object} data
+     * @param {String} data.nativeHandleKey
+     * @returns {Promise<Boolean|null>} true closed, false still open, null unknown generation.
+     */
+    async windowNativeIsClosed({nativeHandleKey}) {
+        if (typeof nativeHandleKey !== 'string' || !nativeHandleKey) return null;
+        const entry = Object.values(this.openWindows).find(value => value.nativeHandleKey === nativeHandleKey);
+        if (!entry) return null;
+
+        try {
+            for (let attempt = 0; attempt < 6; attempt++) {
+                if (this.openWindows[entry.windowName] !== entry) return null;
+                if (entry.win.closed) return true;
+                await this.timeout(50)
+            }
+            return this.openWindows[entry.windowName] === entry ? entry.win.closed : null
+        } catch {
+            return null
+        }
+    }
+
+    /**
+     * Moves an exact owner-granted native handle generation.
+     * @param {Object} data
+     * @param {String} data.nativeHandleKey
+     * @param {String} data.targetWindowId
+     * @param {Number|String} data.x
+     * @param {Number|String} data.y
+     * @param {Object} [data.nativeEffect] Transaction/effect identity carried by resulting geometry reports.
+     * @returns {Promise<Boolean>}
+     */
+    async windowNativeMoveTo(data) {
+        const route = this.#getNativeWindowRoute(data, 'position');
+        if (!route) return false;
+        if (data.nativeEffect && !['transactionId', 'effectId'].every(key =>
+            typeof data.nativeEffect[key] === 'string' && data.nativeEffect[key].length
+        )) return false;
+        const win    = route.entry.win;
+        const effect = data.nativeEffect && {
+            transactionId: data.nativeEffect.transactionId,
+            effectId     : data.nativeEffect.effectId
+        };
+        if (effect) (win.neoNativeGeometryEffects ??= []).push(effect);
+        try {
+            return await this.#moveWindow(win, data.x, data.y) && this.#getNativeWindowRoute(data, 'position') === route
+        } finally {
+            if (effect) {
+                const effects = win.neoNativeGeometryEffects;
+                effects.splice(effects.indexOf(effect), 1);
+                if (!effects.length) delete win.neoNativeGeometryEffects
+            }
+        }
+    }
+
+    /**
+     * Resizes an exact owner-granted native handle generation to verified outer dimensions.
+     * The route is revalidated after the asynchronous platform observation so same-name successor
+     * windows can never inherit a predecessor completion.
+     * @param {Object} data
+     * @param {Number|String} data.height
+     * @param {String} data.nativeHandleKey
+     * @param {String} data.targetWindowId
+     * @param {Number|String} data.width
+     * @returns {Promise<Boolean>}
+     */
+    async windowNativeResizeTo(data) {
+        const route = this.#getNativeWindowRoute(data, 'resize');
+
+        if (!route || !await this.#resizeWindow(route.entry.win, data.width, data.height)) {
+            return false
+        }
+
+        return this.#getNativeWindowRoute(data, 'resize') === route
+    }
+
+    /**
+     * @summary Reads the light/dark hint the active theme declares, or `undefined` when none does.
+     *
+     * Every theme states its own scheme as `--neo-color-scheme` in its `Global.scss`, because the
+     * name cannot be trusted to carry it: `theme-cyberpunk` is dark and is named neither. The token
+     * is declared on the element holding the `neo-theme-*` class rather than on the document root,
+     * so the read has to find that element; custom properties inherit downward only.
+     *
+     * An undeclared theme returns `undefined` on purpose. The caller then omits the parameter and
+     * keeps the platform default, which is preferable to staging a guessed colour.
+     * @returns {'dark'|'light'|undefined}
+     * @protected
+     */
+    resolveThemeColorScheme() {
+        const
+            themed = document.querySelector('[class*="neo-theme-"]'),
+            value  = themed && getComputedStyle(themed).getPropertyValue('--neo-color-scheme').trim();
+
+        return value === 'dark' || value === 'light' ? value : undefined
+    }
+
+    /**
+     * @summary Opens a popup and stages any same-origin canvas before its route-bearing navigation.
+     * @param {Object}  data
+     * @param {Object}  [data.nativeCapabilities] Owner-granted generic physical capabilities.
+     * @param {'dark'|'light'} [data.stagedColorScheme] Admitted scheme for the temporary same-origin document.
+     * Omitted callers inherit the opener's own theme through {@link Neo.Main#resolveThemeColorScheme}.
+     * @param {String}  data.url
+     * @param {Boolean} [data.useTotalHeight=true] Using this flag will set outerHeight to innerHeight, ignoring header tools
+     * @param {String}  data.windowFeatures
+     * @param {String}  data.windowName
      * @return {Boolean}
      */
-    windowOpen(data) {
-        let openedWindow = window.open(data.url, data.windowName, data.windowFeatures),
+    windowOpen({nativeCapabilities, stagedColorScheme, topologyIdentity=null, url, useTotalHeight=true, windowFeatures, windowName}) {
+        let existingWin = this.openWindows[windowName],
+            stagedUrl   = null,
+            targetName;
+
+        // A caller that names a scheme keeps it; one that does not inherits the opener's. The
+        // staging document paints before the child app exists, so without this the popup flashes
+        // the user-agent default no matter what theme the opener is showing.
+        stagedColorScheme ??= this.resolveThemeColorScheme();
+
+        try {
+            const resolved = typeof url === 'string' && new URL(url, window.location.href);
+
+            if (resolved?.origin === window.location.origin) {
+                stagedUrl = resolved.href
+            }
+        } catch {
+            // Invalid or inaccessible URLs retain the browser's direct-open behavior below.
+        }
+
+        if (existingWin && !existingWin.win.closed) {
+            targetName = existingWin.targetName
+        } else {
+            targetName = generateUUID()
+        }
+
+        // Same-origin children can connect to the shared worker immediately when the opener is
+        // warm. Open a blank same-origin realm first, mint its one-time route there, THEN navigate;
+        // opening the final URL before writing sessionStorage races the child's getWindowData()
+        // handshake and produces a connected but authority-less popup.
+        let openedWindow = window.open(stagedUrl ? 'about:blank' : url, targetName, windowFeatures),
             success      = !!openedWindow;
 
         if (success) {
-            this.openWindows[data.windowName] = openedWindow;
+            this.#invalidateNativeWindowEntry(existingWin);
+
+            if (stagedUrl && (stagedColorScheme === 'dark' || stagedColorScheme === 'light')) {
+                try {
+                    const meta = openedWindow.document.createElement('meta');
+
+                    meta.name    = 'color-scheme';
+                    meta.content = stagedColorScheme;
+                    openedWindow.document.head.append(meta)
+                } catch {/* Presentation must not revoke an otherwise valid physical handle. */}
+            }
+
+            const
+                entry = {
+                    nativeCapabilities: {...this.nativeWindowCapabilities, ...nativeCapabilities},
+                    nativeHandleKey   : generateUUID(),
+                    ownerWindowId     : WorkerManager.windowId,
+                    targetName,
+                    win               : openedWindow,
+                    windowName
+                },
+                token   = generateUUID(),
+                pending = {
+                    entry,
+                    expiresAt: Date.now() + this.nativeRouteTtl
+                };
+
+            this.openWindows[windowName] = entry;
+            this.#pendingWindowRoutes.set(token, pending);
+
+            setTimeout(() => {
+                this.#pendingWindowRoutes.get(token) === pending && this.#pendingWindowRoutes.delete(token)
+            }, this.nativeRouteTtl);
+
+            try {
+                openedWindow.sessionStorage.setItem(this.nativeRouteStorageKey, token)
+            } catch {
+                this.#pendingWindowRoutes.delete(token)
+            }
+            // A same-origin child inherits a copy of this window's identity at creation. The opener's
+            // reservation replaces it; without one the copy is cleared, so the popup boots as a root of
+            // its own instead of forking the opener's Group on connect.
+            try {
+                if (topologyIdentity) {
+                    openedWindow.sessionStorage.setItem(WorkerManager.topologyIdentityStorageKey, JSON.stringify(topologyIdentity))
+                } else {
+                    openedWindow.sessionStorage.removeItem(WorkerManager.topologyIdentityStorageKey)
+                }
+            } catch {/* Cross-origin or unavailable storage: the child boots as a fresh root. */}
+
+            if (useTotalHeight) {
+                // The request is the authority for the total extent. A newborn popup has no frame to
+                // read yet: an unemulated Chrome answers outerWidth and outerHeight 0 until the popup is
+                // laid out, and a resize built from that reading lands on the platform's minimum width.
+                const size = Main.parseWindowFeatureSize(windowFeatures);
+
+                size && openedWindow.resizeTo(size.width, size.height)
+            }
+
+            if (stagedUrl) {
+                try {
+                    openedWindow.location.replace(stagedUrl)
+                } catch {
+                    this.#invalidateNativeWindowEntry(entry);
+                    delete this.openWindows[windowName];
+                    openedWindow.close();
+                    success = false
+                }
+            }
         }
 
-        return success;
+        return success
     }
 
     /**
@@ -484,14 +1459,12 @@ class Main extends core.Base {
      * @param {String} data.windowName
      */
     windowResizeTo(data) {
-        let win    = this.openWindows[data.windowName],
+        let win    = this.openWindows[data.windowName]?.win,
             height = data.height || win.outerHeight,
             width  = data.width  || win.outerWidth;
 
-        win.resizeTo(width, height);
+        win.resizeTo(width, height)
     }
 }
 
-let instance = Neo.applyClassConfig(Main);
-
-export default instance;
+export default Neo.setupClass(Main);

@@ -17,20 +17,40 @@
     }
 }
 
-.neo-dialog-wrapper {
-    display : flex;
-    position: absolute;
-    z-index : 20; // ensure to be on top of table headers
+.neo-dialog-modal-mask {
+    position         : fixed;
+    top              : 0;
+    left             : 0;
+    bottom           : 0;
+    right            : 0;
+    background-color : rgba(100, 100, 100, 0.5);
+    backdrop-filter  : blur(1px);
+    z-index          : 1000;
+}
 
-    transition-duration       : 200ms;
-    transition-property       : height, left, top, transform, width;
-    transition-timing-function: ease-out;
+.neo-dialog {
+    border        : 1px solid var(--dialog-border-color);
+    box-shadow    : var(--dialog-box-shadow);
+    display       : flex;
+    flex-direction: column;
+
+    &.animated-hiding-showing {
+        transition-duration       : 200ms;
+        transition-property       : height, left, top, transform, width;
+        transition-timing-function: ease-out;
+    }
+
+    &.neo-dragproxy {
+        > * {
+            height: fit-content;
+        }
+    }
 
     &.neo-maximized {
         height   : 98% !important;
         left     : 1%  !important;
         top      : 1%  !important;
-        transform: none;
+        transform: none!important;
         width    : 98% !important;
 
         &.neo-panel {
@@ -41,19 +61,17 @@
             }
         }
     }
-}
-
-.neo-dialog {
-    border        : 1px solid var(--dialog-border-color);
-    display       : flex;
-    flex          : 1 0 auto;
-    flex-direction: column;
-    position      : relative;
 
     &.neo-panel {
         .neo-footer-toolbar {
             border    : none;
             border-top: 1px solid var(--dialog-border-color);
+
+            .neo-button {
+                border-radius: var(--dialog-footer-button-border-radius);
+                height       : var(--dialog-footer-button-height);
+                margin-left  : var(--dialog-footer-button-margin-left);
+            }
         }
 
         .neo-header-toolbar {
@@ -64,6 +82,10 @@
                 border      : 0;
                 margin-right: 0.3em;
                 padding     : 0;
+
+                &:active {
+                    border: none !important;
+                }
 
                 &:last-child {
                     margin-right: 0;
@@ -87,8 +109,16 @@
             }
 
             &.neo-draggable {
-                cursor: move;
+                cursor      : move;
+                // a drag handle: a touch on it moves the dialog, never pans the page under it
+                touch-action: none;
             }
         }
     }
+}
+
+// A focusable, but zero-sized element used to grab and redirect focus in focus-trapped modals
+.neo-focus-trap {
+    clip    : rect(0, 0, 0, 0);
+    position: absolute;
 }

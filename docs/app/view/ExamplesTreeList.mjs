@@ -19,11 +19,13 @@ class ExamplesTreeList extends TreeList {
         ntype: 'examples-treelist',
         /**
          * @member {String[]} cls=['docs-examples-treelist']
+         * @reactive
          */
         cls: ['docs-examples-treelist'],
         /**
          * @member {Neo.data.Store|null} store=ExamplesStore
          * @protected
+         * @reactive
          */
         store: ExamplesStore
     }
@@ -33,19 +35,8 @@ class ExamplesTreeList extends TreeList {
      */
     onConstructed() {
         super.onConstructed();
-
-        let me = this;
-
-        Neo.Xhr.promiseJson({
-            url: '../../docs/examples.json'
-        }).then(data => {
-            me.store.data = data.json;
-            me.createItems(null, me.getListItemsRoot(), 0);
-            me.update();
-        });
+        this.store.load()
     }
 }
 
-Neo.applyClassConfig(ExamplesTreeList);
-
-export default ExamplesTreeList;
+export default Neo.setupClass(ExamplesTreeList);

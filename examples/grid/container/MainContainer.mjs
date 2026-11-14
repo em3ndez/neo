@@ -25,7 +25,8 @@ class MainContainer extends ConfigurationViewport {
     }
 
     createConfigurationComponents() {
-        let me = this;
+        let me               = this,
+            {selectionModel} = me.exampleComponent.view;
 
         const selectionModelRadioDefaults = {
             module        : Radio,
@@ -45,58 +46,75 @@ class MainContainer extends ConfigurationViewport {
             value    : me.exampleComponent.height
         }, {
             ...selectionModelRadioDefaults,
-            checked       : me.exampleComponent.selectionModel.ntype === 'selection-grid-cellmodel',
-            labelText     : 'selectionModel',
-            listeners     : {change: me.onRadioChange.bind(me, 'selectionModel', CellModel)},
-            style         : {marginTop: '10px'},
-            valueLabelText: 'Cell'
+            checked   : selectionModel.ntype === 'selection-grid-cellmodel',
+            labelText : 'selectionModel',
+            listeners : {change: me.onRadioViewChange.bind(me, 'selectionModel', CellModel)},
+            style     : {marginTop: '10px'},
+            valueLabel: 'Cell'
         }, {
             ...selectionModelRadioDefaults,
-            checked       : me.exampleComponent.selectionModel.ntype === 'selection-grid-columnmodel',
-            listeners     : {change: me.onRadioChange.bind(me, 'selectionModel', ColumnModel)},
-            valueLabelText: 'Column'
+            checked   : selectionModel.ntype === 'selection-grid-columnmodel',
+            listeners : {change: me.onRadioViewChange.bind(me, 'selectionModel', ColumnModel)},
+            valueLabel: 'Column'
         }, {
             ...selectionModelRadioDefaults,
-            checked       : me.exampleComponent.selectionModel.ntype === 'selection-grid-rowmodel',
-            listeners     : {change: me.onRadioChange.bind(me, 'selectionModel', RowModel)},
-            valueLabelText: 'Row'
+            checked   : selectionModel.ntype === 'selection-grid-rowmodel',
+            listeners : {change: me.onRadioViewChange.bind(me, 'selectionModel', RowModel)},
+            valueLabel: 'Row'
         }, {
             ...selectionModelRadioDefaults,
-            checked       : me.exampleComponent.selectionModel.ntype === 'selection-grid-cellcolumnmodel',
-            listeners     : {change: me.onRadioChange.bind(me, 'selectionModel', CellColumnModel)},
-            valueLabelText: 'Cell & Column'
+            checked   : selectionModel.ntype === 'selection-grid-cellcolumnmodel',
+            listeners : {change: me.onRadioViewChange.bind(me, 'selectionModel', CellColumnModel)},
+            valueLabel: 'Cell & Column'
         }, {
             ...selectionModelRadioDefaults,
-            checked       : me.exampleComponent.selectionModel.ntype === 'selection-grid-cellrowmodel',
-            listeners     : {change: me.onRadioChange.bind(me, 'selectionModel', CellRowModel)},
-            valueLabelText: 'Cell & Row'
+            checked   : selectionModel.ntype === 'selection-grid-cellrowmodel',
+            listeners : {change: me.onRadioViewChange.bind(me, 'selectionModel', CellRowModel)},
+            valueLabel: 'Cell & Row'
         }, {
             ...selectionModelRadioDefaults,
-            checked       : me.exampleComponent.selectionModel.ntype === 'selection-grid-cellcolumnrowmodel',
-            listeners     : {change: me.onRadioChange.bind(me, 'selectionModel', CellColumnRowModel)},
-            valueLabelText: 'Cell & Column & Row'
-        }];
+            checked   : selectionModel.ntype === 'selection-grid-cellcolumnrowmodel',
+            listeners : {change: me.onRadioViewChange.bind(me, 'selectionModel', CellColumnRowModel)},
+            valueLabel: 'Cell & Column & Row'
+        }]
     }
 
     createExampleComponent() {
-        return Neo.create(GridContainer, {
-            selectionModel: CellModel,
-            store         : MainStore,
+        return {
+            module: GridContainer,
+            store : MainStore,
 
             columnDefaults: {
                 width: 200
             },
 
+            viewConfig: {
+                selectionModel: CellModel
+            },
+
             columns: [
-                {field: 'firstname', text: 'Firstname'},
-                {field: 'lastname',  text: 'Lastname'},
-                {field: 'githubId',  text: 'Github Id'},
-                {field: 'country',   text: 'Country'}
-            ]
-        });
+                {dataField: 'firstname', text: 'Firstname'},
+                {dataField: 'lastname',  text: 'Lastname'},
+                {dataField: 'githubId',  text: 'Github Id'},
+                {dataField: 'country',   text: 'Country'}
+            ],
+
+            wrapperStyle: {
+                height: '250px'
+            }
+        }
+    }
+
+    /**
+     * @param {String} config
+     * @param {String} value
+     * @param {Object} opts
+     */
+    onRadioViewChange(config, value, opts) {
+        if (opts.value === true) { // we only want to listen to check events, not uncheck
+            this.exampleComponent.view[config] = value
+        }
     }
 }
 
-Neo.applyClassConfig(MainContainer);
-
-export default MainContainer;
+export default Neo.setupClass(MainContainer);

@@ -20,10 +20,12 @@ class MainContainer extends Viewport {
         className: 'Neo.examples.list.animate.MainContainer',
         /**
          * @member {Neo.controller.Component} controller=MainContainerController
+         * @reactive
          */
         controller: MainContainerController,
         /**
          * @member {Object} layout={ntype:'vbox',align:'stretch'}
+         * @reactive
          */
         layout: {ntype: 'vbox', align: 'stretch'},
         /**
@@ -60,6 +62,19 @@ class MainContainer extends Viewport {
                 labelWidth: 70,
                 listeners : {change: 'changeIsOnlineFilter'},
                 style     : {marginLeft: '50px'}
+            }, {
+                module    : CheckBox,
+                labelText : 'Measured rows',
+                labelWidth: 110,
+                listeners : {change: 'changeMeasureItemHeight'},
+                style     : {marginLeft: '20px'}
+            }, {
+                module    : CheckBox,
+                checked   : true,
+                labelText : 'Order by row',
+                labelWidth: 100,
+                listeners : {change: 'changeOrderByRow'},
+                style     : {marginLeft: '20px'}
             }]
         }, {
             module    : TextField,
@@ -90,6 +105,4 @@ class MainContainer extends Viewport {
     }
 }
 
-Neo.applyClassConfig(MainContainer);
-
-export default MainContainer;
+export default Neo.setupClass(MainContainer);

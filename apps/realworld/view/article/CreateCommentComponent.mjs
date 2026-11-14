@@ -17,10 +17,12 @@ class CreateCommentComponent extends Component {
         baseCls: ['card', 'comment-form'],
         /**
          * @member {String|null} userImage_=null
+         * @reactive
          */
         userImage_: null,
         /**
          * @member {String|null} userName_=null
+         * @reactive
          */
         userName_: null,
         /**
@@ -32,10 +34,10 @@ class CreateCommentComponent extends Component {
                 {tag: 'textarea', cls: ['form-control'], placeholder: 'Write a comment...', rows: 3}
             ]},
             {cls: ['card-footer'], cn: [
-                {tag: 'img', cls: ['comment-author-img'], src: 'https://static.productionready.io/images/smiley-cyrus.jpg'},  // https://github.com/gothinkster/realworld/issues/442
+                {tag: 'img', cls: ['comment-author-img'], src: 'https://cdn.jsdelivr.net/gh/realworld-apps/realworld@ebbcdeb8d55b42a3a613c787560498b8ef10003f/assets/media/default-avatar.svg'},
                 {vtype: 'text', html: '&nbsp;'},
                 {tag: 'span', cls: ['comment-author']},
-                {tag: 'button', cls: ['btn', 'btn-sm', 'btn-primary'], html: 'Post Comment', type: 'button'}
+                {tag: 'button', cls: ['btn', 'btn-sm', 'btn-primary'], text: 'Post Comment', type: 'button'}
             ]}
         ]}
     }
@@ -86,8 +88,8 @@ class CreateCommentComponent extends Component {
      */
     afterSetUserName(value, oldValue) {
         if (value) {
-            this.vdom.cn[1].cn[2].html = value;
-            this.update();
+            this.vdom.cn[1].cn[2].text = value;
+            this.update()
         }
     }
 
@@ -118,7 +120,8 @@ class CreateCommentComponent extends Component {
         // we could register an oninput event to this view as well and store the changes
         Neo.main.DomAccess.getAttributes({
             id        : me.getInputElId(),
-            attributes: 'value'
+            attributes: 'value',
+            windowId  : me.windowId
         }).then(data => {
             me.getController().postComment({
                 data: JSON.stringify({
@@ -128,12 +131,10 @@ class CreateCommentComponent extends Component {
                 })
             }).then(data => {
                 me.vdom.cn[0].cn[0].value = ''; // reset the textarea value
-                me.update();
-            });
-        });
+                me.update()
+            })
+        })
     }
 }
 
-Neo.applyClassConfig(CreateCommentComponent);
-
-export default CreateCommentComponent;
+export default Neo.setupClass(CreateCommentComponent);

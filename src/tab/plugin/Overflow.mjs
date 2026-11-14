@@ -1,0 +1,1763 @@
+import Button from '../../button/Base.mjs';
+import Plugin from '../../plugin/Base.mjs';
+
+/**
+ * @summary The tab-overflow affordance for a projected tab header toolbar: when headers exceed the
+ * available main-axis extent, overflowing tabs collapse behind one control whose menu reaches them.
+ *
+ * The pure decision is this plugin's own static {@link Neo.tab.plugin.Overflow.computeOverflow} — a
+ * projection concern, nothing persists. This plugin is the RUNTIME complement: it measures the live header extents
+ * the pure core can only be handed, as layout boxes a presentation transform never distorts (a resize pass inside a
+ * DockFlip window partitions for the settled size), applies its verdict to the header buttons, and surfaces the hidden
+ * remainder through a single overflow control whose selection routes back through the tab.Container's
+ * EXISTING `activeIndex` path — zero new operations, zero new persisted state (the binding projection
+ * constraint). `items` order and `activeItemId` already capture the state; overflow is projection only.
+ *
+ * It attaches to the projected tab header toolbar (`Neo.tab.header.Toolbar`) — it is NOT a dock-specific
+ * `tab.Container` fork (the model contract's Split/Tab Adapter Boundary). The default embodiment is the
+ * historic OUT-OF-COLLECTION floating button rooted at `document.body`, with independent mount/alignment/menu
+ * lifecycle. {@link #projectAsAction} instead contributes one stable, focus-independent toolbar action for
+ * composed headers that already own an action rail. The toolbar preserves that contribution across consumer
+ * `actions` replacements; the plugin hides it (removeDom) while everything fits and self-excludes it from
+ * partition geometry and visibility feedback. Neither embodiment is a tab: both bypass `getTabButtonConfig`,
+ * so clicking opens the menu rather than activating a phantom card.
+ *
+ * Natural-width discipline: overflowing buttons are removed from the DOM (Neo's built-in `hidden` /
+ * removeDom), so re-measuring them would collapse their width to 0 and corrupt the next split. The plugin
+ * therefore measures NATURAL widths once while every button is visible (on mount, and whenever the tab set
+ * changes) and caches them; a plain resize only re-reads the always-visible strip extent and recomputes
+ * against that cache.
+ *
+ * Lifecycle publication: a repartition removes and restores header nodes, so a pointer that aimed at a
+ * button before the pass can land on nothing after it. The plugin publishes the transaction it already
+ * brackets for {@link #whenProjectionIdle} as two events on its owner toolbar — `overflowProjectionStart`
+ * when a measuring pass arms, `overflowProjectionIdle` when the pass and its coalesced rerun have settled —
+ * so a host can expose "in flight" where its consumers look (the dock routes it into its motion signal).
+ * A projection parked behind an open menu or a drag is not in flight: the header is stable until it drains,
+ * so a pass that parks closes its pair and the pass that resumes after the drain opens a new one.
+ *
+ * @class Neo.tab.plugin.Overflow
+ * @extends Neo.plugin.Base
+ */
+class Overflow extends Plugin {
+    static config = {
+        /**
+         * @member {String} className='Neo.tab.plugin.Overflow'
+         * @protected
+         */
+        className: 'Neo.tab.plugin.Overflow',
+        /**
+         * @member {String} ntype='plugin-tab-overflow'
+         * @protected
+         */
+        ntype: 'plugin-tab-overflow',
+        /**
+         * Main-axis size (px) the floating control reserves from the header extent — handed to the pure core as
+         * `controlWidth`, which reserves it ONLY when something overflows. Action projection instead converges
+         * from zero to the contributed button's rendered extent; this historic estimate remains floating-only.
+         * @member {Number} controlWidth=40
+         */
+        controlWidth: 40,
+        /**
+         * Projects the overflow control through the toolbar's stable contribution seam instead of as a
+         * floating `document.body` child. Disabled by default for byte-identical generic behavior.
+         * @member {Boolean} projectAsAction=false
+         */
+        projectAsAction: false
+    }
+
+    /**
+     * Class-level ledger of active plugin-installed button caps (`button -> {cap, plugin}`),
+     * allowing a successor `Overflow` plugin to adopt and lift a cap when a `tab.header.Button`
+     * instance moves across toolbars without mutating undeclared properties onto the button.
+     * @member {WeakMap} buttonCaps=new WeakMap()
+     * @protected
+     * @static
+     */
+    static buttonCaps = new WeakMap()
+
+    /**
+     * @summary The parts of a tab button that decide its natural width: its text and its icon.
+     * A cached width measured under another label no longer describes the button.
+     * @param {Object} button A tab button, or any object with `text` / `iconCls`
+     * @returns {String}
+     * @static
+     */
+    static labelOf(button) {
+        return `${button.text ?? ''}|${[].concat(button.iconCls ?? []).join(' ')}`
+    }
+
+    /**
+     * The pure overflow decision — active-never-hidden packing with overflow-only control-width reservation.
+     * Headless + deterministic (unit-covered): given header widths, the strip extent, the protected ids and the
+     * reserved control width, it returns the visible/hidden id partition. It lives here as the plugin's own
+     * static so the runtime half owns its decision — no adapter namespace-reach, no adapter chain in the test
+     * path (the smell that marked the old dashboard home).
+     * @param {Object}   config
+     * @param {Object[]} config.items            `{id, headerWidth}` per tab, in header order.
+     * @param {Number}   config.extent           The always-measurable strip extent.
+     * @param {String}   [config.activeItemId]   The active tab id — never hidden.
+     * @param {String}   [config.focusedItemId]  The tab holding focus — never hidden.
+     * @param {Number}   [config.controlWidth=0] Width reserved for the overflow control (only when overflowing).
+     * @returns {{visible: String[], hidden: String[]}}
+     */
+    static computeOverflow({items, extent, activeItemId, focusedItemId, controlWidth = 0}) {
+        const list  = Array.isArray(items) ? items : [],
+              width = entry => {
+                  const value = Number(entry?.headerWidth);
+                  return Number.isFinite(value) && value > 0 ? value : 0
+              },
+              total = list.reduce((sum, entry) => sum + width(entry), 0);
+
+        if (!(total > extent)) {
+            return {hidden: [], visible: list.map(entry => entry.id)}
+        }
+
+        const usable  = Math.max(0, extent - Math.max(0, Number(controlWidth) || 0)),
+              visible = [],
+              hidden  = [];
+        let used = 0;
+
+        for (const entry of list) {
+            if (used + width(entry) <= usable && hidden.length === 0) {
+                visible.push(entry.id);
+                used += width(entry)
+            } else {
+                hidden.push(entry.id)
+            }
+        }
+
+        // Neither protected tab hides: the ACTIVE one (the selection) and the FOCUSED one both swap
+        // in, and the last-fitting non-protected items overflow.
+        //
+        // The focused id is protected for the same reason, not as a preference: withholding a tab removes its
+        // node, the browser moves focus to the body, and the tab container's `containsFocus` drops — which
+        // withdraws the header's gated contextual actions (`toolbar.Base#applyContextualActionState`). Moving
+        // focus elsewhere cannot repair that after the fact, so keeping the node is the only shape that holds,
+        // and it is the trade this function already makes for the active tab.
+        const protectedIds = [...new Set([activeItemId, focusedItemId].filter(id => id != null))],
+              protectedSet = new Set(protectedIds),
+              withheld     = protectedIds.filter(id => hidden.includes(id));
+
+        if (withheld.length > 0) {
+            const order     = list.map(entry => entry.id),
+                  needed    = withheld.reduce((sum, id) => sum + width(list.find(entry => entry.id === id)), 0),
+                  displaced = [];
+
+            withheld.forEach(id => hidden.splice(hidden.indexOf(id), 1));
+
+            // Displace as many visible items as it takes to fit the protected width — now possibly a PAIR.
+            // Popping exactly one under-displaces when a protected tab is wider than that single displaced tab,
+            // and popping per-protected-tab under-displaces when the pair is wider than one pop, so the sum is
+            // fitted once. Popping none is also correct when a protected tab already fits (it was hidden only
+            // because an earlier item overflowed the `hidden.length === 0` gate above). The loop runs out of
+            // DISPLACEABLE items in the degenerate case — protected tabs wider than the whole extent stay
+            // visible regardless, and the caller caps their boxes, so two of them can jointly overhang.
+            //
+            // The scan SKIPS protected ids, and that is load-bearing rather than defensive: a protected id that
+            // was already visible is not in `withheld`, so a blind trailing pop can evict the active tab to make
+            // room for the focused one. A protected id is never a candidate, so the scan walks right-to-left
+            // for the last displaceable one and stops when none remains.
+            while (visible.length > 0 && used + needed > usable) {
+                let index = -1;
+
+                for (let i = visible.length - 1; i >= 0; i--) {
+                    if (!protectedSet.has(visible[i])) {
+                        index = i;
+                        break
+                    }
+                }
+
+                if (index === -1) break;
+
+                const displacedId = visible.splice(index, 1)[0];
+                used -= width(list.find(entry => entry.id === displacedId));
+                displaced.push(displacedId)
+            }
+
+            visible.push(...withheld);
+
+            if (displaced.length > 0) {
+                // re-insert the displaced items in list order so the overflow menu stays predictable
+                hidden.push(...displaced);
+                hidden.sort((a, b) => order.indexOf(a) - order.indexOf(b))
+            }
+        }
+
+        return {hidden, visible}
+    }
+
+    /**
+     * Plugin-owned active-button caps: button id → `{maxSize, value}` for the caller's own main-axis
+     * max-size config at cap time. Property presence on the button is NOT provenance, so this ledger is the one
+     * source of truth for "the plugin installed this cap", and clearing always restores the exact
+     * recorded caller value through the same public config channel.
+     * @member {Map|null} appliedCaps=null
+     */
+    appliedCaps = null
+    /**
+     * Weak references to buttons currently recorded in {@link #appliedCaps} (`buttonId -> WeakRef`),
+     * so departed-button and teardown cleanup can resolve a button that has already left `owner.items`.
+     * @member {Map|null} appliedCapButtons=null
+     * @protected
+     */
+    appliedCapButtons = null
+    /**
+     * The overflow control (a menu button), created on first overflow and torn down when everything fits.
+     * @member {Neo.button.Base|null} control=null
+     */
+    control = null
+    /**
+     * A press that began on the control, until its click or a return with the button up ends it.
+     * @member {Boolean} controlPressed=false
+     * @protected
+     */
+    controlPressed = false
+    /**
+     * The primary press on a tab that holds the owner's focus-gated reveal ({@link #onTabPointerDown}):
+     * the pressed header's id, and whether the press became a drag. `null` while no tab press holds.
+     * @member {Object|null} tabPress=null
+     * @protected
+     */
+    tabPress = null
+    /**
+     * Re-entrancy guard: `getLayoutRect` is an async main-thread round-trip, so a resize storm could overlap
+     * measure passes and apply a stale split last.
+     * @member {Boolean} measuring=false
+     */
+    measuring = false
+    /**
+     * The control's rendered main-axis extent, measured while it is mounted.
+     * The `controlWidth` config is only the pre-creation estimate — the first overflow decision runs
+     * before any control exists to measure. Once render truth is available, the reservation uses
+     * `max(config, measured)`, so a skin that renders the control wider than the estimate can never
+     * let packed buttons underlap it. `null` until the control has been measured; cleared with the control.
+     * @member {Number|null} measuredControlWidth=null
+     */
+    measuredControlWidth = null
+    /**
+     * Natural (un-hidden) header main-axis extents keyed by tab-button id — see the class note on natural-width
+     * discipline. `null` until the first capture.
+     * @member {Object|null} naturalWidths=null
+     */
+    naturalWidths = null
+    /**
+     * The label ({@link Neo.tab.plugin.Overflow.labelOf}) each cached natural width was measured with, keyed by
+     * tab-button id. A withheld or capped button whose label changed since is measured again.
+     * @member {Object|null} naturalWidthLabels=null
+     */
+    naturalWidthLabels = null
+    /**
+     * Signature of the hidden set the control currently reflects (`index:text:iconCls:route:editRoute` per entry).
+     * Projections fire on many no-op events (resize, activation, the render-truth edges), and
+     * rewriting identical menu items is not free: it rebuilds the dropdown list and closes an OPEN
+     * menu mid-interaction. The signature makes syncControl's menu mutation idempotent — only a
+     * changed partition touches the menu; re-arm and re-align stay unconditional.
+     * @member {String|null} hiddenSignature=null
+     */
+    hiddenSignature = null
+    /**
+     * Header ids in the last committed visible/hidden split. Recapture may temporarily restore
+     * them; an opening menu reasserts this partition before parking the in-flight projection.
+     * @member {String[]|null} appliedHiddenIds=null
+     */
+    appliedHiddenIds = null
+    /**
+     * The floating menu list whose mounted edge drains a deferred partition update.
+     * @member {Neo.menu.List|null} observedMenuList=null
+     */
+    observedMenuList = null
+    /**
+     * A projection requested while the Overflow menu owns a clickable rendered partition.
+     * @member {Boolean} menuProjectionQueued=false
+     */
+    menuProjectionQueued = false
+    /**
+     * Sticky recapture intent for the projection queued behind an open menu.
+     * @member {Boolean} menuRecaptureQueued=false
+     */
+    menuRecaptureQueued = false
+    /**
+     * A project() call arrived while a measure pass was in flight; drained once the pass releases the
+     * latch, so a coalesced resize / activation / tab-set change still applies against current extents.
+     * @member {Boolean} projectQueued=false
+     */
+    projectQueued = false
+    /**
+     * Whether the coalesced re-run must re-read natural widths — sticky-true so a queued width-capturing
+     * `project(true)` (the mount pass) is never downgraded to an extent-only pass by a later queued
+     * `project(false)` (resize / activation) that overlapped it.
+     * @member {Boolean} queuedRecapture=false
+     */
+    queuedRecapture = false
+    /** The floating controls whose initial mount or remount has yet to settle. */
+    #mountingControls = new WeakSet()
+
+    /** @summary Whether the current floating control has a pending mount. */
+    get remountArming() {
+        return this.#mountingControls.has(this.control)
+    }
+
+    /**
+     * A projection requested while the tab SortZone owned a gesture.
+     * @member {Boolean} sortDragProjectionQueued=false
+     */
+    sortDragProjectionQueued = false
+    /**
+     * Sticky recapture intent for the post-drag projection.
+     * @member {Boolean} sortDragRecaptureQueued=false
+     */
+    sortDragRecaptureQueued = false
+    /**
+     * SortZone whose drag terminal releases queued projections.
+     * @member {Neo.draggable.container.SortZone|null} sortDragZone=null
+     */
+    sortDragZone = null
+    /**
+     * A post-terminal drain task is already scheduled.
+     * @member {Boolean} sortDragDrainScheduled=false
+     */
+    sortDragDrainScheduled = false
+    /**
+     * Number of consecutive 10ms sort-drag drain retries triggered solely by a tab button carrying
+     * `wrapperStyle.position === 'absolute'` without an active local `SortZone` latch.
+     * @member {Number} sortDragFrozenRetries=0
+     * @protected
+     */
+    sortDragFrozenRetries = 0
+    /**
+     * Maximum consecutive 10ms sort-drag drain retries for a button carrying `wrapperStyle.position === 'absolute'`
+     * before the projection proceeds past a leaked style residue.
+     * @member {Number} maxSortDragFrozenRetries=5
+     * @protected
+     */
+    maxSortDragFrozenRetries = 5
+    /**
+     * Whether the published projection lifecycle is currently open: `true` between the
+     * `overflowProjectionStart` a measuring pass fired and the `overflowProjectionIdle` its settle fires.
+     * A coalesced rerun keeps it open, so one transaction publishes one pair.
+     * @member {Boolean} projectionBusy=false
+     * @protected
+     */
+    projectionBusy = false
+    /**
+     * Drag-start callers waiting for the complete projection transaction to settle.
+     * @member {Function[]|null} projectionIdleWaiters=null
+     */
+    projectionIdleWaiters = null
+    /**
+     * A dock-axis change needs its next rendered owner resize to recapture tab main-axis extents.
+     * @member {Boolean} dockRecapturePending=false
+     */
+    dockRecapturePending = false
+    /**
+     * Whether a reveal-probe pass is temporarily measuring withheld focus-gated actions.
+     * @member {Boolean} measuringWithheldActions=false
+     * @protected
+     */
+    measuringWithheldActions = false
+    /**
+     * Cached main-axis span of the full action cluster (including focus-gated actions) when `owner.showOnHover` is enabled.
+     * @member {Number|null} revealedClusterSpan=null
+     * @protected
+     */
+    revealedClusterSpan = null
+    /**
+     * Cached trailing inset between the action cluster's end and the owner toolbar's end when `owner.showOnHover` is enabled.
+     * @member {Number|null} revealedTrailingInset=null
+     * @protected
+     */
+    revealedTrailingInset = null
+
+    /**
+     * @param {Object} config
+     */
+    construct(config) {
+        super.construct(config);
+
+        let me = this;
+
+        me.onResize = me.onResize.bind(me);
+
+        // The default floating control is outside the owner's component collection and DOM subtree, so
+        // container theme propagation cannot reach it. Keep that embodiment subscribed to every component in
+        // the source toolbar's theme chain; action mode inherits the same theme natively, and these idempotent
+        // updates keep both embodiments on one menu-theme path.
+        //
+        // Config subscribers run before the publisher's afterSetTheme() updates its cls carrier. Re-resolve in
+        // the next microtask so getTheme() sees the completed ancestor change rather than the prior theme.
+        if (Neo.typeOf(me.owner) === 'NeoInstance') {
+            [me.owner, ...me.owner.getParents()].forEach(component => {
+                me.observeConfig(component, 'theme', () => {
+                    queueMicrotask(() => !me.isDestroyed && me.onOwnerThemeChange())
+                })
+            });
+            if (me.owner.getConfig?.('dock')) {
+                me.observeConfig(me.owner, 'dock', () => {
+                    // Cached widths are extents of the old main axis: the recapture must measure every button.
+                    me.dockRecapturePending = true;
+                    me.measuredControlWidth = null;
+                    me.naturalWidths        = null
+                })
+            }
+            if (me.owner.getConfig?.('showOnHover') !== undefined) {
+                me.observeConfig(me.owner, 'showOnHover', () => {
+                    me.revealedClusterSpan   = null;
+                    me.revealedTrailingInset = null;
+                    me.project(false)
+                })
+            }
+        }
+    }
+
+    /**
+     * The tab.Container whose `activeIndex` an overflow-menu selection drives (the ordinary activation
+     * path — no new operation). The header toolbar (`owner`) is its primary child.
+     * @returns {Neo.tab.Container}
+     */
+    getTabContainer() {
+        return this.owner.parent
+    }
+
+    /**
+     * The semantic header buttons that participate in overflow. Actions, their spacer, and the floating
+     * control remain outside this view.
+     * @returns {Neo.tab.header.Button[]}
+     */
+    getTabButtons() {
+        return this.owner.getTabButtons?.() || []
+    }
+
+    /**
+     * Actions which actually reduce the tab strip's main-axis extent.
+     *
+     * A contextually inactive action has no DOM node (`toolbar.Base#applyContextualActionState`
+     * withholds it), so it must be excluded here rather than measured: this measurement reads each
+     * rect's POSITION as well as its size, and a missing or all-zero rect would place the action
+     * cluster at offset 0 and consume the entire strip, collapsing every tab into the overflow menu.
+     * @param {Boolean} [includeContextInactive=this.owner.showOnHover === true]
+     * @returns {Neo.component.Base[]}
+     */
+    getActionItems(includeContextInactive=this.owner.showOnHover === true) {
+        return (this.owner.getActionItems?.() || [])
+            .filter(item => item !== this.control)
+            .filter(item => !item.hidden || item.hideMode === 'visibility')
+            .filter(item => includeContextInactive || !(item.cls || []).includes('neo-toolbar-action-context-inactive'))
+    }
+
+    /**
+     * Returns the orientation-dependent geometry contract used by measurement, capping, and
+     * floating-control alignment.
+     * @returns {{actionAlign: String, dimension: String, maxSize: String, ownerAlign: String}}
+     */
+    getMainAxisConfig() {
+        return this.owner.dock === 'left' || this.owner.dock === 'right'
+            ? {actionAlign: 'b0-t0', dimension: 'height', maxSize: 'maxHeight', ownerAlign: 'b0-b0'}
+            : {actionAlign: 'r0-l0', dimension: 'width',  maxSize: 'maxWidth',  ownerAlign: 'r0-r0'}
+    }
+
+    /**
+     * Aligns the floating overflow control immediately before the action group, or to the owner's
+     * trailing edge when no action currently consumes space.
+     * @returns {Object}
+     */
+    getControlAlign() {
+        let me          = this,
+            firstAction = me.getActionItems(false)[0],
+            geometry    = me.getMainAxisConfig();
+
+        return {
+            edgeAlign: firstAction ? geometry.actionAlign : geometry.ownerAlign,
+            target   : firstAction?.id || me.owner.id
+        }
+    }
+
+    /**
+     * Owner-mounted lifecycle hook: wire the resize + activation + tab-set-mutation listeners and run the
+     * first (width-capturing) pass.
+     *
+     * Tab-set-change recapture wires the available header-mutation events: the owner toolbar fires `insert`
+     * and `remove` on a tab add/remove, and the tab.Container fires `moveTo` on a reorder — each re-runs
+     * `project(true)` so the cached natural widths, the split, and the overflow menu's indices follow the
+     * mutated set even when neither a resize nor an `activeIndexChange` fires (a mid-menu insert / remove /
+     * reorder into the hidden range would otherwise strand a pre-mutation projection and activate — or list —
+     * the wrong record). This holds whether or not the dock rebuilds the header on a model change: if an
+     * in-place update keeps this plugin instance, these listeners are what invalidate its cache; if a fresh
+     * instance mounts instead, they are a harmless no-op it re-measures past. The sticky `queuedRecapture`
+     * coalesces a mutation `project(true)` overlapping an in-flight resize/activation pass.
+     * @override
+     */
+    onOwnerMounted() {
+        let me      = this,
+            {owner} = me;
+
+        // `plugin.Base` subscribes `mounted` unbounded on purpose — a plugin re-applying on remount
+        // is load-bearing for vdom structure elsewhere — so this method runs again on every remount
+        // and must be idempotent. Without the removals below the same seven handlers registered a
+        // second time per remount, and `Observable` reported each one; tear-out and popup-over-popup
+        // remount constantly, which is why the dock specs surfaced it and ordinary specs did not.
+        me.releaseOwnerSubscriptions();
+
+        me.projectAsAction && me.createActionControl();
+        owner.addDomListeners(me.getOwnerDomListeners());
+        // Re-run on activation too: selecting a hidden tab flips activeIndex, and active-never-hidden must
+        // then surface the newly-active tab into the header (swapping a fitting one into the overflow menu).
+        me.getTabContainer()?.on('activeIndexChange', me.onActiveIndexChange, me);
+        // Re-run on a tab-set mutation: an add / remove (owner `insert` / `remove`) or a reorder
+        // (tab.Container `moveTo`) changes the cached widths / menu indices without a resize or activation,
+        // so recapture to keep the split live.
+        owner.on('insert', me.onTabSetChange, me);
+        owner.on('remove', me.onTabSetChange, me);
+        owner.on('actionsChange', me.onActionSetChange, me);
+        owner.on('actionGeometryChange', me.onActionGeometryChange, me);
+        owner.on('actionVisibilityChange', me.onActionVisibilityChange, me);
+        me.getTabContainer()?.on('moveTo', me.onTabSetChange, me);
+        me.project(true)
+    }
+
+    /**
+     * @summary Removes every owner subscription `onOwnerMounted` adds, so re-running it re-registers
+     * rather than duplicates.
+     *
+     * Paired with the registrations by hand rather than derived: `Observable#un` matches on
+     * handler + scope, so a list that drifts from its counterpart silently leaves a duplicate
+     * behind — the exact defect this exists to prevent. Keep the two in step.
+     *
+     * Every registration `onOwnerMounted` makes is released here, INCLUDING the DOM listeners, which both
+     * sides read from {@link #getOwnerDomListeners}. `createActionControl` is the one exception and needs
+     * none: it returns early when the control already exists, so it is idempotent on its own.
+     * @protected
+     */
+    releaseOwnerSubscriptions() {
+        let me           = this,
+            {owner}      = me,
+            tabContainer = me.getTabContainer();
+
+        owner.un('insert',                 me.onTabSetChange,            me);
+        owner.un('remove',                 me.onTabSetChange,            me);
+        owner.un('actionsChange',          me.onActionSetChange,         me);
+        owner.un('actionGeometryChange',   me.onActionGeometryChange,    me);
+        owner.un('actionVisibilityChange', me.onActionVisibilityChange,  me);
+
+        tabContainer?.un('activeIndexChange', me.onActiveIndexChange, me);
+        tabContainer?.un('moveTo',            me.onTabSetChange,      me);
+
+        // The DOM listeners belong here for the same reason and were missed for a different one:
+        // `manager.DomEvent` is not `Observable`, so a duplicate produces no console warning, and
+        // the console was how the other seven were found. `addDomListeners` is a bare push with no
+        // dedupe, so without this N remounts leave N identical `resize` entries and `onResize` —
+        // which runs `project()` and measures DOM — fires N times per resize.
+        owner.removeDomListeners(me.getOwnerDomListeners())
+    }
+
+    /**
+     * The owner DOM listeners {@link #onOwnerMounted} registers and {@link #releaseOwnerSubscriptions}
+     * removes: one list, so the registration and its release cannot drift apart.
+     * @returns {Object[]}
+     * @protected
+     */
+    getOwnerDomListeners() {
+        let me  = this,
+            tab = {delegate: '.neo-tab-header-button', scope: me};
+
+        return [
+            {resize      : me.onResize,          scope: me},
+            {click       : me.releaseTabPress,   ...tab},
+            {'drag:end'  : me.releaseTabPress,   ...tab},
+            {'drag:start': me.onTabDragStart,    ...tab},
+            {mousedown   : me.onTabPointerDown,  ...tab},
+            {mouseleave  : me.onTabPointerLeave, ...tab}
+        ]
+    }
+
+    /**
+     * Action membership/availability changes alter the tab-exclusive extent, not tab natural widths.
+     */
+    onActionSetChange() {
+        this.revealedClusterSpan   = null;
+        this.revealedTrailingInset = null;
+        this.project(false)
+    }
+
+    /**
+     * Action geometry changes alter the tab-exclusive extent. The contributed control's own resize
+     * is intentionally included: it is how action mode replaces its first zero-width estimate with
+     * rendered truth.
+     * @param {Object} [data]
+     * @protected
+     */
+    onActionGeometryChange({contextual}={}) {
+        if (!this.measuringWithheldActions && !(contextual && this.owner.showOnHover === true)) {
+            this.project(false)
+        }
+    }
+
+    /**
+     * Ignores the contributed control's own show/hide signal so its partition verdict cannot re-enter
+     * itself. Availability changes from every other action still re-project the tab extent.
+     * @param {Object} data
+     * @protected
+     */
+    onActionVisibilityChange({component}={}) {
+        if (component !== this.control) {
+            this.revealedClusterSpan   = null;
+            this.revealedTrailingInset = null;
+            this.project(false)
+        }
+    }
+
+    /**
+     * Reprojects when the floating control's rendered main-axis size changes.
+     * @protected
+     */
+    onControlResize() {
+        this.project(false)
+    }
+
+    /**
+     * Drains one sticky projection after the SortZone has restored its snapshotted tab geometry.
+     * @protected
+     */
+    onSortDragEnd() {
+        this.scheduleSortDragProjection()
+    }
+
+    /**
+     * Releases work queued only by the snapshot-pending handshake when no drag started.
+     * @protected
+     */
+    onSortSnapshotReady() {
+        let sortZone = this.owner?.sortZone;
+
+        if (!(sortZone?.sortSnapshotPending || sortZone?.startIndex > -1 || sortZone?.dragEndActive)) {
+            this.scheduleSortDragProjection()
+        }
+    }
+
+    /**
+     * True when a tab button still carries `wrapperStyle.position === 'absolute'` from a cross-zone
+     * drag snapshot and the bounded retry budget has not been exhausted. Resets the retry counter
+     * as soon as no button carries `position: absolute`.
+     * @returns {Boolean}
+     * @protected
+     */
+    hasFrozenDragButton() {
+        let me     = this,
+            frozen = me.getTabButtons().some(button => button.wrapperStyle?.position === 'absolute');
+
+        if (!frozen) {
+            me.sortDragFrozenRetries = 0;
+            return false
+        }
+
+        return me.sortDragFrozenRetries < me.maxSortDragFrozenRetries
+    }
+
+    /**
+     * Defers a projection while the tab SortZone owns a stable gesture snapshot.
+     * @param {Boolean} recapture
+     * @param {Boolean} [includeSnapshotPending=true] New work waits behind snapshot preparation;
+     *        an already-running transaction may finish its restoring split before releasing that waiter.
+     * @returns {Boolean} True when the caller must stop its current projection.
+     * @protected
+     */
+    queueSortDragProjection(recapture, includeSnapshotPending=true) {
+        let me           = this,
+            sortZone     = me.owner.sortZone,
+            buttonFrozen = me.hasFrozenDragButton();
+
+        if (!((includeSnapshotPending && sortZone?.sortSnapshotPending)
+            || sortZone?.startIndex > -1
+            || sortZone?.dragEndActive
+            || buttonFrozen)) {
+            return false
+        }
+
+        if (me.sortDragZone !== sortZone) {
+            me.sortDragZone?.un('dragEnd', me.onSortDragEnd, me);
+            me.sortDragZone = sortZone;
+            me.sortDragZone?.on('dragEnd', me.onSortDragEnd, me)
+        }
+
+        me.sortDragProjectionQueued = true;
+        me.sortDragRecaptureQueued  = me.sortDragRecaptureQueued || recapture;
+        buttonFrozen && me.scheduleSortDragProjection();
+
+        return true
+    }
+
+    /**
+     * Schedules the latest sticky projection after every SortZone terminal latch has released.
+     * Dock terminals can outlive the first task, so retry at a bounded cadence while the exact latch
+     * remains owned. Destroy rejects registered timeouts; the catch keeps teardown silent.
+     * @protected
+     */
+    scheduleSortDragProjection() {
+        let me = this;
+
+        if (!me.sortDragProjectionQueued || me.sortDragDrainScheduled) {
+            return
+        }
+
+        me.sortDragDrainScheduled = true;
+
+        me.timeout(10)
+            .catch(() => null)
+            .then(() => {
+                me.sortDragDrainScheduled = false;
+
+                if (me.isDestroyed) {
+                    return
+                }
+
+                let sortZone     = me.owner.sortZone,
+                    zoneBusy     = Boolean(sortZone?.sortSnapshotPending || sortZone?.startIndex > -1 || sortZone?.dragEndActive),
+                    buttonFrozen = false;
+
+                if (!zoneBusy && me.hasFrozenDragButton()) {
+                    me.sortDragFrozenRetries++;
+                    buttonFrozen = me.sortDragFrozenRetries < me.maxSortDragFrozenRetries
+                }
+
+                if (zoneBusy || buttonFrozen) {
+                    me.scheduleSortDragProjection();
+                    return
+                }
+
+                let recapture = me.sortDragRecaptureQueued;
+
+                me.sortDragProjectionQueued = false;
+                me.sortDragRecaptureQueued  = false;
+                me.project(recapture)
+            })
+    }
+
+    /**
+     * Publishes the projection lifecycle on the owner toolbar at its edges only: `overflowProjectionStart`
+     * when a measuring pass arms while nothing was in flight, `overflowProjectionIdle` when neither a pass
+     * nor a coalesced rerun remains. Called when a pass arms and after every pass releases, so intermediate
+     * states publish nothing and one transaction is exactly one pair. A pass parked behind an open menu
+     * has stopped moving header nodes: it closes its pair here while the drag-start waiters keep waiting,
+     * and the pass that resumes after the drain opens a new one. A destroyed owner has no listeners left
+     * to reach.
+     * @protected
+     */
+    publishProjectionState() {
+        let me      = this,
+            {owner} = me,
+            busy    = me.measuring || me.projectQueued;
+
+        if (busy === me.projectionBusy) return;
+
+        me.projectionBusy = busy;
+
+        if (owner && !owner.isDestroyed) {
+            owner.fire?.(busy ? 'overflowProjectionStart' : 'overflowProjectionIdle', {owner, plugin: me})
+        }
+    }
+
+    /**
+     * Resolves drag-start callers after the projection and any coalesced rerun are idle. The published
+     * lifecycle has its own, narrower edge in {@link #publishProjectionState}: an open menu holds these
+     * waiters, not the signal.
+     * @protected
+     */
+    resolveProjectionIdle() {
+        let waiters = this.projectionIdleWaiters || [];
+
+        this.projectionIdleWaiters = null;
+        waiters.forEach(resolve => resolve())
+    }
+
+    /**
+     * Waits until an in-flight projection and its coalesced rerun have both settled.
+     * @returns {Promise<void>}
+     */
+    whenProjectionIdle() {
+        if (!this.measuring && !this.projectQueued && !this.menuProjectionQueued) {
+            return Promise.resolve()
+        }
+
+        return new Promise(resolve => (this.projectionIdleWaiters ??= []).push(resolve))
+    }
+
+    /**
+     * Resize handler — an extent-only change, so recompute against the cached natural widths.
+     * @param {Object} data
+     */
+    onResize(data) {
+        let me        = this,
+            recapture = me.dockRecapturePending;
+
+        me.dockRecapturePending = false;
+        me.project(recapture)
+    }
+
+    /**
+     * Activation handler — a selection (including from the overflow menu) flipped `activeIndex`; recompute
+     * so active-never-hidden surfaces the newly-active tab.
+     */
+    onActiveIndexChange() {
+        this.project(false)
+    }
+
+    /**
+     * Tab-set-mutation handler — a header add (`insert`) or reorder (`moveTo`) changed the button set, so
+     * recapture natural widths (an added button has none cached) and re-partition against the mutated set.
+     */
+    onTabSetChange({item}={}) {
+        // The owner's `insert` / `remove` also fire for its ACTION group — a consumer `actions`
+        // replacement, the action spacer, and this plugin's own contribution all move through the same
+        // container methods. None of those is a tab-set mutation: they change the tab-EXCLUSIVE extent,
+        // which `actionsChange` already re-projects through onActionSetChange WITHOUT a recapture.
+        //
+        // Recapturing on them is not merely redundant, it is wrong. A recapture restores every hidden
+        // header to the DOM for its measure window (project() step 1), and `insert` fires only AFTER
+        // its own promiseUpdate round-trip — so an action replacement queues a recapture that lands
+        // late and re-applies an all-fit split over the split a newer resize had already applied. The
+        // header then flaps for one pass: the overflowing tabs return and the overflow control leaves,
+        // in a state that reads as coherent because it IS one — the all-fit verdict for the old extent.
+        // `Container#insert` fires ONCE for a batch, with `item` carrying the whole array (its per-item
+        // recursion is silent), so the membership test has to cover both shapes.
+        let members = Array.isArray(item) ? item : item ? [item] : [];
+
+        if (members.length > 0 && members.every(member =>
+            member?.isToolbarAction === true || member?.isToolbarActionSpacer === true
+        )) {
+            return
+        }
+
+        this.project(true)
+    }
+
+    /**
+     * Re-resolves the source toolbar's nearest active theme onto the out-of-tree overflow embodiment.
+     * A theme flip can change the control's rendered width (fonts, paddings), so the reservation
+     * re-projects through the ordinary measure pass — the getLayoutRect round-trip queues behind the
+     * theme update on the same channel, so it observes the re-skinned control.
+     */
+    onOwnerThemeChange() {
+        let me        = this,
+            {control} = me,
+            value     = me.owner.getTheme();
+
+        if (control && control.theme !== value) {
+            control.theme = value;
+            me.project(false)
+        }
+    }
+
+    /**
+     * Measures (natural widths as needed, strip extent always) and applies the visible/hidden split.
+     * @param {Boolean} recapture  Re-read natural widths (mount, or the tab set changed).
+     */
+    async project(recapture) {
+        let me       = this,
+            {owner}  = me,
+            buttons  = me.getTabButtons(),
+            geometry = me.getMainAxisConfig();
+
+        // Retiring an action contribution emits actionsChange synchronously. The destroy interceptor has
+        // already raised isDestroying at that point, but super.destroy() has not yet removed this listener's
+        // identity. Do not start one final DOM round-trip against the retiring control / owner boundary.
+        if (me.isDestroying || me.isDestroyed) {
+            me.resolveProjectionIdle?.();
+            return
+        }
+
+        // The tab SortZone deliberately freezes item rectangles for the gesture. A resize/action
+        // projection can otherwise hide or show members underneath that snapshot. Queue one sticky
+        // pass and drain only after dragEnd restores natural layout.
+        if (me.queueSortDragProjection(recapture)) {
+            !me.measuring && me.resolveProjectionIdle();
+            return
+        }
+
+        // An open menu and its rendered tab split are one addressable partition. A projection may
+        // neither clear the menu's record store nor change header visibility underneath it.
+        if (me.queueOpenMenuProjection(recapture)) return;
+
+        if (!owner.mounted || buttons.length < 1) {
+            me.resolveProjectionIdle();
+            return
+        }
+
+        // Re-entrancy: getLayoutRect is an async main-thread round-trip, so a resize / activation / tab-set
+        // storm can overlap passes. Coalesce instead of dropping — remember a re-run is owed (recapture is
+        // sticky) and apply it ONCE after the in-flight pass, so the last state wins over a stale split.
+        if (me.measuring) {
+            me.projectQueued   = true;
+            me.queuedRecapture = me.queuedRecapture || recapture;
+            return
+        }
+
+        me.measuring = true;
+        me.publishProjectionState();
+
+        try {
+            let controlIconCls = geometry.dimension === 'height'
+                ? 'fa fa-ellipsis-vertical'
+                : 'fa fa-ellipsis';
+
+            if (me.control && me.control.iconCls !== controlIconCls) {
+                me.control.iconCls       = controlIconCls;
+                me.measuredControlWidth = null;
+                me.control.mounted && await me.control.promiseUpdate?.()
+            }
+
+            // Adopt any plugin-installed cap carried across a toolbar move (e.g. a dock pop-out or
+            // cross-zone drag drop reusing the same tab.header.Button instance in a new strip) so the
+            // natural-width capture below lifts the cap before measuring and applySplit can clear it.
+            buttons.forEach(button => {
+                let entry = Overflow.buttonCaps.get(button);
+
+                if (entry && !me.appliedCaps?.has(button.id)) {
+                    entry.plugin = me;
+                    (me.appliedCaps ??= new Map()).set(button.id, entry.cap);
+                    (me.appliedCapButtons ??= new Map()).set(button.id, new WeakRef(button))
+                }
+            });
+
+            // 1. Natural widths — measured once while every button is visible, then cached.
+            if (recapture || !me.naturalWidths) {
+                // A cached width stays authoritative for a button the split withholds or caps. A reorder
+                // changes order, not widths, and restoring such a button to measure it again would paint it
+                // in the live strip (or past its cap) until the split re-applies. Only a withheld or capped
+                // button with no cached width for its current label (or whose cached width does not exceed its
+                // active cap because a prior pass measured through an un-adopted cap) is restored for the measure window.
+                const previousWidths = me.naturalWidths || {},
+                      previousLabels = me.naturalWidthLabels || {},
+                      isCached       = button => previousWidths[button.id] > 0
+                          && previousLabels[button.id] === Overflow.labelOf(button)
+                          && (!me.appliedCaps?.has(button.id) || previousWidths[button.id] > (button[me.appliedCaps.get(button.id).maxSize] ?? 0)),
+                      isConstrained  = button => button.hidden || me.appliedCaps?.has(button.id),
+                      keptButtons    = new Set(buttons.filter(button => isConstrained(button) && isCached(button))),
+                      removedButtons = buttons.filter(button => button.hidden && !keptButtons.has(button)),
+                      cappedButtons  = buttons.filter(button => me.appliedCaps?.has(button.id) && !keptButtons.has(button));
+
+                // A plugin-installed cap (applySplit) bounds the live rect below the natural width, so
+                // measuring through it would poison the cache with the capped value. Restore the CALLER's
+                // recorded maxWidth (reactively — the config's afterSet owns the vdom key; a silent write
+                // would leave the capped vdom in place and measure the cap anyway) under the same latch
+                // that restores hidden buttons. Ledger entries stay: the split right after re-caps against
+                // fresh numbers (the recorded caller value stays authoritative) or clears via its ordinary
+                // restore branch. Only ledger members are touched — a consumer-configured maxWidth is not
+                // plugin residue and measures as part of the button's real constraint set.
+                cappedButtons.forEach(button => {
+                    let cap = me.appliedCaps.get(button.id);
+
+                    button[cap.maxSize] = cap.value
+                });
+
+                // A prior split removes overflowing buttons from DOM. Restore the uncached ones under this method's
+                // measuring latch, then reconcile their closest common parent once so getLayoutRect observes
+                // natural geometry. Any resize raised by that update queues behind the latch and drains as
+                // an extent-only pass after this authoritative capture.
+                if (removedButtons.length > 0 || cappedButtons.length > 0) {
+                    removedButtons.forEach(button => {
+                        button.setSilent({hidden: false});
+                        // setSilent intentionally bypasses Component#show(). Keep the config and VDOM
+                        // surfaces atomic or a later `button.hidden = false` becomes a no-op while the
+                        // stale removeDom marker keeps the supposedly visible header physically absent.
+                        delete button.vdom.removeDom
+                    });
+                    owner.updateDepth = -1;
+                    await owner.promiseUpdate()
+                }
+
+                let rects = await owner.getLayoutRect(buttons.map(button => button.id));
+
+                me.naturalWidths      = {};
+                me.naturalWidthLabels = {};
+                buttons.forEach((button, index) => {
+                    // A kept button's live rect is zero (withheld) or capped, so its cached width answers.
+                    // Newly inserted buttons are visible on their first mutation pass and enter the cache.
+                    me.naturalWidths[button.id] = keptButtons.has(button)
+                        ? previousWidths[button.id]
+                        : Math.ceil(rects[index]?.[geometry.dimension] || previousWidths[button.id] || 0);
+                    me.naturalWidthLabels[button.id] = Overflow.labelOf(button)
+                })
+            }
+
+            // 2. The strip extent — actions consume the same main axis but stay outside tab packing.
+            // A contextually inactive action is collapsed out of the layout by default, so it contributes
+            // a zero rect here and the extent tracks what is actually offered. When `owner.showOnHover`
+            // is enabled, however, pointer hover reveals and re-collapses focus-gated actions without a
+            // focus change — reserving their revealed cluster span up front keeps the tab partition
+            // byte-identical before, during, and after hover.
+            // Layout x/y are offset-parent-relative. The coordinate arm still holds: the actions are
+            // children of this static toolbar, so both share its offset parent.
+            let actionItems     = me.getActionItems(),
+                withheldActions = owner.showOnHover === true
+                    ? actionItems.filter(item => (item.cls || []).includes('neo-toolbar-action-context-inactive'))
+                    : [],
+                needRevealProbe = owner.showOnHover === true && withheldActions.length > 0
+                    && (recapture || !Number.isFinite(me.revealedClusterSpan));
+
+            if (needRevealProbe) {
+                me.measuringWithheldActions = true;
+                await owner.setContextualActionMeasureReveal?.(true)
+            }
+
+            let controlId = me.control?.mounted ? me.control.id : null,
+                ids       = [owner.id, ...actionItems.map(item => item.id), ...(controlId ? [controlId] : [])],
+                rects     = await owner.getLayoutRect(ids);
+
+            if (needRevealProbe) {
+                await owner.setContextualActionMeasureReveal?.(false);
+                me.measuringWithheldActions = false
+            }
+
+            let ownerRect     = rects.shift(),
+                actionRects   = rects.splice(0, actionItems.length),
+                controlRect   = controlId ? rects.shift() : null,
+                startKey      = geometry.dimension === 'width' ? 'left' : 'top',
+                coordinateKey = geometry.dimension === 'width' ? 'x' : 'y',
+                ownerStart    = Number(ownerRect?.[startKey] ?? ownerRect?.[coordinateKey]),
+                ownerSize     = Number(ownerRect?.[geometry.dimension]),
+                // The rail begins at the first action that HAS a box. A collapsed action, or one whose insert has not
+                // landed yet (the drain pass after a drag, once its focus brought the contextual actions back),
+                // reports an all-zero rect: read as a coordinate, it would start the rail at the owner's own edge
+                // and withhold every unprotected tab for one pass.
+                positiveRects = actionRects.filter(rect => Number(rect?.[geometry.dimension]) > 0),
+                firstAction   = positiveRects[0],
+                rawActionStart = Number(firstAction?.[startKey] ?? firstAction?.[coordinateKey]),
+                actionEnds    = positiveRects
+                    .map(rect => Number(rect?.[startKey] ?? rect?.[coordinateKey]) + Number(rect?.[geometry.dimension]))
+                    .filter(Number.isFinite),
+                clusterEnd    = actionEnds.length > 0 ? Math.max(...actionEnds) : NaN,
+                measuredSpan  = Number.isFinite(clusterEnd) && Number.isFinite(rawActionStart)
+                    ? Math.max(0, clusterEnd - rawActionStart)
+                    : 0,
+                rawActionSize = actionRects.reduce((sum, rect) => {
+                    let size = Number(rect?.[geometry.dimension]);
+
+                    return sum + (Number.isFinite(size) ? Math.max(0, size) : 0)
+                }, 0);
+
+            if (owner.showOnHover === true && (withheldActions.length === 0 || needRevealProbe) && positiveRects.length > 0) {
+                me.revealedClusterSpan = Math.max(rawActionSize, measuredSpan);
+
+                if (Number.isFinite(ownerStart) && Number.isFinite(ownerSize) && Number.isFinite(clusterEnd)
+                    && clusterEnd <= ownerStart + ownerSize + 1) {
+                    me.revealedTrailingInset = Math.max(0, (ownerStart + ownerSize) - clusterEnd)
+                }
+            }
+
+            let actionSize = owner.showOnHover === true && Number.isFinite(me.revealedClusterSpan)
+                    ? Math.max(rawActionSize, me.revealedClusterSpan)
+                    : rawActionSize,
+                actionStart = owner.showOnHover === true && withheldActions.length > 0 && !needRevealProbe
+                    && Number.isFinite(me.revealedClusterSpan)
+                    ? (Number.isFinite(clusterEnd)
+                        ? clusterEnd - me.revealedClusterSpan
+                        : Number.isFinite(ownerStart) && Number.isFinite(ownerSize)
+                            ? ownerStart + ownerSize - (me.revealedTrailingInset ?? 0) - me.revealedClusterSpan
+                            : rawActionStart)
+                    : rawActionStart,
+                coordinateExtent = Number.isFinite(ownerStart) && Number.isFinite(actionStart)
+                    ? Math.max(0, Math.floor(actionStart - ownerStart))
+                    : null,
+                sizeExtent = Number.isFinite(ownerSize)
+                    ? Math.max(0, Math.floor(ownerSize - actionSize))
+                    : null,
+                // Visible tabs can briefly push the action rail beyond the owner after a wide→narrow resize.
+                // Its coordinate then overstates available space and self-sustains an all-visible split. The
+                // rendered action widths provide the owner-bounded ceiling; the coordinate remains authoritative
+                // whenever gaps, margins, or another stricter boundary make it smaller.
+                extent = coordinateExtent === null
+                    ? sizeExtent || 0
+                    : sizeExtent === null ? coordinateExtent : Math.min(coordinateExtent, sizeExtent),
+                tabContainer  = me.getTabContainer(),
+                activeButton  = buttons[tabContainer?.activeIndex] || null,
+                // The tab holding focus, if any. `containsFocus` is the reactive config
+                // `manager.Focus#setComponentFocus` maintains across the whole focus path — the signal
+                // SortZone already reads for exactly this question — and it is read here, not acted on:
+                // the partition keeps the node so the browser never has to drop focus to the body.
+                focusedButton = buttons.find(button => button.containsFocus === true) || null,
+                items         = buttons.map(button => ({id: button.id, headerWidth: me.naturalWidths[button.id]}));
+
+            if (controlRect?.[geometry.dimension] > 0) {
+                me.measuredControlWidth = Math.ceil(controlRect[geometry.dimension])
+            }
+
+            // 3. The pure decision: active-never-hidden packing, overflow-only control reservation.
+            //    The pure core is this plugin's own static (below) — no adapter namespace-reach, no cycle.
+            let controlWidth = me.projectAsAction
+                    ? me.measuredControlWidth || 0
+                    : Math.max(me.controlWidth, me.measuredControlWidth || 0),
+                {hidden}     = Overflow.computeOverflow({
+                    activeItemId : activeButton?.id,
+                    controlWidth,
+                    extent,
+                    focusedItemId: focusedButton?.id,
+                    items
+                });
+
+            // A drag can begin while either DOM round-trip above is in flight. Recheck at the
+            // mutation boundary so a pre-gesture measurement cannot hide/show members beneath the
+            // SortZone snapshot captured in the meantime.
+            if (!me.queueSortDragProjection(recapture, false) && !me.queueOpenMenuProjection(recapture)) {
+                me.applySplit(hidden, buttons, tabContainer, {
+                    activeButton,
+                    focusedButton,
+                    maxSize: geometry.maxSize,
+                    // The degenerate branch keeps an over-wide PROTECTED button visible past `usable` — cap its
+                    // box so every geometry derived from it (the persistent per-button indicator, the strip's
+                    // crossfade indicator, the label itself) ends where the control begins.
+                    usable: hidden.length > 0
+                        ? Math.max(0, extent - controlWidth)
+                        : activeButton && me.naturalWidths[activeButton.id] > extent ? extent : null
+                });
+
+                // When an initial recapture pass had all tabs visible, the action cluster was pushed beyond
+                // the owner's trailing edge, so `coordinateExtent` fell back to `sizeExtent` (which omits
+                // the toolbar's trailing padding / action-cluster gaps). Once `applySplit` hides the
+                // overflowing tabs, schedule one follow-up non-recapture pass so `clusterEnd` is measured
+                // at its resting in-bounds position and `extent` settles to the exact coordinate budget.
+                if (recapture && owner.showOnHover === true && hidden.length > 0
+                    && Number.isFinite(clusterEnd) && Number.isFinite(ownerStart) && Number.isFinite(ownerSize)
+                    && clusterEnd > ownerStart + ownerSize + 1) {
+                    me.revealedClusterSpan   = null;
+                    me.revealedTrailingInset = null;
+                    await owner.promiseUpdate?.();
+                    me.projectQueued = true
+                }
+            }
+        } catch (error) {
+            // getLayoutRect losing a race with teardown is the ONE expected failure: it must neither reject a
+            // fire-and-forget handler nor skip the drain below, and the finally-released latch lets the NEXT
+            // event re-project (rejected→success self-heal). But a throw against a LIVE owner is a programming
+            // defect — surface it rather than swallow it silently (a blanket catch would hide real bugs behind
+            // a "just a teardown race" assumption).
+            //
+            // `mounted` alone cannot make that call: it is App-Worker state, while the failure is a window's
+            // port going away, and a component stays mounted after its window closes. Every form of departure
+            // is asked for — the owner unmounting here, its window retiring its port elsewhere, and the owner
+            // or this plugin being destroyed, which leaves `mounted` reading true.
+            // Optional CALL, and the direction matters: a worker that cannot answer must not silence a defect.
+            // `undefined` is falsy, so an environment without the predicate reports exactly as it did before.
+            if (!me.isDestroyed && !owner.isDestroyed && owner.mounted && !Neo.currentWorker?.isWindowDeparted?.(owner.windowId)) {
+                console.error('Neo.tab.plugin.Overflow: project() threw against a live owner', error)
+            }
+        } finally {
+            // ALWAYS release the latch: a thrown getLayoutRect / applySplit must not strand `measuring` at
+            // true, which would silently freeze every future projection (the header stops responding).
+            me.measuring = false
+        }
+
+        // Drain a coalesced re-run: an event that arrived mid-pass is applied once here, against the
+        // now-current extents, so the split never lags the last resize / activation / tab-set change.
+        if (me.projectQueued) {
+            let queuedRecapture = me.queuedRecapture;
+
+            me.projectQueued   = false;
+            me.queuedRecapture = false;
+            me.project(queuedRecapture)
+        } else if (!me.menuProjectionQueued) {
+            me.resolveProjectionIdle()
+        }
+
+        // The signal's edge, apart from the waiter's: it closes whenever nothing is measuring or queued —
+        // including a pass parked behind an open menu, which the waiter above keeps waiting on, and a
+        // coalesced rerun that returned early because it found the menu open. A pass that resumes after
+        // the drain therefore opens a fresh pair.
+        me.publishProjectionState()
+    }
+
+    /**
+     * Restores a plugin-installed cap on a departed or retiring button unless another live
+     * Overflow plugin now owns the button or its cap.
+     * @param {String} buttonId
+     * @param {{maxSize: String, value: *}} cap
+     * @protected
+     */
+    releaseDepartedCap(buttonId, cap) {
+        let me     = this,
+            button = me.appliedCapButtons?.get(buttonId)?.deref?.()
+                || me.getTabButtons().find(item => item.id === buttonId)
+                || Neo.getComponent(buttonId);
+
+        if (!button || button.isDestroyed || Overflow.buttonCaps.get(button)?.plugin !== me) {
+            return
+        }
+
+        let currentPlugin = button.up?.('toolbar')?.getPlugin?.('tab-overflow');
+
+        if (currentPlugin && currentPlugin !== me && !currentPlugin.isDestroying && !currentPlugin.isDestroyed) {
+            return
+        }
+
+        button.removeCls?.('neo-tab-overflow-capped');
+        button[cap.maxSize] = cap.value;
+        Overflow.buttonCaps.delete(button)
+    }
+
+    /**
+     * Applies the computed hidden set: hides the overflowing header buttons, bounds a degenerate
+     * over-wide PROTECTED button to the usable extent, and reflects the remainder through the overflow
+     * control.
+     *
+     * Packing and button capping follow the toolbar's main axis: width for top/bottom and
+     * height for left/right.
+     * @param {String[]} hidden  Overflowing button ids, in header order.
+     * @param {Neo.tab.header.Button[]} buttons
+     * @param {Neo.tab.Container} tabContainer
+     * @param {Object}  activeCap
+     * @param {Neo.tab.header.Button|null} activeCap.activeButton
+     * @param {Neo.tab.header.Button|null} [activeCap.focusedButton] The tab holding focus; capped
+     * on the same terms as the active button, because the partition surfaces it on the same grounds.
+     * @param {String} [activeCap.maxSize='maxWidth'] Main-axis max-size config.
+     * @param {Number|null} activeCap.usable  Cap for a protected button while overflowing; `null` clears.
+     */
+    applySplit(hidden, buttons, tabContainer, {activeButton, focusedButton, maxSize='maxWidth', usable} = {}) {
+        let me         = this,
+            buttonIds  = new Set(buttons.map(button => button.id)),
+            hiddenSet  = new Set(hidden),
+            hiddenMeta = [];
+
+        if (me.appliedCaps?.size > 0) {
+            for (const [buttonId, cap] of [...me.appliedCaps.entries()]) {
+                if (!buttonIds.has(buttonId)) {
+                    me.releaseDepartedCap(buttonId, cap);
+                    me.appliedCaps.delete(buttonId);
+                    me.appliedCapButtons?.delete(buttonId)
+                }
+            }
+        }
+
+        buttons.forEach((button, index) => {
+            let isHidden = hiddenSet.has(button.id),
+                // Either protected id can surface a button the strip cannot fit, so the cap gate cannot
+                // name the active button alone: an over-wide FOCUSED tab would run beneath the
+                // control and take every geometry derived from its box with it.
+                isProtected = button === activeButton || button === focusedButton,
+                needsCap   = isProtected && usable !== null && usable !== undefined
+                    && me.naturalWidths?.[button.id] > usable,
+                entry      = Overflow.buttonCaps.get(button);
+
+            if (entry && !me.appliedCaps?.has(button.id)) {
+                entry.plugin = me;
+                (me.appliedCaps ??= new Map()).set(button.id, entry.cap);
+                (me.appliedCapButtons ??= new Map()).set(button.id, new WeakRef(button))
+            }
+
+            // Dock orientation can change while an active tab is capped. Retire ownership on the
+            // old axis before deciding the new one, or a maxWidth ledger entry would authorize a
+            // maxHeight write that destroy/clear can never restore.
+            if (me.appliedCaps?.has(button.id) && me.appliedCaps.get(button.id).maxSize !== maxSize) {
+                let priorCap = me.appliedCaps.get(button.id);
+
+                button[priorCap.maxSize] = priorCap.value;
+                button.removeCls('neo-tab-overflow-capped');
+                Overflow.buttonCaps.delete(button);
+                me.appliedCaps.delete(button.id);
+                me.appliedCapButtons?.delete(button.id)
+            }
+
+            // Neo's built-in `hidden` (removeDom) rather than a cls needing an external stylesheet rule —
+            // the natural-width cache (captured while every button was visible) survives the DOM removal,
+            // so a later widen re-measures nothing and simply flips `hidden` back.
+            if (isHidden) {
+                button.hidden = true
+            } else if (button.hidden || button.vdom?.removeDom) {
+                // Repair both surfaces. A prior silent batch can already report hidden=false while
+                // removeDom still exists; assigning false again is then a reactive no-op, whereas
+                // show() clears the marker and schedules the toolbar update which remounts the header.
+                button.show()
+            }
+
+            // Degenerate-branch bound: `computeOverflow` keeps an active wider than `usable` visible
+            // (active-never-hidden), so its box would run beneath the floating control — and with it every
+            // geometry derived from the box: the persistent `.neo-tab-button-indicator` child, the strip's
+            // crossfade indicator (sized from this rect), and the label glyphs the opaque control would
+            // otherwise cover instead of an honest ellipsis. The cap rides the PUBLIC `maxWidth` config
+            // (one channel, one vdom owner — the consumer's `style.maxWidth` is never touched), and the
+            // `appliedCaps` ledger carries provenance: only a plugin-installed cap is ever cleared, and
+            // clearing restores the exact caller value recorded at cap time.
+            if (needsCap) {
+                let cap = me.appliedCaps?.get(button.id);
+
+                if (!cap) {
+                    cap = {
+                        maxSize,
+                        value: button[maxSize] ?? null
+                    };
+
+                    (me.appliedCaps ??= new Map()).set(button.id, cap)
+                }
+
+                (me.appliedCapButtons ??= new Map()).set(button.id, new WeakRef(button));
+                Overflow.buttonCaps.set(button, {cap, plugin: me});
+                button.addCls('neo-tab-overflow-capped');
+                button[maxSize] = usable
+            } else if (me.appliedCaps?.has(button.id)) {
+                let cap = me.appliedCaps.get(button.id);
+
+                button.removeCls('neo-tab-overflow-capped');
+                button[cap.maxSize] = cap.value;
+                Overflow.buttonCaps.delete(button);
+                me.appliedCaps.delete(button.id);
+                me.appliedCapButtons?.delete(button.id)
+            }
+
+            if (isHidden) {
+                hiddenMeta.push({
+                    editRoute: button.editRoute,
+                    iconCls  : button.iconCls,
+                    index,
+                    route    : button.route,
+                    text     : button.text
+                })
+            }
+        });
+
+        me.appliedHiddenIds = [...hidden];
+        me.syncControl(hiddenMeta, tabContainer)
+    }
+
+    /**
+     * Restores the last committed header partition when the menu opens during a recapture pass.
+     * The recapture path may already have made every header measurable; parking its new decision
+     * without this rollback would leave those temporary headers visible beside stale menu records.
+     * @protected
+     */
+    restoreOpenMenuPartition() {
+        let me = this;
+
+        if (!me.appliedHiddenIds) return;
+
+        let hidden = new Set(me.appliedHiddenIds);
+
+        me.getTabButtons().forEach(button => {
+            let isHidden = hidden.has(button.id);
+
+            button.setSilent({hidden: isHidden});
+
+            if (isHidden) {
+                button.vdom.removeDom = true
+            } else {
+                delete button.vdom.removeDom
+            }
+        });
+
+        me.owner.updateDepth = -1;
+        me.owner.update()
+    }
+
+    /**
+     * A primary press on the overflow control holds the owner's focus-gated reveal: the press focuses the
+     * pane, and the actions that reveal would otherwise be inserted beside the control and move it out from
+     * under the pointer before the release lands. The hold lasts while the press can still click the control.
+     * @param {Object} data
+     * @protected
+     */
+    onControlPointerDown({button}) {
+        if (button === 0) {
+            this.controlPressed = true;
+            this.owner?.holdContextualReveal?.('overflow-control')
+        }
+    }
+
+    /**
+     * A return during the control's own press holds again, since a release here still clicks the control;
+     * a return with the button up means that press ended elsewhere.
+     * @param {Object} data
+     * @protected
+     */
+    onControlPointerEnter({buttons}) {
+        let me = this;
+
+        me.controlPressed = me.controlPressed && (buttons & 1) === 1;
+        me.controlPressed && me.owner?.holdContextualReveal?.('overflow-control')
+    }
+
+    /**
+     * Leaving during the control's press ends its hold: a release elsewhere cannot click the control.
+     * @protected
+     */
+    onControlPointerLeave() {
+        this.controlPressed && this.owner?.releaseContextualReveal?.('overflow-control')
+    }
+
+    /**
+     * The click ends the press. One that opens the menu (`button.Base#toggleMenu` shows the list unless it is
+     * shown) keeps the hold until the mounted menu takes it over, so the strip never re-partitions under the
+     * menu's anchor; it observes the list itself once `menuListReady` settles, since no projection may have
+     * yet. Any other click releases the hold at once.
+     * @protected
+     */
+    onControlClick() {
+        let me        = this,
+            {control} = me;
+
+        me.controlPressed = false;
+
+        if (control?.menu && control.menuList?.hidden !== false) {
+            control.menuListReady.then(() => me.observeMenuListLifecycle(control.menuList))
+        } else {
+            me.owner?.releaseContextualReveal?.('overflow-control')
+        }
+    }
+
+    /**
+     * A primary press on a tab holds the owner's focus-gated reveal, as {@link #onControlPointerDown} does
+     * for the control: the press focuses the pane, and the actions that reveal inserts can withhold a sibling
+     * tab, which a drag starting from the press then keeps out of its frozen strip for the whole gesture.
+     * The press ends at its click, at a leave before it drags, or at the release of the drag it became.
+     * @param {Object} data
+     * @protected
+     */
+    onTabPointerDown({button, currentTarget}) {
+        if (button === 0) {
+            this.tabPress = {dragging: false, id: currentTarget};
+            this.owner?.holdContextualReveal?.('overflow-tab-press')
+        }
+    }
+
+    /**
+     * The press became a drag: the drag's release ends it, not a leave of its tab.
+     * @protected
+     */
+    onTabDragStart() {
+        this.tabPress && (this.tabPress.dragging = true)
+    }
+
+    /**
+     * Leaving the pressed tab before dragging ends its press: a release elsewhere cannot click it.
+     * @param {Object} data
+     * @protected
+     */
+    onTabPointerLeave({currentTarget}) {
+        let {tabPress} = this;
+
+        tabPress?.id === currentTarget && !tabPress.dragging && this.releaseTabPress()
+    }
+
+    /**
+     * Ends the tab press and releases its hold, which applies a reveal it owes. A no-op without one.
+     * @protected
+     */
+    releaseTabPress() {
+        if (this.tabPress) {
+            this.tabPress = null;
+            this.owner?.releaseContextualReveal?.('overflow-tab-press')
+        }
+    }
+
+    /**
+     * Observes one generated menu list so its unmount edge can drain a queued projection, and so the
+     * owner's focus-gated reveal waits while the menu owns the strip: its mount takes the hold over from
+     * the press that opened it. A replacement list supersedes the old observer.
+     * @param {Neo.menu.List|null} menuList
+     * @protected
+     */
+    observeMenuListLifecycle(menuList) {
+        let me = this;
+
+        if (!menuList || me.observedMenuList === menuList) return;
+
+        me.observedMenuList = menuList;
+
+        if (Neo.typeOf(menuList) === 'NeoInstance') {
+            me.observeConfig(menuList, 'mounted', value => {
+                if (me.observedMenuList === menuList) {
+                    me.owner?.[value ? 'holdContextualReveal' : 'releaseContextualReveal']?.('overflow-menu');
+                    value && me.owner?.releaseContextualReveal?.('overflow-control');
+                    value ? me.restoreOpenMenuPartition() : me.drainOpenMenuProjection()
+                }
+            })
+        }
+    }
+
+    /**
+     * Queues a projection while the generated menu owns a clickable visible/hidden partition: from the moment
+     * it is shown, since `mounted` follows the insert that `button.Base#toggleMenu` starts synchronously.
+     * @param {Boolean} recapture
+     * @returns {Boolean} True when the current projection must stop.
+     * @protected
+     */
+    queueOpenMenuProjection(recapture) {
+        let me       = this,
+            menuList = me.control?.menuList;
+
+        me.observeMenuListLifecycle(menuList);
+
+        if (!menuList || (menuList.hidden && !menuList.mounted)) return false;
+
+        me.menuProjectionQueued = true;
+        me.menuRecaptureQueued  = me.menuRecaptureQueued || recapture;
+
+        return true
+    }
+
+    /**
+     * Drains the latest sticky projection after the menu unmounts and releases its record store.
+     * @protected
+     */
+    drainOpenMenuProjection() {
+        let me = this;
+
+        if (!me.menuProjectionQueued || me.observedMenuList?.mounted) return;
+
+        let recapture = me.menuRecaptureQueued;
+
+        me.menuProjectionQueued = false;
+        me.menuRecaptureQueued  = false;
+        me.project(recapture)
+    }
+
+    /**
+     * Creates the hidden, stable toolbar contribution used by {@link #projectAsAction}. It exists before
+     * the first overflow so a consumer `actions` replacement while everything fits cannot erase the future
+     * affordance. The menu is supplied by the first real partition; no empty-menu async work is started.
+     * @returns {Neo.button.Base}
+     * @protected
+     */
+    createActionControl() {
+        let me = this;
+
+        if (me.control) {
+            return me.control
+        }
+
+        if (!Neo.isFunction(me.owner.addActionContribution)) {
+            throw new Error('Neo.tab.plugin.Overflow: projectAsAction requires a toolbar action-contribution owner')
+        }
+
+        me.control = me.owner.addActionContribution({
+            module      : Button,
+            cls         : ['neo-tab-overflow-control'],
+            domListeners: [
+                {mousedown : me.onControlPointerDown,  scope: me},
+                {mouseenter: me.onControlPointerEnter, scope: me},
+                {mouseleave: me.onControlPointerLeave, scope: me},
+                {click     : me.onControlClick,        scope: me}
+            ],
+            handler: Neo.emptyFn,
+            hidden : true,
+            iconCls: me.getMainAxisConfig().dimension === 'height'
+                ? 'fa fa-ellipsis-vertical'
+                : 'fa fa-ellipsis',
+            role       : 'button',
+            showOnFocus: false,
+            vdom       : {'aria-label': 'More tabs'}
+        });
+
+        return me.control
+    }
+
+    /**
+     * Creates / updates / hides or tears down the single overflow control. A menu selection sets the
+     * tab.Container's `activeIndex` (the ordinary activation path); the follow-up measure pass then
+     * surfaces the now-active tab by construction (active-never-hidden), so the selected tab is never
+     * left in the menu.
+     *
+     * The control is a `button.Base` with a `menu` config — button.Base builds the dropdown `menu.List`
+     * itself, so no menu is hand-assembled here. Floating mode destroys its body-rooted embodiment when
+     * everything fits; action mode keeps one toolbar contribution and toggles its `hidden` state.
+     * @param {Object[]} hiddenMeta  `{text, iconCls, index, route, editRoute}` per hidden tab, in header order.
+     * @param {Neo.tab.Container} tabContainer
+     */
+    syncControl(hiddenMeta, tabContainer) {
+        let me = this;
+
+        if (hiddenMeta.length < 1) {
+            if (me.projectAsAction) {
+                me.appliedHiddenIds     = null;
+                me.controlPressed       = false;
+                me.hiddenSignature      = null;
+                me.menuProjectionQueued = false;
+                me.menuRecaptureQueued  = false;
+                me.observedMenuList     = null;
+                // A hidden control cannot be clicked: a press on it ends here
+                me.owner.releaseContextualReveal?.('overflow-control');
+                if (me.control) {
+                    if (!me.control.hidden) {
+                        me.control.hidden = true
+                    } else if (!me.control.vdom?.removeDom) {
+                        me.control.hide()
+                    }
+                }
+                return
+            }
+
+            if (me.control) {
+                let control = me.control;
+
+                me.control                = null;
+                me.appliedHiddenIds       = null;
+                me.hiddenSignature        = null;
+                me.measuredControlWidth   = null;
+                me.menuProjectionQueued   = false;
+                me.menuRecaptureQueued    = false;
+                me.observedMenuList       = null;
+                // The measurement belongs to the torn-down embodiment; the next control re-measures.
+                if (!me.#mountingControls.has(control)) control.destroy(true)
+            }
+            return
+        }
+
+        let signature = hiddenMeta
+                .map(({editRoute, iconCls, index, route, text}) => `${index}:${text}:${iconCls}:${route}:${editRoute}`)
+                .join('|'),
+            // Like its header: a plain route replaces the hash, an editRoute header merges into it
+            menuItems = hiddenMeta.map(meta => ({
+                handler: () => {
+                    tabContainer.activeIndex = meta.index;
+                    meta.editRoute && meta.route && Neo.Main.editRoute(meta.route)
+                },
+                iconCls: meta.iconCls,
+                route  : meta.editRoute ? null : meta.route,
+                text   : meta.text
+            })),
+            menuConfig = {
+                // App-neutral identity for product skins. Theme ownership remains the control's live contract;
+                // consumers can project their own token family without hand-building or subclassing this menu.
+                cls  : ['neo-tab-overflow-menu'],
+                items: menuItems
+            };
+
+        me.projectAsAction && !me.control && me.createActionControl();
+
+        if (me.control) {
+            let {menuList} = me.control;
+
+            me.observeMenuListLifecycle(menuList);
+
+            // Idempotence gate: a projection that did not change the partition must not touch the
+            // menu — rewriting identical items rebuilds the dropdown and closes it mid-interaction
+            // (the render-truth edges made no-op projections routine, so this is load-bearing).
+            if (signature !== me.hiddenSignature) {
+                if (menuList) {
+                    menuList.items = menuItems
+                } else {
+                    me.control.menu = menuConfig
+                }
+            }
+
+            if (me.projectAsAction) {
+                if (me.control.hidden) {
+                    me.control.hidden = false
+                } else if (me.control.vdom?.removeDom) {
+                    me.control.show()
+                }
+            }
+        } else {
+            // The toolbar owns focus ancestry; the floating button mounts under document.body.
+            // The same mount guard handles its first insertion and recovery after a later unmount.
+            me.control = Neo.create({
+                module         : Button,
+                // Align to the main-axis slot immediately before actions (or the owner edge without actions).
+                // Without an align target a floating component stays at its off-screen default.
+                align        : me.getControlAlign(),
+                appName      : me.owner.appName,
+                autoInitVnode: false,
+                cls          : ['neo-tab-overflow-control'],
+                floating     : true,
+                iconCls      : me.getMainAxisConfig().dimension === 'height'
+                    ? 'fa fa-ellipsis-vertical'
+                    : 'fa fa-ellipsis',
+                menu           : menuConfig,
+                parentComponent: me.owner,
+                parentId       : 'document.body',
+                role           : 'button',
+                theme          : me.owner.getTheme(),
+                vdom           : {'aria-label': 'More tabs'},
+                windowId       : me.owner.windowId
+            });
+            me.control.addDomListeners?.({resize: me.onControlResize, scope: me});
+            // The reservation's render-truth EDGE: the pass that creates the control computed its split
+            // with the pre-creation estimate — the rendered width does not exist yet, and no external
+            // event is owed. Re-project when the mount lands (and on any later re-mount — idempotent, and
+            // a fresh embodiment deserves a fresh measurement), so the estimate→rendered convergence is
+            // this plugin's own lifecycle, never a wait for an unrelated resize/activation/mutation.
+            if (Neo.typeOf(me.control) === 'NeoInstance') {
+                me.observeConfig(me.control, 'mounted', value => {
+                    value && !me.isDestroyed && me.project(false)
+                })
+            }
+        }
+
+        me.hiddenSignature = signature;
+
+        // Re-align against the CURRENT owner rect: a floating component aligns once at mount and does
+        // NOT re-align when its target moves. Re-aligning on each sync re-pins it to the current action or
+        // owner edge — cheap + idempotent. The e2e owner-exact geometry assertion falsifies its absence.
+        if (me.control) {
+            me.control.iconCls = me.getMainAxisConfig().dimension === 'height'
+                ? 'fa fa-ellipsis-vertical'
+                : 'fa fa-ellipsis';
+
+            if (!me.projectAsAction) {
+                const control = me.control;
+                if (control.mounted) {
+                    control.align = me.getControlAlign();
+                    control.alignTo()
+                } else if (!control.isVnodeInitializing && !me.remountArming) {
+                    me.mountFloatingControl(control)
+                }
+            }
+        }
+    }
+
+    /**
+     * @summary Mounts a floating control once across theme loading and DOM insertion.
+     * @param {Neo.button.Base} control The button owned by this projection.
+     */
+    async mountFloatingControl(control) {
+        this.#mountingControls.add(control);
+        try {
+            await control.initVnode(true);
+            if (this.control === control && control.mounted) control.alignTo()
+        } catch {
+            // The next projection retries a failed mount.
+        } finally {
+            this.#mountingControls.delete(control);
+            // A retired control can have an insert in flight; remove it after that insert settles.
+            if (this.control !== control && !control.isDestroyed) control.destroy(true)
+        }
+    }
+
+    /**
+     * @param {...*} args
+     * @override
+     */
+    destroy(...args) {
+        let me = this;
+
+        // A dying plugin must not strand its caps (a dock rebuild replaces the plugin, not the
+        // buttons): restore each recorded caller value through the same channel the cap used,
+        // unless another live Overflow plugin now owns the button or its cap.
+        me.appliedCaps?.forEach((cap, buttonId) => {
+            me.releaseDepartedCap(buttonId, cap)
+        });
+
+        me.appliedCaps = null;
+        me.appliedCapButtons = null;
+        me.appliedHiddenIds = null;
+        me.resolveProjectionIdle();
+        me.sortDragZone?.un('dragEnd', me.onSortDragEnd, me);
+        me.sortDragZone           = null;
+        me.menuProjectionQueued   = false;
+        me.menuRecaptureQueued    = false;
+        me.observedMenuList       = null;
+        me.tabPress               = null;
+        if (me.owner && !me.owner.isDestroyed) {
+            me.owner.releaseContextualReveal?.('overflow-control');
+            me.owner.releaseContextualReveal?.('overflow-menu');
+            me.owner.releaseContextualReveal?.('overflow-tab-press')
+        }
+        if (me.control && !me.control.isDestroyed) {
+            if (me.control.isToolbarActionContribution === true) {
+                me.owner.removeActionContribution(me.control)
+            } else if (!me.#mountingControls.has(me.control)) {
+                me.control.destroy(true)
+            }
+        }
+        me.control = null;
+        super.destroy(...args)
+    }
+}
+
+export default Neo.setupClass(Overflow);

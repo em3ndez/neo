@@ -5,6 +5,14 @@ import Number from './Number.mjs';
  * @extends Neo.form.field.Number
  */
 class Range extends Number {
+    /**
+     * Removing the debounce for range fields
+     * @member {Object} delayable
+     * @protected
+     * @static
+     */
+    static delayable = {}
+
     static config = {
         /**
          * @member {String} className='Neo.form.field.Range'
@@ -23,11 +31,13 @@ class Range extends Number {
         /**
          * True shows a clear trigger in case the field has a non empty value.
          * @member {Boolean} clearable=false
+         * @reactive
          */
         clearable: false,
         /**
          * Value for the inputType_ textfield config
          * @member {String} inputType='range'
+         * @reactive
          */
         inputType: 'range',
         /**
@@ -37,6 +47,7 @@ class Range extends Number {
         showResultInLabel: false,
         /**
          * @member {Array} tickmarks_=[]
+         * @reactive
          */
         tickmarks_: [],
         /**
@@ -71,7 +82,7 @@ class Range extends Number {
 
         inputEl.cls = ['neo-rangefield-input']; // replace neo-textfield-input
 
-        me.addValueToLabel();
+        me.addValueToLabel()
     }
 
     /**
@@ -85,26 +96,25 @@ class Range extends Number {
     }
 
     /**
-     * Override the NumberField implementation
-     * @param {Object} data
+     * Triggered after the value config got changed
+     * @param {Number} value
+     * @param {Number} oldValue
      */
     afterSetValue(value, oldValue) {
         this.addValueToLabel();
-        super.afterSetValue(value, oldValue);
+        super.afterSetValue(value, oldValue)
     }
 
     /**
      * Update label with value
      */
     addValueToLabel() {
-        const me = this;
+        let me = this;
 
         if (me.showResultInLabel) {
-            me.getLabelEl().innerHTML = `[${me.value}] ` + me.labelText;
+            me.getLabelEl().text = `[${me.value}] ` + me.labelText
         }
     }
 }
 
-Neo.applyClassConfig(Range);
-
-export default Range;
+export default Neo.setupClass(Range);

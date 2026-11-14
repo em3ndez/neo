@@ -19,6 +19,7 @@ class FormPageContainer extends FormContainer {
         },
         /**
          * @member {Object} layout={ntype:'vbox'}
+         * @reactive
          */
         layout: {ntype: 'vbox'},
         /**
@@ -26,13 +27,11 @@ class FormPageContainer extends FormContainer {
          */
         style: {overflow: 'auto'},
         /**
-         * @member {Object} _vdom
+         * @member {String} tag='div'
+         * @reactive
          */
-        vdom:
-        {cn: []} // using a div instead of a form tag
+        tag: 'div' // using a div instead of a form tag
     }
 }
 
-Neo.applyClassConfig(FormPageContainer);
-
-export default FormPageContainer;
+export default Neo.setupClass(FormPageContainer);

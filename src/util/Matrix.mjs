@@ -15,6 +15,7 @@ class Matrix extends Base {
         /**
          * @member {Array|null} items_=null
          * @protected
+         * @reactive
          */
         items_: null
     }
@@ -23,7 +24,7 @@ class Matrix extends Base {
      * shortcut for getElement
      */
     e(i, j) {
-        return this.getElement(i, j);
+        return this.getElement(i, j)
     }
 
     /**
@@ -36,10 +37,10 @@ class Matrix extends Base {
         let items = this.items;
 
         if (i < 1 || i > items.length || j < 1 || j > items[0].length) {
-            return null;
+            return null
         }
 
-        return items[i - 1][j - 1];
+        return items[i - 1][j - 1]
     }
 
     /**
@@ -57,7 +58,7 @@ class Matrix extends Base {
         s += `${me.e(4,1).toFixed(p)},${me.e(4,2).toFixed(p)},${me.e(4,3).toFixed(p)},${me.e(4,4).toFixed(p)}`;
         s += ')';
 
-        return s;
+        return s
     }
 
     /**
@@ -66,14 +67,14 @@ class Matrix extends Base {
      * @returns {*}
      */
     multiply(matrix) {
-        let me    = this,
-            M     = matrix.items || matrix,
-            items = me.items,
-            ni    = items.length,
-            ki    = ni,
-            kj    = M[0].length,
-            cols  = items[0].length,
-            els   = [],
+        let me      = this,
+            M       = matrix.items || matrix,
+            {items} = me,
+            ni      = items.length,
+            ki      = ni,
+            kj      = M[0].length,
+            cols    = items[0].length,
+            els     = [],
             c, i, j, nc, nj, sum;
 
         do {
@@ -87,15 +88,15 @@ class Matrix extends Base {
 
                 do {
                     c = cols - nc;
-                    sum += items[i][c] * M[c][j];
+                    sum += items[i][c] * M[c][j]
                 } while (--nc);
-                els[i][j] = sum;
+                els[i][j] = sum
             } while (--nj);
         } while (--ni);
 
         matrix.items = els;
 
-        return matrix;
+        return matrix
     }
 
     /**
@@ -111,7 +112,7 @@ class Matrix extends Base {
             [0, c, -s, 0],
             [0, s,  c, 0],
             [0, 0,  0, 1]
-        ];
+        ]
     }
 
     /**
@@ -127,7 +128,7 @@ class Matrix extends Base {
             [0, 1,  0, 0],
             [s, 0,  c, 0],
             [0, 0,  0, 1]
-        ];
+        ]
     }
 
     /**
@@ -143,17 +144,15 @@ class Matrix extends Base {
             [s,  c, 0, 0],
             [0,  0, 1, 0],
             [0,  0, 0, 1]
-        ];
+        ]
     }
 
     /**
      * shortcut for multiply
      */
     x(matrix) {
-        return this.multiply(matrix);
+        return this.multiply(matrix)
     }
 }
 
-Neo.applyClassConfig(Matrix);
-
-export default Matrix;
+export default Neo.setupClass(Matrix);

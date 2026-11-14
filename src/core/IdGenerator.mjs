@@ -1,57 +1,21 @@
 /**
- * This class gets used by core.Base, so it can not extend it.
- * It could get simplified to just being an object (needs to manually get put into the Neo namespace in this case).
- * @class Neo.core.IdGenerator
- * @singleton
+ * Provides a singleton utility for generating unique IDs.
+ * @namespace Neo.core.IdGenerator
  */
-class IdGenerator {
+const IdGenerator = {
     /**
-     * Set this one to false in case you don't want to stick
-     * to the "anti-pattern" to apply classes to the global Neo or App namespace
-     * @member {Boolean} registerToGlobalNs=true
-     * @protected
-     * @static
+     * The default prefix for neo instance ids
+     * @member {String} base='neo-'
      */
-    static registerToGlobalNs = true
-
-    static config = {
-        /**
-         * @member {String} className='Neo.core.IdGenerator'
-         * @protected
-         */
-        className: 'Neo.core.IdGenerator',
-        /**
-         * @member {String} ntype='id-generator'
-         * @protected
-         */
-        ntype: 'id-generator',
-        /**
-         * The default prefix for neo instance ids
-         * @member {String} base='neo-'
-         */
-        base: 'neo-',
-        /**
-         * @member {Boolean} singleton='true
-         * @protected
-         */
-        singleton: true
-    }
-
+    base: 'neo-',
     /**
-     * @param config
+     * @member {Object} idCounter={}
      */
-    construct(config) {
-        let me = this;
-
-        me.idCounter = {};
-
-        // alias
-        Neo.getId = me.getId.bind(me);
-    }
+    idCounter: {},
 
     /**
      * @param name
-     * @returns {string}
+     * @returns {String}
      */
     getId(name) {
         name = name || 'neo';
@@ -62,16 +26,10 @@ class IdGenerator {
 
         counter[name] = ++count;
 
-        return me.base + (name === 'neo' ? '' : name + '-') + count;
+        return me.base + (name === 'neo' ? '' : name + '-') + count
     }
-
-    init() {}
-
-    onAfterConstructed() {}
-
-    onConstructed() {}
 }
 
-let instance = Neo.applyClassConfig(IdGenerator);
-
-export default instance;
+export default Neo.gatekeep(IdGenerator, 'Neo.core.IdGenerator', () => {
+    Neo.getId = IdGenerator.getId.bind(IdGenerator)
+});

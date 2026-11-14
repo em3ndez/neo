@@ -64,6 +64,4 @@ class MainStore extends Store {
     }
 }
 
-Neo.applyClassConfig(MainStore);
-
-export default MainStore;
+export default Neo.setupClass(MainStore);

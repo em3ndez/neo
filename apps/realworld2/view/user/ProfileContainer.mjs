@@ -16,7 +16,7 @@ class ProfileContainer extends Container {
          */
         items: [{
             ntype: 'component',
-            html : 'ProfileContainer'
+            text : 'ProfileContainer'
         }],
         /**
          * @member {Object} style
@@ -27,6 +27,4 @@ class ProfileContainer extends Container {
     }
 }
 
-Neo.applyClassConfig(ProfileContainer);
-
-export default ProfileContainer;
+export default Neo.setupClass(ProfileContainer);

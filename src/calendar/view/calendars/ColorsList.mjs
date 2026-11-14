@@ -22,12 +22,19 @@ class ColorsList extends List {
             store: 'stores.colors'
         },
         /**
+         * Set this to true in case a keyboard navigation should immediately select the focussed item
+         * @member {Boolean} selectOnFocus=true
+         */
+        selectOnFocus: true,
+        /**
          * @member {Boolean} useWrapperNode=false
+         * @reactive
          */
         useWrapperNode: false,
         /**
          * The list gets used as a form field, so we are adjusting the selection based on this config
          * @member {String} value_=null
+         * @reactive
          */
         value_: null,
         /**
@@ -50,7 +57,7 @@ class ColorsList extends List {
 
         if (value && oldValue !== undefined && !me.disableSelection) {
             record = me.store.find('name', value)[0];
-            me.selectionModel?.select(me.getItemId(record[me.getKeyProperty()]));
+            me.selectionModel?.select(me.getItemId(me.store.getKey(record)))
         }
     }
 
@@ -58,27 +65,27 @@ class ColorsList extends List {
      * Override this method for custom renderers
      * @param {Object} record
      * @param {Number} index
-     * @returns {Object|Object[]|String} Either a config object to assign to the item, a vdom cn array or a html string
+     * @returns {Object|Object[]|String} Either a config object to assign to the item, a vdom cn array or a string.
      */
     createItemContent(record, index) {
         return {style: {
             backgroundColor: `var(--event-${record.name}-color)`,
             color          : `var(--event-${record.name}-color)` // needed for the box-shadow (CSS currentColor)
-        }};
+        }}
     }
 
     /**
      * @returns {Object}
      */
     getVdomRoot() {
-        return this.vdom;
+        return this.vdom
     }
 
     /**
      * @returns {Object}
      */
     getVnodeRoot() {
-        return this.vnode;
+        return this.vnode
     }
 
     /**
@@ -87,10 +94,10 @@ class ColorsList extends List {
     onConstructed() {
         super.onConstructed();
 
-        let me    = this,
-            value = me.value;
+        let me      = this,
+            {value} = me;
 
-        value && me.afterSetValue(value, null);
+        value && me.afterSetValue(value, null)
     }
 
     /**
@@ -103,10 +110,8 @@ class ColorsList extends List {
 
         me.fire('change', {
             record: me.store.get(recordId)
-        });
+        })
     }
 }
 
-Neo.applyClassConfig(ColorsList);
-
-export default ColorsList;
+export default Neo.setupClass(ColorsList);

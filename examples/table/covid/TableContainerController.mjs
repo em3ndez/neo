@@ -23,7 +23,7 @@ class TableContainerController extends Controller {
      */
     construct(config) {
         super.construct(config);
-        this.loadData();
+        this.loadData()
     }
 
     /**
@@ -34,14 +34,14 @@ class TableContainerController extends Controller {
 
         data.forEach(item => {
             if (item.country.includes('"')) {
-                item.country = item.country.replace('"', "\'");
+                item.country = item.country.replace(/"/g, "\'");
             }
 
             item.casesPerOneMillion = item.casesPerOneMillion > item.cases ? 'N/A' : item.casesPerOneMillion || 0;
-            item.infected           = item.casesPerOneMillion;
+            item.infected           = item.casesPerOneMillion
         });
 
-        store.data = data;
+        store.data = data
     }
 
     /**
@@ -53,10 +53,8 @@ class TableContainerController extends Controller {
         fetch(me.apiUrl)
             .then(response => response.json())
             .catch(err => console.log('Can’t access ' + me.apiUrl, err))
-            .then(data => me.addStoreItems(data));
+            .then(data => me.addStoreItems(data))
     }
 }
 
-Neo.applyClassConfig(TableContainerController);
-
-export default TableContainerController;
+export default Neo.setupClass(TableContainerController);

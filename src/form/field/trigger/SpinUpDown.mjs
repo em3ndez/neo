@@ -44,13 +44,13 @@ class SpinUpDown extends Base {
         let me = this;
 
         me.vdom.cn = [
-            {cls: ['neo-spin-button', 'neo-up',   me.spinButtonUpIconCls]},
-            {cls: ['neo-spin-button', 'neo-down', me.spinButtonDownIconCls]}
+            {cls: ['neo-spin-button', 'neo-up',   ...me.spinButtonUpIconCls  .split(' ')]},
+            {cls: ['neo-spin-button', 'neo-down', ...me.spinButtonDownIconCls.split(' ')]}
         ];
 
         me.update();
 
-        super.onConstructed();
+        super.onConstructed()
     }
 
     /**
@@ -62,13 +62,25 @@ class SpinUpDown extends Base {
             cls    = target.cls.join(' ');
 
         if (cls.includes('neo-down')) {
-            me.field.onSpinButtonDownClick();
+            me.field.onSpinButtonDownClick()
         } else if (cls.includes('neo-up')) {
-            me.field.onSpinButtonUpClick();
+            me.field.onSpinButtonUpClick()
+        }
+    }
+
+    /**
+     * Serializes the trigger into a JSON-compatible object.
+     * @returns {Object}
+     */
+    toJSON() {
+        let me = this;
+
+        return {
+            ...super.toJSON(),
+            spinButtonDownIconCls: me.spinButtonDownIconCls,
+            spinButtonUpIconCls  : me.spinButtonUpIconCls
         }
     }
 }
 
-Neo.applyClassConfig(SpinUpDown);
-
-export default SpinUpDown;
+export default Neo.setupClass(SpinUpDown);

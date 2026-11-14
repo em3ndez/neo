@@ -21,6 +21,8 @@ In the long run, we are planning to convert as many of the rules as possible int
 8. Class methods
 9. data.Model fields
 10. Misc
+11. JSDoc type expressions
+12. Compact JSDoc blocks
 
 
 ## 1. General rules
@@ -30,7 +32,7 @@ In the long run, we are planning to convert as many of the rules as possible int
 * (3) Use single quotes over double quotes.
 * (4) Never use more than 1 empty line.
 * (5) For indentation, we are using 4 spaces (no tab chars).
-* (6) A lot of items inside various spots are ordered chronologically.
+* (6) A lot of items inside various spots are ordered alphabetically.
 
 ## 2. import statements
 ```javascript
@@ -64,13 +66,27 @@ Neo.tab.header.Button
 * (17) `ntype` is using lower-case syntax as well.
 
 ## 4. Anatomy of a neo class / JS module
+
+Between the imports and the class there are `import`s, constants and lookup tables — and nothing else.
+Behaviour lives on the class, because module scope is not reachable by a subclass, a mixin or
+`Neo.overwrites`: see [§8 Class methods](#8-class-methods).
+
 ```javascript
 import Component from '../component/Base.mjs';
 import NeoArray  from '../util/Array.mjs';
 
 /**
+ * @summary The default button component for the Neo.mjs framework.
+ *
+ * This class extends `Neo.component.Base` and offers comprehensive configurations for
+ * text, icons, badges, and event handling. It supports advanced features like
+ * internal routing, external URL redirection, and optional ripple effects on click.
+ * This class serves as the foundation for other specialized button types like
+ * SplitButton, TabHeaderButton, and GridHeaderButton.
+ *
  * @class Neo.button.Base
  * @extends Neo.component.Base
+ * @see Neo.examples.button.base.MainContainer
  */
 class Base extends Component {
     /**
@@ -170,29 +186,68 @@ class Base extends Component {
     }
 }
 
-Neo.applyClassConfig(Base);
-
-export default Base;
-
+export default Neo.setupClass(Base);
 ```
-* (18) Use JSDoc based comments for all top level items as well as top level configs
+
+* (18) Use JSDoc based comments for all top-level items (classes, methods, configs).
+  + For class top-level comments, a `@summary` tag is **mandatory**. It **must** be the first tag and **must** be followed by an empty line, then a detailed description of the class.
+  + Single-line tags like `@class` and `@extends` do not require an empty line after them.
 * (19) Class content order:
-  - static configs (ordered chronologically)
+  - static configs (ordered alphabetically)
   - static config as the last item. This one does not need a comment, but is prefixed with an empty line.
-  - non-static class fields (ordered chronologically)
+  - non-static class fields (ordered alphabetically)
   - construct() in case you are using it
-  - all other class methods are ordered chronologically and are prefixed with an empty line.
+  - all other class methods are ordered alphabetically and are prefixed with an empty line.
 * (20) Module order:
   - Import statements formatted according to 1.
   - empty line
   - class definition
   - empty line
-  - Neo.applyClassConfig(<ClassName>)
+  - Neo.setupClass(<ClassName>)
   - empty line
   - export statement
   - empty line
 
 ## 5. Config order
+
+## JSDoc for Configs
+
+To ensure consistency and enable static analysis, the following JSDoc standards for configs are mandatory.
+
+### The `@reactive` Tag
+
+A config is considered **reactive** if its definition within the `static config` block (anywhere in its prototype chain) ends with a trailing underscore (`_`). This is the single source of truth for reactivity.
+
+- The `@reactive` tag **MUST** be included in the JSDoc comment block for any config that is reactive.
+- This tag signals that the framework generates public `get()` and `set()` methods, along with `beforeGet`, `beforeSet`, and `afterSet` hooks.
+
+**Correct Example:**
+```javascript
+/**
+ * My cool reactive property.
+ * @member {Boolean} myProperty_=true
+ * @reactive
+ */
+myProperty_: true,
+```
+
+### The `@protected` Tag
+
+The `@protected` tag restricts a config to internal use within a class and its subclasses. It should be used sparingly.
+
+- This tag **MUST ONLY** be used for configs that are not intended to be part of the public API for component instantiation or modification.
+- A prime example is the `className` config, which is an internal detail.
+- It **MUST NOT** be used for configs that developers are expected to use, such as `items`, `layout`, `style`, `width`, etc.
+
+**Correct Example:**
+```javascript
+/**
+ * @member {String} className='Neo.button.Base'
+ * @protected
+ */
+className: 'Neo.button.Base',
+```
+
 ```javascript
 static config = {
     /**
@@ -232,7 +287,7 @@ static config = {
 * (21) class content order
   + className first
   + ntype second (if used)
-  + All other configs are ordered chronologically
+  + All other configs are ordered alphabetically
   + _vdom last
   + configs use camel-case syntax
   + JSDoc comments are required
@@ -255,7 +310,7 @@ The idea is to format the structure in a way that is similar to html tags and al
 * (22) The vdom object starts inside a new line, to keep the structure intact plus keep us more space to the right side.
 * (23) vdom Objects start with the `tag` property.
 * (24) the `tag` property is not needed for `div` tags, since this is the default value.
-* (25) All other attributes are ordered chronologically.
+* (25) All other attributes are ordered alphabetically.
 * (26) `cn` (child nodes) is always the last attribute.
 
 There is a blog post which dives a bit deeper into this formatting strategy:</br>
@@ -270,18 +325,18 @@ items: [HeaderContainer, {
     reference  : 'tab-container',
     sortable   : true,
     style      : {margin: '10px', marginTop: 0},
-  
+
     items: [{
-        module         : () => import('./TableContainer.mjs'),
-        reference      : 'table-container',
-        tabButtonConfig: {
+        module   : () => import('./TableContainer.mjs'),
+        reference: 'table-container',
+        header   : {
             iconCls: 'fa fa-table',
             route  : 'mainview=table',
             text   : 'Table'
         }
     }, {
-        module         : () => import('./mapboxGl/Container.mjs'),
-        tabButtonConfig: {
+        module: () => import('./mapboxGl/Container.mjs'),
+        header: {
             iconCls: 'fa fa-globe-americas',
             route  : 'mainview=mapboxglmap',
             text   : 'Mapbox GL Map'
@@ -323,22 +378,51 @@ Container items can contain:
 
 (28) Config objects get formatted in the following way:
 * Either `module`, `ntype` or `className` as the first item
-* All other items sorted chronologically
-* Exception: You can also sort everything which can get described in 1 line chronologically and use an empty
+* All other items sorted alphabetically
+* Exception: You can also sort everything which can get described in 1 line alphabetically and use an empty
 blank line afterwards. This "resets" the block formatting and order. Afterwards you can add "bigger" properties
 like nested item arrays or complex objects (e.g. style). Each of those item starts with an empty line and they
-do get sorted chronologically as well.
+do get sorted alphabetically as well.
 
 ## 8. Class methods
+
+**Logic belongs on the class, never at module scope beside it.** A helper that "does not need `this`"
+is the one every other codebase teaches you to lift out of the class. Do not lift it here.
+
+Neo is built for extension: developers subclass, mix in, and replace class logic through
+`Neo.overwrites`. Every one of those seams reaches a **method**. None of them can reach a function at
+module scope — it is invisible to a subclass, invisible to a mixin's consumer, invisible to
+`Neo.overwrites`, and invisible to the Neural Link's `get_method_source`. Lifting a helper out of the
+class does not tidy it; it removes an override seam and fragments the class's reading order.
+
+So a helper becomes an instance method, a `static` method, or a getter — or, when it genuinely belongs
+to no class, its own module under `src/util/**` consumed by import.
+
+`import`s, constants and lookup tables stay at module scope: nobody overrides data.
+
+`buildScripts/util/check-class-module-scope.mjs` enforces this over `src/**/*.mjs`, gated on the file
+declaring a class. A new helper fails `lint-staged` and CI. The baseline records debt being paid down —
+it is not a place to put new debt.
+
+**What "migrate on next touch" does and does not mean.** A baselined entry is a prompt to move the
+helper onto the class the next time its file is opened — not an obligation to move it regardless of
+what it is. The guard answers one question (*is this a function binding at module scope beside a
+class?*) and deliberately does not answer the other (*is it a helper that escaped the class, or the
+module's own exported API?*). `src/functional/util/html.mjs`'s `html` is the second kind: a tagged
+template that IS the module's public entry point, which happens to sit beside the class it constructs.
+Moving it onto that class would be a regression, so it stays baselined. When the two readings differ,
+say which one applies in the PR that touches the file; the baseline row is the record either way.
+
 ```javascript
 
 /**
- * @param {Object} data
- * @param {Neo.component.Base} data.component
- * @param {Number} data.rowHeight
- * @param {Number} data.rowsPerItem
- * @param {Number} data.totalHeight
- * @param {Boolean} [silent=false]
+ * Adjusts the total height of the component based on the provided data.
+ * @param {Object}             data             The data object containing height information
+ * @param {Neo.component.Base} data.component   The component to adjust
+ * @param {Number}             data.rowHeight   The height of a single row
+ * @param {Number}             data.rowsPerItem The number of rows per item
+ * @param {Number}             data.totalHeight The total height to set
+ * @param {Boolean}            [silent=false]   True to suppress the update event
  */
 adjustTotalHeight(data, silent=false) {
     let me          = this,
@@ -367,13 +451,24 @@ adjustTotalHeight(data, silent=false) {
 }
 ```
 * (29) Above every class method is one empty line
-* (30) Each class method has JSDoc comments for the params
-  + While doc commons support `@returns` & `@return`, we do stick to `@returns` (consistency)
+* (30) Each class method has JSDoc comments.
+  + **No empty line** allowed between the method description and the first `@param` tag.
+  + `@returns` is used instead of `@return` for consistency.
+  + All `@param` tags must have a description.
+  + Use **Block Formatting**: Vertically align `{Type}`, `parameterName`, and `Description`.
+    + **Type Column Width**: Determined by the longest `{Type}` + 1 space.
+    + **Name Column Width**: Determined by the longest `parameterName` + 1 space.
+    + **Description Column**: Starts exactly at the `Type Column Width` + `Name Column Width` offset.
+  + Do **not** use hyphens (`-`) to separate the parameter name from the description. Use whitespace for alignment.
 * (31) Try to define most (if not all) variables at the top of the method body.
 * (32) Variables do use block formatting
 * (33) Variables are separated by commas (file size)
 * (34) Create variables for every item which you use more than 2 times. (maintainability, readability & file size)
-  + This rule also counts for `this`.
+  + This rule also counts for `this` in bundled runtime-engine code (`src/`, apps, examples and docs-app source)
+    where the `me = this` pattern supports readability and minified file size.
+  + In unbundled Node.js / Agent OS code (`ai/`, `buildScripts/`) prefer direct `this` for new code unless a local
+    callback-binding or readability case makes `me` useful. Existing call sites are grandfathered; clean them up only
+    when editing the surrounding code or via a dedicated follow-up ticket.
 * (35) The framework source code is using `const` very(!) rarely. The only reason is the minified bundle size.
 
 Example:
@@ -418,7 +513,7 @@ fields: [{
 * (38) prefer using maps instead of `switch` whenever possible.
 * (39) `if (/**/) {` if, blank char, parenthesis, blank char, curly bracket
 * (40) `for (/**/) {` for, blank char, parenthesis, blank char, curly bracket
-* (41) `switch(/**/) {` switch, parenthesis, blank char, curly bracket `// could get changed to use a blank char as well
+* (41) `switch (/**/) {` switch, blank char, parenthesis, blank char, curly bracket `
 * (42) `while (/**/) {` while, blank char, parenthesis, blank char, curly bracket
 * (43) Use optional chaining => `?.` where it makes sense
   + Bad: `myView && myView.myFn && myView.myFn();`
@@ -437,3 +532,139 @@ fields: [{
   + Bad: `let arr = [1,];`
   + Good: `let obj = {a: 1};`
   + Good: `let arr = [1];`
+
+## 11. JSDoc type expressions
+
+Neo's docs build parses every type expression with `catharsis`, the type parser the jsdoc engine uses, in JSDoc mode. This is the
+Closure/JSDoc grammar, not TypeScript. `node ./buildScripts/util/check-jsdoc-types.mjs` runs the same parser
+before `npm run generate-docs-json`, so fix the linted expression instead of treating the build failure as a
+docs-output problem.
+
+Verified parser outcomes:
+
+| Pattern checked | Catharsis result | Use |
+| --- | --- | --- |
+| `@returns {{value:Object|null}}` | Fails: no-space union inside a record value | `@returns {{value: Object|null}}` or `@returns {{value:(Object|null)}}` |
+| `@param {{name?:String}} data` | Fails: TypeScript optional-key syntax | `@param {Object} data` plus `@param {String} [data.name]` |
+| `@param {(value: String) => Boolean} fn` | Fails: TypeScript arrow-function syntax | `@param {function(String):Boolean} fn` |
+| `@returns {{value: Object|null}}` | Passes | Keep the space after the record colon |
+| `@returns {{value:(Object|null)}}` | Passes | Parenthesize ambiguous unions |
+| `@param {Array.<String>} items` | Passes | Prefer canonical JSDoc generic spelling in docs-facing code |
+| `@param {Object.<String, Number>} totals` | Passes | Prefer canonical JSDoc generic spelling in docs-facing code |
+
+If a type is hard to express in one line, define a named `@typedef` near the class or module and reference that
+name from `@param`, `@returns`, `@member`, or `@property`. The lint currently scans authored `.mjs` files in
+`src`, `ai`, `examples`, `apps`, and `docs/app`. `buildScripts` and `test` remain outside the CI scope because
+they are not consumed by the docs app today; extend the scope only with a ticket that also updates the relevant
+fixtures.
+
+
+## 12. Compact JSDoc blocks
+
+A one-line JSDoc block is **permitted only for the three forms below, and only when the default contains no
+whitespace** — see "Inline defaults" at the end of this section, which binds the multiline form equally.
+Everything else expands to a multiline block. Valid JavaScript and a successful JSDoc run do not imply correct
+metadata: the failures here are silent — nothing errors, the docs build stays green, and a default or an access
+tag simply stops existing.
+
+Verified against the production doclet pipeline (`buildScripts/docs/docletPipeline/`) plus `generateDocsJson`'s
+member block, one-line compared against its multiline control in every row. `check-jsdoc-types.mjs` does not
+cover any of this — it validates type expressions, not preservation of defaults, descriptions or access.
+
+| Form | Outcome | Use |
+| --- | --- | --- |
+| `/** @member {String} name='neo' */` | Identical to multiline | Compact is fine |
+| `/** @member {Object\|null} data=null */` | Identical to multiline | Compact is fine |
+| `/** @member {Number} size=3 The size */` | Identical to multiline — default `3`, description `The size` | Compact is fine |
+| `/** @member {String[]} cls=['a','b'] */` | **Generated default becomes empty** | MUST expand |
+| `/** @member {Object} opts={a:1} */` | **Generated default becomes empty** | MUST expand |
+| `/** @member {Number} count=0 @protected */` | **`@protected` becomes description text; the access tag is LOST** | MUST expand — one tag per line |
+
+**Why array and object defaults must expand.** `generateDocsJson` re-extracts an array/object default from the
+comment text between `=` and the next newline. A one-line block has no next newline, so `indexOf` returns `-1`,
+`substr(0, -1)` returns the empty string, and the member documents with no default at all.
+
+**Why a second tag must expand.** JSDoc reads everything after the first tag's value as that tag's description,
+so `@protected` on the same line becomes the string `@protected` in the description and the member documents as
+public.
+
+### Inline defaults, which is NOT about compact blocks
+
+Two rules below apply to **every** `@member` in the repository, in the multiline form the guidelines already
+prescribe. Neither is a compact-block property.
+
+**1. An inline default truncates at the first whitespace, and the remainder becomes the description.**
+
+```javascript
+/** @member {String} greeting='hello world' */   // default: "'hello"   description: "world'"
+/** @member {Object} opts={a: 1} */              // default: "{a:"      description: "1}"
+/** @member {String[]} pair=['one two'] */       // default: "['one"    description: "two']"
+```
+
+No comma is involved in any of those — a plain string with a space truncates identically.
+
+**Two kinds of whitespace, and only one of them is yours to delete.**
+
+- **Formatting whitespace** — after a comma, after an object's colon — carries no meaning. Remove it:
+  `['a', 'b']` → `['a','b']`, `{a: 1}` → `{a:1}`. The value is unchanged.
+- **Whitespace inside a string literal** — `'hello world'`, `['one two']` — **is part of the value**.
+  Deleting it silently documents a different default than the code has, which is worse than the
+  truncation it was meant to avoid. Never "fix" a truncation by editing the literal.
+
+**2. A trailing `]` is eaten.** JSDoc's optional-parameter syntax is `[name=default]`, so a value whose last
+character is `]` has it consumed as that marker's close: `=['a','b']` parses as `['a','b'` . Object braces are
+unaffected. `generateDocsJson` re-extracts array and object defaults from the comment text, which repairs the
+**default** in the multiline form — it does not repair the **description**, so a leaked remainder ships.
+It ships *rendered*: `generateDocsJson` runs `marked.parse` over every description before the member
+block, so `pair=['one two']` publishes `<p>two&#39;]</p>` as that member's documentation.
+
+**For a String whose value must contain whitespace, give `@default` its own line.** A String default is
+not re-extracted by the generator, so it survives exactly, and the description stays empty:
+
+```javascript
+/**
+ * @member {String} greeting
+ * @default 'hello world'
+ */
+```
+
+**Never do that for an array or object — it publishes `/**` as the default.** The form parses perfectly,
+which is precisely why it is dangerous. For an array/object type the generator re-extracts from the
+comment text between `=` and the next newline; a separate `@default` line contains no `=`, so `indexOf`
+returns `-1`, `-1 + 1` is `0`, and the extraction starts at the comment's first character and stops at
+the first newline — the opening `/**`.
+
+So an array or object default has exactly one correct form, and all three properties are load-bearing:
+
+```javascript
+/**
+ * @member {String[]} pair=['a','b']     ← inline (the generator needs the `=`),
+ */                                      ← whitespace-free, and in a MULTILINE block
+```
+
+- **inline `name=value`** — a separate `@default` has no `=` and publishes `/**`
+- **whitespace-free** — otherwise the value truncates and the remainder leaks into the description
+- **multiline block** — a one-line block has no newline after `=`, so the default generates empty
+
+### The unsupported form, stated so nobody "fixes" it by changing the value
+
+An **array or object whose literal content contains whitespace** — `['one two']`, `{label: 'a b'}` — has
+**no correct form**:
+
+| attempt | result |
+|---|---|
+| inline, as authored | truncates at the space; remainder leaks into the description |
+| delete the inner space | documents a **different value** than the code has |
+| separate `@default` | publishes `/**` |
+
+Do not pick one. Document the member without an inline default and describe the value in prose, or give
+the class a named constant and point at it. The one thing that must not happen is editing the literal to
+satisfy the parser — a wrong default that looks right outlives every truncation, because nothing about it
+reads as broken.
+
+(A **String** whose value contains whitespace is the exception that does have a form: `@default` on its
+own line, above.)
+
+`test/playwright/unit/buildScripts/docletCompactJsdoc.spec.mjs` pins every row of this section against the
+production pipeline, each compact form beside its multiline control, asserting the complete metadata rather
+than only that the two layouts agree — two doclets that have both lost their default are equal to each other.

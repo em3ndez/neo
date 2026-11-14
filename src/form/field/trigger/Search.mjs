@@ -18,11 +18,10 @@ class Search extends Picker {
         ntype: 'trigger-search',
         /**
          * @member {String|null} iconCls='fas fa-magnifying-glass'
+         * @reactive
          */
         iconCls: 'fas fa-magnifying-glass'
     }
 }
 
-Neo.applyClassConfig(Search);
-
-export default Search;
+export default Neo.setupClass(Search);

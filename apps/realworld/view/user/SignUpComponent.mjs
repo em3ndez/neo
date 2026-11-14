@@ -18,10 +18,12 @@ class SignUpComponent extends Component {
         baseCls: ['auth-page'],
         /**
          * @member {Object[]} errors_=[]
+         * @reactive
          */
         errors_: [],
         /**
          * @member {Object[]} fieldsets_
+         * @reactive
          */
         fieldsets_: [
             {name: 'username', placeholder: 'Your Name', type: 'text'},
@@ -37,6 +39,7 @@ class SignUpComponent extends Component {
         /**
          * @member {String} mode_='signup'
          * @protected
+         * @reactive
          */
         mode_: 'signup',
         /**
@@ -93,7 +96,7 @@ class SignUpComponent extends Component {
         Object.entries(value || {}).forEach(([key, value]) => {
             list.cn.push({
                 tag : 'li',
-                html: key + ' ' + value.join(' and ')
+                text: key + ' ' + value.join(' and ')
             });
         });
 
@@ -141,16 +144,16 @@ class SignUpComponent extends Component {
             contentDiv = me.vdom.cn[0].cn[0].cn[0];
 
         // vdom bulk update
-        contentDiv.cn[0].html = isSignup ? 'Sign up' : 'Sign in';
+        contentDiv.cn[0].text = isSignup ? 'Sign up' : 'Sign in';
 
         contentDiv.cn[1].cn[0].href = isSignup ? '#/login' : '#/register';
-        contentDiv.cn[1].cn[0].html = isSignup ? 'Have an account?' : 'Need an account?';
+        contentDiv.cn[1].cn[0].text = isSignup ? 'Have an account?' : 'Need an account?';
 
         // remove the username fieldset if needed
         contentDiv.cn[3].cn[0].cn[0].removeDom = !isSignup;
 
         // submit button text
-        contentDiv.cn[3].cn[0].cn[3].html = isSignup ? 'Sign up' : 'Sign in';
+        contentDiv.cn[3].cn[0].cn[3].text = isSignup ? 'Sign up' : 'Sign in';
 
         me.update();
     }
@@ -160,8 +163,7 @@ class SignUpComponent extends Component {
      * @returns {Object} vdom
      */
     getErrorMessagesList() {
-        let el = VDomUtil.findVdomChild(this.vdom, {cls: 'error-messages'});
-        return el?.vdom;
+        return VDomUtil.find(this.vdom, {cls: 'error-messages'})?.vdom
     }
 
     /**
@@ -197,7 +199,8 @@ class SignUpComponent extends Component {
         // we could register an oninput event to this view as well and store the changes
         Neo.main.DomAccess.getAttributes({
             id        : ids,
-            attributes: 'value'
+            attributes: 'value',
+            windowId  : me.windowId
         }).then(data => {
             userData = {
                 user: {
@@ -226,6 +229,4 @@ class SignUpComponent extends Component {
     }
 }
 
-Neo.applyClassConfig(SignUpComponent);
-
-export default SignUpComponent;
+export default Neo.setupClass(SignUpComponent);

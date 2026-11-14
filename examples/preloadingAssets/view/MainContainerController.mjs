@@ -1,10 +1,10 @@
-import Component from '../../../src/controller/Component.mjs';
+import Controller from '../../../src/controller/Component.mjs';
 
 /**
  * @class Neo.examples.preloadingAssets.view.MainContainerController
  * @extends Neo.controller.Component
  */
-class MainContainerController extends Component {
+class MainContainerController extends Controller {
     static config = {
         /**
          * @member {String} className='Neo.examples.preloadingAssets.view.MainContainerController'
@@ -17,7 +17,7 @@ class MainContainerController extends Component {
      * @param {Object} data
      */
     onActiveIndexChange(data) {
-        console.log('onActiveIndexChange', data);
+        console.log('onActiveIndexChange', data)
     }
 
     /**
@@ -26,16 +26,14 @@ class MainContainerController extends Component {
     onMounted(id) {
         console.log('onMounted', id);
 
-        setTimeout(() => {
+        this.timeout(3000).then(() => {
             Neo.ServiceWorker.preloadAssets({
-                files: ['https://raw.githubusercontent.com/neomjs/pages/master/resources/examples/ai_images/000074.jpg']
+                files: ['https://raw.githubusercontent.com/neomjs/pages/main/resources_pub/examples/ai_images/000074.jpg']
             }).then(data => {
-                console.log(data);
-            });
-        }, 3000)
+                console.log(data)
+            })
+        })
     }
 }
 
-Neo.applyClassConfig(MainContainerController);
-
-export default MainContainerController;
+export default Neo.setupClass(MainContainerController);

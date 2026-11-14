@@ -1,4 +1,4 @@
-import Model  from '../../../src/data/Model.mjs';
+import Model from '../../../src/data/Model.mjs';
 
 /**
  * @class Neo.examples.todoList.version2.TodoListModel
@@ -6,12 +6,12 @@ import Model  from '../../../src/data/Model.mjs';
  */
 class TodoListModel extends Model {
     static config = {
-        className  : 'Neo.examples.todoList.version2.MainModel',
+        className  : 'Neo.examples.todoList.version2.TodoListModel',
         keyProperty: 'id',
 
         fields: [{
             name: 'id',
-            type: 'Number'
+            type: 'Int'
         }, {
             name: 'done',
             type: 'Boolean'
@@ -22,6 +22,4 @@ class TodoListModel extends Model {
     }
 }
 
-Neo.applyClassConfig(TodoListModel);
-
-export default TodoListModel;
+export default Neo.setupClass(TodoListModel);

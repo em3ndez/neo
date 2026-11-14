@@ -16,6 +16,7 @@ class TableContainer extends BaseTableContainer {
         className: 'Neo.examples.table.covid.TableContainer',
         /**
          * @member {String[]} cls=['covid-country-table']
+         * @reactive
          */
         cls: ['covid-country-table'],
         /**
@@ -23,7 +24,7 @@ class TableContainer extends BaseTableContainer {
          * @member {Object} columnDefaults
          */
         columnDefaults: {
-            align               : 'right',
+            cellAlign           : 'right',
             defaultSortDirection: 'DESC',
             renderer            : Util.formatNumber
         },
@@ -37,9 +38,10 @@ class TableContainer extends BaseTableContainer {
             minWidth : 40,
             text     : '#',
             renderer : Util.indexRenderer,
+            sortable : false,
             width    : 40
         }, {
-            align               : 'left',
+            cellAlign           : 'left',
             dataField           : 'country',
             defaultSortDirection: 'ASC',
             dock                : 'left',
@@ -98,15 +100,15 @@ class TableContainer extends BaseTableContainer {
         }],
         /**
          * @member {Neo.controller.Component} controller=TableContainerController
+         * @reactive
          */
         controller: TableContainerController,
         /**
          * @member {Object[]} store=MainStore
+         * @reactive
          */
         store: Store
     }
 }
 
-Neo.applyClassConfig(TableContainer);
-
-export default TableContainer;
+export default Neo.setupClass(TableContainer);

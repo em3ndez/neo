@@ -1,4 +1,4 @@
-import Base      from '../../core/Base.mjs';
+import Base      from './Base.mjs';
 import DomAccess from '../DomAccess.mjs';
 
 /**
@@ -7,8 +7,7 @@ import DomAccess from '../DomAccess.mjs';
  * script tag with the markdown lib has to be added before the Main.mjs script tag in the index.html
  * <script src="https://cdn.jsdelivr.net/npm/showdown@1.9.1/dist/showdown.min.js"></script>
  * @class Neo.main.addon.Markdown
- * @extends Neo.core.Base
- * @singleton
+ * @extends Neo.main.addon.Base
  */
 class Markdown extends Base {
     static config = {
@@ -21,6 +20,7 @@ class Markdown extends Base {
          * Remote method access for other workers
          * @member {Object} remote={app: [//...]}
          * @protected
+         * @reactive
          */
         remote: {
             app: [
@@ -31,12 +31,7 @@ class Markdown extends Base {
          * @member {String} showdownPath='https://cdn.jsdelivr.net/npm/showdown@1.9.1/dist/showdown.min.js'
          * @protected
          */
-        showdownPath: 'https://cdn.jsdelivr.net/npm/showdown@1.9.1/dist/showdown.min.js',
-        /**
-         * @member {Boolean} singleton=true
-         * @protected
-         */
-        singleton: true
+        showdownPath: 'https://cdn.jsdelivr.net/npm/showdown@2.1.0/dist/showdown.min.js'
     }
 
     /**
@@ -49,16 +44,15 @@ class Markdown extends Base {
 
     /**
      * Markdown to HTML converter
-     * @param {String} markdown string to convert
+     * @param {Object} data
+     * @param {String} data.markdown string to convert
      * @protected
      */
-    markdownToHtml(markdown) {
+    markdownToHtml({markdown}) {
         let converter = new showdown.Converter();
 
         return converter.makeHtml(markdown)
     }
 }
 
-let instance = Neo.applyClassConfig(Markdown);
-
-export default instance;
+export default Neo.setupClass(Markdown);

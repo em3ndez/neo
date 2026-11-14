@@ -1,4 +1,4 @@
-import Base      from '../../core/Base.mjs';
+import Base      from './Base.mjs';
 import DomAccess from '../DomAccess.mjs';
 
 /**
@@ -7,8 +7,7 @@ import DomAccess from '../DomAccess.mjs';
  * In case you need more API methods to get exposed to the App worker,
  * please open issues inside the tracker and / or submit PRs.
  * @class Neo.main.addon.MapboxGL
- * @extends Neo.core.Base
- * @singleton
+ * @extends Neo.main.addon.Base
  */
 class MapboxGL extends Base {
     static config = {
@@ -49,23 +48,6 @@ class MapboxGL extends Base {
          */
         mapsToCreate: [],
         /**
-         * @member {Boolean} scriptsLoaded_=true
-         * @protected
-         */
-        scriptsLoaded_: false,
-        /**
-         * @member {Boolean} singleton=true
-         * @protected
-         */
-        singleton: true,
-        /**
-         * Stores all map sources inside an object.
-         * key => map id, value => {Array} sources
-         * @member {Object} sources={}
-         * @protected
-         */
-        sources: {},
-        /**
          * Remote method access for other workers
          * @member {Object} remote
          * @protected
@@ -86,6 +68,19 @@ class MapboxGL extends Base {
                 'zoom'
             ]
         },
+        /**
+         * @member {Boolean} scriptsLoaded_=true
+         * @protected
+         * @reactive
+         */
+        scriptsLoaded_: false,
+        /**
+         * Stores all map sources inside an object.
+         * key => map id, value => {Array} sources
+         * @member {Object} sources={}
+         * @protected
+         */
+        sources: {},
         /**
          * Stores all map style objects inside an objects to prevent reloads when switching themes multiple times.
          * key => style name (url)
@@ -112,8 +107,7 @@ class MapboxGL extends Base {
      */
     construct(config) {
         super.construct(config);
-
-        this.insertMapboxGLScripts();
+        this.insertMapboxGLScripts()
     }
 
     /**
@@ -131,10 +125,10 @@ class MapboxGL extends Base {
                 beforeId = item.beforeId;
                 delete item.beforeId;
 
-                map.addLayer(item, beforeId);
-            });
+                map.addLayer(item, beforeId)
+            })
         } else {
-            me.layers[data.id] = Object.assign(me.layers[data.id] || {}, data);
+            me.layers[data.id] = Object.assign(me.layers[data.id] || {}, data)
         }
     }
 
@@ -153,10 +147,10 @@ class MapboxGL extends Base {
                 id = item.id;
                 delete item.id;
 
-                map.addSource(id, item);
-            });
+                map.addSource(id, item)
+            })
         } else {
-            me.sources[data.id] = Object.assign(me.sources[data.id] || {}, data);
+            me.sources[data.id] = Object.assign(me.sources[data.id] || {}, data)
         }
     }
 
@@ -174,7 +168,7 @@ class MapboxGL extends Base {
                 me.create(config);
             });
 
-            me.mapsToCreate = [];
+            me.mapsToCreate = []
         }
     }
 
@@ -185,14 +179,14 @@ class MapboxGL extends Base {
      */
     applyStyleObject(map, styleJson, name) {
         if (name) {
-            this.styleMap[name] = styleJson;
+            this.styleMap[name] = styleJson
         }
 
         styleJson.layers.forEach(layer => {
             Object.entries(layer.paint).forEach(([key, value]) => {
-                map.setPaintProperty(layer.id, key, value);
-            });
-        });
+                map.setPaintProperty(layer.id, key, value)
+            })
+        })
     }
 
     /**
@@ -203,9 +197,9 @@ class MapboxGL extends Base {
     autoResize(data) {
         let map = this.maps[data.id];
 
-        map && setTimeout(() => {
-            map.resize();
-        }, 100)
+        map && this.timeout(100).then(() => {
+            map.resize()
+        })
     }
 
     /**
@@ -221,9 +215,9 @@ class MapboxGL extends Base {
 
         if (map) {
             if (data.animate) {
-                map.flyTo({center: center});
+                map.flyTo({center})
             } else {
-                map.setCenter(center);
+                map.setCenter(center)
             }
         } else {
             // todo
@@ -246,7 +240,7 @@ class MapboxGL extends Base {
         let me = this;
 
         if (!me.scriptsLoaded) {
-            me.mapsToCreate.push(data);
+            me.mapsToCreate.push(data)
         } else {
             mapboxgl.accessToken = data.accessToken;
 
@@ -254,7 +248,7 @@ class MapboxGL extends Base {
 
             if (me.zoomMap[data.id]) {
                 zoom = me.zoomMap[data.id].zoom;
-                delete me.zoomMap[data.id];
+                delete me.zoomMap[data.id]
             }
 
             me.maps[data.id] = new mapboxgl.Map({
@@ -264,7 +258,7 @@ class MapboxGL extends Base {
                 zoom     : zoom
             });
 
-            me.maps[data.id].on('load', me.onMapLoaded.bind(me, data));
+            me.maps[data.id].on('load', me.onMapLoaded.bind(me, data))
         }
     }
 
@@ -274,7 +268,7 @@ class MapboxGL extends Base {
      */
     destroy(data) {
         this.maps[data.id].remove();
-        delete this.maps[data.id];
+        delete this.maps[data.id]
     }
 
     /**
@@ -282,7 +276,7 @@ class MapboxGL extends Base {
      * @returns {Boolean}
      */
     hasMap(id) {
-        return !!this.maps[id];
+        return !!this.maps[id]
     }
 
     insertMapboxGLScripts() {
@@ -293,8 +287,8 @@ class MapboxGL extends Base {
             DomAccess.loadScript(    basePath + 'mapbox-gl.js'),
             DomAccess.loadStylesheet(basePath + 'mapbox-gl.css')
         ]).then(() => {
-            me.scriptsLoaded = true;
-        });
+            me.scriptsLoaded = true
+        })
     }
 
     /**
@@ -310,29 +304,29 @@ class MapboxGL extends Base {
             me.addSources({
                 id     : data.id,
                 sources: data.sources
-            });
+            })
         } else if (me.sources[mapId]) {
             me.addSources(me.sources[mapId]);
-            delete me.sources[mapId];
+            delete me.sources[mapId]
         }
 
         if (data.layers) {
             me.addLayers({
                 id    : data.id,
                 layers: data.layers
-            });
+            })
         } else if (me.layers[mapId]) {
             me.addLayers(me.layers[mapId]);
-            delete me.layers[mapId];
+            delete me.layers[mapId]
         }
 
         // map.loaded() is false at this point,
         // in case we do add layers / sources
         // the "idle" event seems to be the best fit
         if (event.target.loaded()) {
-            me.onMapReallyLoaded(data, event);
+            me.onMapReallyLoaded(data, event)
         } else {
-            event.target.once('idle', me.onMapReallyLoaded.bind(me, data));
+            event.target.once('idle', me.onMapReallyLoaded.bind(me, data))
         }
     }
 
@@ -344,7 +338,7 @@ class MapboxGL extends Base {
     onMapReallyLoaded(data, event) {
         let me = this;
 
-        setTimeout(() => {
+        me.timeout(100).then(() => {
             if (data.data) {
                 me.updateData({
                     data        : data.data,
@@ -352,9 +346,9 @@ class MapboxGL extends Base {
                     id          : data.id
                 })
             } else if (me.dataMap[data.id]) {
-                me.updateData(me.dataMap[data.id]);
+                me.updateData(me.dataMap[data.id])
             }
-        }, 100);
+        })
     }
 
     /**
@@ -370,7 +364,7 @@ class MapboxGL extends Base {
         let map = this.maps[data.id];
 
         if (map) {
-            map.setFilter(data.layerId, data.value, data.options || {});
+            map.setFilter(data.layerId, data.value, data.options || {})
         } else {
             // todo: we could cache this and apply onMapLoaded
         }
@@ -390,7 +384,7 @@ class MapboxGL extends Base {
         let map = this.maps[data.id];
 
         if (map) {
-            map.setLayoutProperty(data.layerId, data.key, data.value, data.options || {});
+            map.setLayoutProperty(data.layerId, data.key, data.value, data.options || {})
         } else {
             // todo: we could cache this and apply onMapLoaded
         }
@@ -410,7 +404,7 @@ class MapboxGL extends Base {
         let map = this.maps[data.id];
 
         if (map) {
-            map.setPaintProperty(data.layerId, data.key, data.value, data.options || {});
+            map.setPaintProperty(data.layerId, data.key, data.value, data.options || {})
         } else {
             // todo: we could cache this and apply onMapLoaded
         }
@@ -430,11 +424,11 @@ class MapboxGL extends Base {
         } else {
             if (Neo.isString(data.style)) {
                 if (data.style.indexOf('mapbox://styles/') === 0) {
-                    data.style = data.style.substring(16);
+                    data.style = data.style.substring(16)
                 }
 
                 if (me.styleMap[data.style]) {
-                    me.applyStyleObject(me.maps[data.id], me.styleMap[data.style]);
+                    me.applyStyleObject(me.maps[data.id], me.styleMap[data.style])
                 } else {
                     fetch(`https://api.mapbox.com/styles/v1/${data.style}?access_token=${data.accessToken}`)
                         .then(response => response.json())
@@ -460,14 +454,14 @@ class MapboxGL extends Base {
         if (!me.scriptsLoaded || !me.hasMap(data.id)) {
             me.dataMap[data.id] = data;
         } else {
-            const map    = me.maps[data.id],
-                  source = map.getSource(data.dataSourceId);
+            let map    = me.maps[data.id],
+                source = map.getSource(data.dataSourceId);
 
             if (source) {
                 source.setData(data.data);
-                delete me.dataMap[data.id];
+                delete me.dataMap[data.id]
             } else {
-                me.dataMap[data.id] = data;
+                me.dataMap[data.id] = data
             }
         }
     }
@@ -481,13 +475,11 @@ class MapboxGL extends Base {
         let map = this.maps[data.id];
 
         if (map) {
-            map.setZoom(data.zoom);
+            map.setZoom(data.zoom)
         } else {
-            this.zoomMap[data.id] = data;
+            this.zoomMap[data.id] = data
         }
     }
 }
 
-let instance = Neo.applyClassConfig(MapboxGL);
-
-export default instance;
+export default Neo.setupClass(MapboxGL);

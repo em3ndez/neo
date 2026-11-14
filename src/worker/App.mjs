@@ -1,10 +1,15 @@
-import Neo             from '../Neo.mjs';
-import Base            from './Base.mjs';
-import * as core       from '../core/_export.mjs';
-import Application     from '../controller/Application.mjs';
-import Instance        from '../manager/Instance.mjs';
-import DomEventManager from '../manager/DomEvent.mjs';
-import HashHistory     from '../util/HashHistory.mjs';
+import Neo                 from '../Neo.mjs';
+import Base                from './Base.mjs';
+import CanvasGroups        from './CanvasGroups.mjs';
+import HiddenTick          from './HiddenTick.mjs';
+import Message             from './Message.mjs';
+import Application         from '../controller/Application.mjs';
+import InstanceManager     from '../manager/Instance.mjs';
+import DomEventManager     from '../manager/DomEvent.mjs';
+import FocusManager        from '../manager/Focus.mjs';
+import HashHistory         from '../util/HashHistory.mjs';
+import {getThemeNamespace} from '../util/Theme.mjs';
+import {generateUUID}     from '../util/UUID.mjs';
 
 /**
  * The App worker contains most parts of the framework as well as all apps which get created.
@@ -21,6 +26,19 @@ class App extends Base {
          */
         className: 'Neo.worker.App',
         /**
+         * @member {Number} countLoadingThemeFiles_=0
+         * @reactive
+         */
+        countLoadingThemeFiles_: 0,
+        /**
+         * Using the shared UUID helper to keep worker identifiers available on insecure HTTP origins.
+         * This is especially important for the neural link, where multiple App workers can connect.
+         * @member {String} id=generateUUID()
+         * @protected
+         * @reactive
+         */
+        id: generateUUID(),
+        /**
          * Remote method access for other workers
          * @member {Object} remote
          * @protected
@@ -29,31 +47,27 @@ class App extends Base {
             main: [
                 'createNeoInstance',
                 'destroyNeoInstance',
-                'setConfigs'
+                'fireEvent',
+                'getConfigs',
+                'getWorkerId',
+                'loadModule',
+                'moveComponent',
+                'setConfigs',
+                'setGlobalConfig' // points to worker.Base: setGlobalConfig()
             ]
         },
         /**
          * @member {Boolean} singleton=true
          * @protected
          */
-        singleton: true,
-        /**
-         * @member {String} workerId='app'
-         * @protected
-         */
-        workerId: 'app'
+        singleton: true
     }
 
     /**
-     * @member {Object|null} data=null
+     * @member {Object} rpcStreamCallbacks={}
      * @protected
      */
-    data = null
-    /**
-     * @member {Boolean} isUsingViewModels=false
-     * @protected
-     */
-    isUsingViewModels = false
+    rpcStreamCallbacks = {}
     /**
      * We are storing the params of insertThemeFiles() calls here, in case the method does get triggered
      * before the json theme structure got loaded.
@@ -61,6 +75,17 @@ class App extends Base {
      * @protected
      */
     themeFilesCache = []
+    /**
+     * Ensures we only fetch the theme-map once per worker.
+     * @member {Boolean} themeMapFetchStarted=false
+     * @protected
+     */
+    themeMapFetchStarted = false
+    /**
+     * @member {String} workerId='app'
+     * @protected
+     */
+    workerId = 'app'
 
     /**
      * @param {Object} config
@@ -70,32 +95,72 @@ class App extends Base {
 
         let me = this;
 
+        Neo.apps       ??= {};
+        Neo.appsByName ??= {};
+
         // convenience shortcuts
         Neo.applyDeltas    = me.applyDeltas   .bind(me);
-        Neo.setCssVariable = me.setCssVariable.bind(me)
+        Neo.setCssVariable = me.setCssVariable.bind(me);
+
+        me.canvasGroups = Neo.create(CanvasGroups, {isDeparted: windowId => me.isWindowDeparted(windowId)});
+        me.hiddenTick   = Neo.create(HiddenTick,   {worker: me})
     }
 
     /**
-     * @param {String} appName
+     * Triggered after the countLoadingThemeFiles config got changed
+     * @param {Number} value
+     * @param {Number} oldValue
+     * @protected
+     */
+    afterSetCountLoadingThemeFiles(value, oldValue) {
+        if (value === 0 && oldValue !== undefined) {
+            this.fire('themeFilesLoaded')
+        }
+    }
+
+    /**
+     * @param {String} windowId
      * @param {Array|Object} deltas
      * @returns {Promise<*>}
      */
-    applyDeltas(appName, deltas) {
-         return this.promiseMessage('main', {action: 'updateDom', appName, deltas})
+    applyDeltas(windowId, deltas) {
+        if (!Array.isArray(deltas)) {
+            deltas = [deltas]
+        }
+
+        return this.promiseMessage(windowId, {action: 'updateVdom', deltas})
+    }
+
+    /**
+     * @summary Addresses a reply like the base, and to the canvas group whose channel carried the request: a canvas
+     * worker's own requests name no window, so only their channel tells the groups apart.
+     * @param {Object} source The request
+     * @param {Object} target The reply options
+     */
+    assignPort(source, target) {
+        super.assignPort(source, target);
+
+        if (source?.canvasGroup) {
+            target.canvasGroup = source.canvasGroup
+        }
     }
 
     /**
      * Remote method to use inside main threads for creating neo based class instances.
      * Be aware that you can only pass configs which can get converted into pure JSON.
      *
-     * Rendering a component into the document.body
+     * @warning This provides legacy testing support for environments where Neural Link
+     * is not available (e.g. React wrappers). For native Neo.mjs E2E testing,
+     * use the Neural Link Bridge instead.
+     *
+     * Mounting a component into the document.body
      * @example:
      *     Neo.worker.App.createNeoInstance({
-     *         ntype     : 'button',
-     *         autoMount : true,
-     *         autoRender: true
-     *         text      : 'Hi Nige!'
-     *     }).then(id => console.log(id))
+     *         ntype        : 'button',
+     *         autoInitVnode: true,
+     *         autoMount    : true,
+     *         text         : 'Hi Nige!'
+     *     }).then(result => console.log(result.id))
      *
      * Inserting a component into a container
      * @example:
@@ -104,40 +169,55 @@ class App extends Base {
      *         parentId   : 'neo-container-3',
      *         parentIndex: 0
      *         text       : 'Hi Nige!'
-     *     }).then(id => console.log(id))
+     *     }).then(result => console.log(result.id))
      *
      * @param {Object} config
+     * @param {String} [config.importPath] you can lazy load missing classes via this config. dev mode only.
      * @param {String} [config.parentId] passing a parentId will put your instance into a container
      * @param {Number} [config.parentIndex] if a parentId is passed, but no index, neo will use add()
-     * @returns {String} the instance id
+     * @returns {Object}
      */
-    createNeoInstance(config) {
-        let appName   = Object.keys(Neo.apps)[0], // fallback in case no appName was provided
-            Container = Neo.container?.Base,
-            index, instance, parent;
-
-        config = {appName: appName, ...config};
-
-        if (config.parentId) {
-            parent = Neo.getComponent(config.parentId);
-
-            if (Container && parent && parent instanceof Container) {
-                index = config.parentIndex;
-
-                delete config.parentId;
-                delete config.parentIndex;
-
-                if (Neo.isNumber(index)) {
-                    instance = parent.insert(index, config)
-                } else {
-                    instance = parent.add(config)
-                }
+    async createNeoInstance(config) {
+        try {
+            if (config.importPath) {
+                await import(/* webpackIgnore: true */ config.importPath);
+                delete config.importPath
             }
-        } else {
-            instance = Neo[config.ntype ? 'ntype' : 'create'](config)
-        }
 
-        return instance.id
+            let appName = Object.values(Neo.apps)[0]?.name, // fallback in case no appName was provided
+                Container = Neo.container?.Base,
+                index, instance, parent;
+
+            config = {appName, ...config};
+
+            if (config.parentId) {
+                parent = Neo.getComponent(config.parentId);
+
+                if (Container && parent && parent instanceof Container) {
+                    index = config.parentIndex;
+
+                    delete config.parentId;
+                    delete config.parentIndex;
+
+                    if (Neo.isNumber(index)) {
+                        instance = parent.insert(index, config)
+                    } else {
+                        instance = parent.add(config)
+                    }
+                }
+            } else {
+                // default parentId='document.body' => we want it to get shown
+                config.autoInitVnode = true;
+                config.autoMount     = true;
+
+                instance = Neo[config.ntype ? 'ntype' : 'create'](config)
+            }
+
+            return {success: true, id: instance.id}
+        } catch (error) {
+            console.error('Error in createNeoInstance:', error);
+            return {success: false, error: {className: error.name, message: error.message, stack: error.stack}}
+        }
     }
 
     /**
@@ -146,33 +226,86 @@ class App extends Base {
     createThemeMap(data) {
         Neo.ns('Neo.cssMap.fileInfo', true);
         Neo.cssMap.fileInfo = data;
+
+        let {config} = Neo;
+
+        if (config.useSSR && config.cssMap) {
+            Object.assign(Neo.cssMap, config.cssMap);
+            delete config.cssMap
+        }
+
         this.resolveThemeFilesCache()
+    }
+
+    /**
+     * Destroys the instances construct() created
+     */
+    destroy() {
+        let me = this;
+
+        me.canvasGroups?.destroy();
+        me.hiddenTick?.destroy();
+
+        super.destroy()
     }
 
     /**
      * Remote method to use inside main threads for destroying neo based class instances.
      *
+     * @warning This provides legacy testing support for environments where Neural Link
+     * is not available (e.g. React wrappers). For native Neo.mjs E2E testing,
+     * use the Neural Link Bridge instead.
+     *
      * @example:
-     *     Neo.worker.App.destroyNeoInstance('neo-button-3').then(success => console.log(success))
+     *     Neo.worker.App.destroyNeoInstance('neo-button-3').then(result => console.log(result.success))
      *
      * @param {String} id
-     * @returns {Boolean} returns true, in case the instance was found
+     * @returns {Object} returns true, in case the instance was found
      */
     destroyNeoInstance(id) {
-        let instance = Neo.get(id),
-            parent;
+        try {
+            let instance = Neo.get(id),
+                parent;
 
-        if (instance) {
-            if (instance.parentId) {
-                parent = Neo.getComponent(instance.parentId);
+            if (instance) {
+                if (instance.parentId) {
+                    parent = Neo.getComponent(instance.parentId);
 
-                if (parent) {
-                    parent.remove(instance);
-                    return true
+                    if (parent) {
+                        parent.remove(instance);
+                        return {success: true}
+                    }
                 }
+
+                instance.destroy(true, true);
+                return {success: true}
             }
 
-            instance.destroy(true, true);
+            return {success: false, error: {message: `Instance with id ${id} not found`}};
+        } catch (error) {
+            console.error(`Error in destroyNeoInstance for id: ${id}`, error);
+            return {success: false, error: {className: error.name, message: error.message, stack: error.stack}}
+        }
+    }
+
+    /**
+     * Fires a custom event based on core.Observable on any app realm based Neo instance from main
+     * @param {Object} data
+     * @param {String} data.id
+     * @param {String} data.name
+     */
+    fireEvent(data) {
+        let instance = Neo.get(data.id),
+            name;
+
+        if (instance) {
+            name = data.name;
+
+            delete data.id;
+            delete data.name;
+
+            instance.fire(name, data);
+
             return true
         }
 
@@ -186,8 +319,100 @@ class App extends Base {
      */
     fireMainViewsEvent(eventName, data) {
         this.ports.forEach(port => {
-            Neo.apps[port.appName].mainViewInstance.fire(eventName, data)
+            if (port.windowId && Neo.apps[port.windowId]) {
+                Neo.apps[port.windowId].mainView.fire(eventName, data)
+            }
         })
+    }
+
+    /**
+     * Cache to track which main thread addons have been instructed to load per window.
+     * @member {Object} windowAddons={}
+     * @protected
+     */
+    windowAddons = {}
+
+    /**
+     * Created in construct(); synced by onConnect() and onVisibilityChange()
+     * @member {Neo.worker.HiddenTick|null} hiddenTick=null
+     */
+    hiddenTick = null
+    /**
+     * Created in construct(); routes canvas-bound traffic per window group and gates it on the group's readiness
+     * @member {Neo.worker.CanvasGroups|null} canvasGroups=null
+     */
+    canvasGroups = null
+
+    /**
+     * Convenience shortcut to lazy-load main thread addons, in case they are not imported yet
+     * @param {String} name
+     * @param {String} windowId
+     * @returns {Promise<Neo.main.addon.Base>} The namespace of the addon to use via remote method access
+     */
+    async getAddon(name, windowId) {
+        let me = this;
+
+        me.windowAddons[windowId] ??= {};
+
+        // If we already instructed this specific window to load the addon, we can return the global proxy.
+        if (me.windowAddons[windowId][name]) {
+            return Neo.main?.addon?.[name];
+        }
+
+        // We must forcefully import the addon on the target window thread if it's the first time
+        // this specific window is requesting it via RMA, because the newly spawned windows
+        // might not have it loaded in their main.js bundle native configuration.
+        await Neo.Main.importAddon({name, windowId});
+
+        me.windowAddons[windowId][name] = true;
+
+        return Neo.main.addon[name]
+    }
+
+    /**
+     * Get configs of any app realm based Neo instance from main
+     *
+     * @warning This provides legacy testing support for environments where Neural Link
+     * is not available (e.g. React wrappers). For native Neo.mjs E2E testing,
+     * use the Neural Link Bridge instead.
+     *
+     * @param {Object} data
+     * @param {String} data.id
+     * @param {String|String[]} data.keys
+     * Returns an array of configs if a keys array was passed.
+     * Returns the value of a given config directly, in case no array was passed
+     * Returns false, in case no instance got found.
+     * @returns {*}
+     */
+    getConfigs(data) {
+        let instance    = Neo.get(data.id),
+            {keys}      = data,
+            returnArray = [];
+
+        if (instance) {
+            if (!Array.isArray(keys)) {
+                return instance[keys]
+            }
+
+            keys.forEach(key => {
+                returnArray.push(instance[key])
+            });
+
+            return returnArray
+        }
+
+        return false
+    }
+
+    /**
+     * Remote method for main threads: returns this App Worker's unique id — the same value the
+     * Neural Link bridge keys its sessions by (`appWorkerId`). Lets a page (e.g. the Playwright
+     * `neuralLink` fixture) identity-bind to its OWN worker session instead of resolving by
+     * appName, which mis-binds whenever another same-named app is connected to the bridge.
+     * @returns {String}
+     */
+    getWorkerId() {
+        return this.id
     }
 
     /**
@@ -200,67 +425,247 @@ class App extends Base {
         }
 
         return import(
-            /* webpackInclude: /[\\\/]app.mjs$/ */
-            /* webpackExclude: /[\\\/]node_modules/ */
+            /* webpackInclude: /(?:(?:apps|docs\/app|examples|src)\/.*|docs\/)app\.mjs$/ */
+            /* webpackExclude: /(?:\/|\\)(buildScripts|dist|node_modules(?:\/|\\)(?!neo\.mjs)|ai(?:\/|\\)|\.claude(?:\/|\\)|server\.mjs|test(?:\/|\\)|System Volume Information|\$RECYCLE\.BIN)/ */
             /* webpackMode: "lazy" */
             `../../${path}.mjs`
         )
     }
 
     /**
-     * In case you don't want to include prototype based CSS files, use the className param instead
-     * @param {String} appName
+     * In case you don't want to include prototype based CSS files, use the className param instead.
+     * Each file sent counts in `countLoadingThemeFiles` until its reply settles, resolved or rejected: a window that
+     * departs mid-load rejects it, and a count left up would hold every window's vdom work.
+     * @param {String} windowId
      * @param {Neo.core.Base} [proto]
      * @param {String} [className]
      */
-    insertThemeFiles(appName, proto, className) {
-        if (Neo.config.themes.length > 0) {
+    insertThemeFiles(windowId, proto, className) {
+        let appConfig = Neo.windowConfigs?.[windowId] || Neo.config;
+
+        if (appConfig.themes?.length > 0) {
             className = className || proto.className;
 
-            let me       = this,
-                lAppName = appName.toLowerCase(),
-                cssMap   = Neo.cssMap,
-                parent   = proto?.__proto__,
+            let me     = this,
+                cssMap = Neo.cssMap,
+                parent = proto?.__proto__,
                 classPath, classRoot, fileName, mapClassName, ns, themeFolders;
 
             if (!cssMap) {
-                me.themeFilesCache.push([appName, proto])
+                me.themeFilesCache.push([windowId, proto, className])
             } else {
                 // we need to modify app related class names
                 if (!className.startsWith('Neo.')) {
-                    className = className.split('.');
-                    classRoot = className.shift().toLowerCase();
-
-                    className[0] === 'view' && className.shift();
-
-                    mapClassName = `apps.${Neo.apps[appName].appThemeFolder || classRoot}.${className.join('.')}`;
-                    className    = `apps.${lAppName}.${className.join('.')}`
+                    classRoot    = className.split('.')[0];
+                    mapClassName = getThemeNamespace(className, Neo.appsByName[classRoot]?.[0]?.appThemeFolder);
+                    className    = getThemeNamespace(className)
                 }
 
+                proto?.additionalThemeFiles?.forEach(ns => {
+                    me.insertThemeFiles(windowId, null, ns)
+                });
+
                 if (parent && parent !== Neo.core.Base.prototype) {
-                    if (!Neo.ns(`${lAppName}.${parent.className}`, false, cssMap)) {
-                        me.insertThemeFiles(appName, parent)
+                    if (!Neo.ns(`${windowId}.${parent.className}`, false, cssMap)) {
+                        me.insertThemeFiles(windowId, parent)
                     }
                 }
 
                 themeFolders = Neo.ns(mapClassName || className, false, cssMap.fileInfo);
 
-                if (themeFolders && !Neo.ns(`${lAppName}.${className}`, false, cssMap)) {
+                if (themeFolders && !Neo.ns(`${windowId}.${className}`, false, cssMap)) {
                     classPath = className.split('.');
                     fileName  = classPath.pop();
                     classPath = classPath.join('.');
-                    ns        = Neo.ns(`${lAppName}.${classPath}`, true, cssMap);
+                    ns        = Neo.ns(`${windowId}.${classPath}`, true, cssMap);
 
                     ns[fileName] = true;
 
+                    me.countLoadingThemeFiles++;
+
                     Neo.main.addon.Stylesheet.addThemeFiles({
-                        appName,
                         className: mapClassName || className,
-                        folders  : themeFolders
+                        folders  : themeFolders,
+                        windowId
+                    }).finally(() => {
+                        me.countLoadingThemeFiles--
                     })
                 }
             }
         }
+    }
+
+    /**
+     * @summary Remotely loads an ES module into the App Worker.
+     * @warning For component testing via Playwright ONLY. Do NOT use this in application code.
+     * This method relies on dynamic imports that are ignored by webpack and will fail in production builds.
+     * @param {Object} data
+     * @param {String} data.path The path to the module to load (e.g., '../../src/button/Base.mjs').
+     * @returns {Promise<Object>} A promise which resolves to an object like {success: true, path}
+     */
+    async loadModule({path}) {
+        try {
+            await import(/* webpackIgnore: true */ path);
+            return {success: true, path};
+        } catch (error) {
+            console.error(`Failed to load module via RMA: ${path}`, error);
+            return {success: false, path, error};
+        }
+    }
+
+    /**
+     * Moves a component to a new parent container via remote method access.
+     * This operation is **atomic** and state-preserving when moving within the same browser window.
+     * It relies on `Neo.container.Base.insert` to handle the silent removal from the old parent,
+     * ensuring that the DOM node is physically moved rather than destroyed and recreated.
+     *
+     * @warning This provides legacy testing support for environments where Neural Link
+     * is not available (e.g. React wrappers). For native Neo.mjs E2E testing,
+     * use the Neural Link Bridge instead.
+     *
+     * @param {Object} data
+     * @param {String} data.id The id of the component to move.
+     * @param {String} data.parentId The id of the new parent container.
+     * @param {Number} [data.index] The index to insert the component at.
+     * @returns {Object} {success: true} or {success: false, error: ...}
+     */
+    moveComponent(data) {
+        try {
+            let component = Neo.getComponent(data.id),
+                parent    = Neo.getComponent(data.parentId),
+                index     = data.index;
+
+            if (!component) {
+                throw new Error(`Component with id ${data.id} not found`);
+            }
+            if (!parent) {
+                throw new Error(`Parent container with id ${data.parentId} not found`);
+            }
+            if (!parent.isContainer) {
+                throw new Error(`Parent with id ${data.parentId} is not a Container`);
+            }
+
+            if (Neo.isNumber(index)) {
+                parent.insert(index, component);
+            } else {
+                parent.add(component);
+            }
+
+            return {success: true};
+        } catch (error) {
+            console.error('Error in moveComponent:', error);
+            return {success: false, error: {className: error.name, message: error.message, stack: error.stack}};
+        }
+    }
+
+    /**
+     * @summary Receives the ping from the Canvas Worker confirming a direct canvas transfer.
+     *
+     * This method resolves the promise created in `Neo.component.Canvas#afterSetMounted`.
+     * It is the final step in the "Triangular Communication" pattern where the Main Thread sends the
+     * `OffscreenCanvas` directly to the Canvas Worker, bypassing the App Worker's standard message payload,
+     * to avoid transfer restrictions in Firefox SharedWorkers.
+     *
+     * @param {Object} msg
+     * @param {String} msg.componentId
+     * @param {String} msg.nodeId
+     * @protected
+     */
+    onCanvasRegistered({componentId, nodeId}) {
+        let instance = Neo.get(componentId);
+
+        if (instance?.registerCanvasCallbacks?.[nodeId]) {
+            instance.registerCanvasCallbacks[nodeId]();
+            delete instance.registerCanvasCallbacks[nodeId]
+        }
+    }
+
+    /**
+     * @summary Handles one message from a canvas group's own channel, stamped with that group so its reply takes the
+     * same channel back, then marks the group ready once its `Neo.worker.Canvas` remotes have registered over this
+     * channel: a registered port alone is not readiness, since the worker's `registerRemote` follows its `registerPort`.
+     * @param {MessageEvent} event
+     * @param {String}       group
+     * @param {MessagePort}  channel The channel that delivered the message
+     * @protected
+     */
+    onCanvasChannelMessage(event, group, channel) {
+        let {data} = event;
+
+        if (data) {
+            data.canvasGroup = group
+        }
+
+        this.onMessage(event);
+
+        data?.action === 'registerRemote' && data.className === 'Neo.worker.Canvas' && this.canvasGroups.markReady(group, channel)
+    }
+
+    /**
+     * @summary A window's main thread saw its canvas worker fail to load or parse: that group's waits reject now
+     * instead of running into the silent-start bound.
+     * @param {Object} msg
+     * @param {String} msg.group
+     * @protected
+     */
+    onCanvasStartFailed({group}) {
+        this.canvasGroups.fail(group, 'load')
+    }
+
+    /**
+     * @param {Object} data
+     * @param {String} data.appName
+     * @param {Object} [data.sourcePort]
+     * @param {String} data.windowId
+     */
+    async onConnect(data) {
+        let me = this;
+
+        if (this.aiClientPromise) {
+            await this.aiClientPromise
+        }
+
+        // short delay to ensure app VCs are in place
+        await this.timeout(10);
+
+        let {appName, sourcePort, windowId} = data,
+            windowData;
+
+        if (!me.isCurrentPort(sourcePort, {appName, windowId})) {
+            return
+        }
+
+        try {
+            windowData = await Neo.Main.getWindowData({windowId})
+        } catch (e) {
+            e?.name === 'PortDisconnectedError' || console.error('onConnect: getWindowData failed', e)
+        }
+
+        if (!me.isCurrentPort(sourcePort, {appName, windowId})) {
+            return
+        }
+
+        windowData && me.hiddenTick.sync({hidden: windowData.hidden, windowId});
+
+        me.fire('connect', {appName, windowData, windowId})
+    }
+
+    /**
+     * @summary Disconnects as the base does, then reaps what the departed window leaves behind (see
+     * {@link #reapWindow}) once every `disconnect` listener had its turn.
+     *
+     * A window is a render target, never a state owner. An owner keeps a component by moving it out of the departed
+     * tree inside its `disconnect` listener, synchronously or in microtasks; the reap runs in the next task, after
+     * every listener and its microtask chain. Only a SharedWorker outlives a window, so only it reaps.
+     * @param {Object} data
+     * @param {String} [data.appName]
+     * @param {String} data.windowId
+     * @param {Object} [sourcePort]
+     */
+    onDisconnect(data, sourcePort) {
+        super.onDisconnect(data, sourcePort);
+
+        this.isSharedWorker && this.timeout(0).then(() => this.reapWindow(data.windowId))
     }
 
     /**
@@ -284,94 +689,334 @@ class App extends Base {
      * @param {Object} data
      */
     onLoadApplication(data) {
-        let me     = this,
-            config = Neo.config,
-            app, path;
+        let me        = this,
+            {config}  = Neo,
+            windowId  = data.windowId,
+            appConfig = Neo.windowConfigs[windowId] || config,
+            appPath   = appConfig.appPath;
 
-        if (data) {
-            me.data = data;
-            config.resourcesPath = data.resourcesPath
+        if (appConfig.environment !== 'development') {
+            appPath = appPath.startsWith('/') ? appPath.substring(1) : appPath
         }
 
-        path = me.data.path;
-
-        if (config.environment !== 'development') {
-            path = path.startsWith('/') ? path.substring(1) : path
-        }
-
-        me.importApp(path).then(module => {
-            app = module.onStart();
+        me.importApp(appPath).then(module => {
+            Neo.bootingWindowId = windowId;
+            module.onStart();
+            delete Neo.bootingWindowId;
 
             // short delay to ensure Component Controllers are ready
-            config.hash && setTimeout(() => HashHistory.push(config.hash), 5)
+            config.hash && me.timeout(5).then(() => {
+                HashHistory.push(config.hash);
+                // apps which will get created later must not use outdated hash values
+                delete config.hash
+            })
         })
     }
 
     /**
-     * @param {Object} msg
+     * @param {Object}  msg
+     * @param {Object}  msg.data
+     * @param {Boolean} msg.data.angle
+     * @param {Boolean} msg.data.layout landscape|portrait
+     * @param {String}  msg.data.type landscape-primary|landscape-secondary|portrait-primary|portrait-secondary
+     * @param {String}  msg.windowId
      */
-    onRegisterNeoConfig(msg) {
-        super.onRegisterNeoConfig(msg);
+    onOrientationChange(msg) {
+        Neo.apps[msg.windowId]?.fire('orientationchange', msg.data)
+    }
 
-        let config = Neo.config,
-            url    = 'resources/theme-map.json';
+    /**
+     * @param {Object} msg
+     * @param {Object} msg.data
+     * @param {String} msg.id The origin pipeline ID
+     */
+    onPipelinePush(msg) {
+        Neo.manager.Instance.get(msg.id)?.fire('push', msg.data)
+    }
 
-        if (config.environment === 'development') {
-            url = `../../${url}`
+    /**
+     * @summary Delivers Data-worker progressive rows, progress and push failures to the App Pipeline.
+     * @param {Object} msg
+     * @param {String} msg.id The origin Pipeline ID.
+     * @param {String} msg.event 'data', 'progress' or 'error'.
+     * @param {*} msg.data
+     */
+    onPipelineEvent(msg) {
+        if (['data', 'progress', 'error'].includes(msg.event)) {
+            Neo.manager.Instance.get(msg.id)?.fire(msg.event, msg.data)
+        }
+    }
+
+    /**
+     * @summary Delivers a separate Pipeline observation without changing its data or push payloads.
+     * @param {Object} msg
+     * @param {String} msg.id The App-side Pipeline ID.
+     * @param {Object} msg.data Metric-only stage observation.
+     */
+    onPipelineTelemetry(msg) {
+        Neo.manager.Instance.get(msg.id)?.publishTelemetry(msg.data)
+    }
+
+    /**
+     * @param {Object} msg
+     * @param {Object} [sourcePort]
+     */
+    onRegisterNeoConfig(msg, sourcePort) {
+        super.onRegisterNeoConfig(msg, sourcePort);
+
+        if (Neo.config.useSharedWorkers) {
+            import('../manager/Window.mjs')
         }
 
-        if (config.workerBasePath?.includes('node_modules')) {
-            url = `../../${url}`
+        let me       = this,
+            {config} = Neo,
+            {data}   = msg,
+            url      = 'resources/theme-map.json';
+
+        Neo.windowConfigs = Neo.windowConfigs || {};
+
+        Neo.windowConfigs[data.windowId] = Neo.clone(data, true);
+
+        if (!me.themeMapFetchStarted) {
+            me.themeMapFetchStarted = true;
+
+            if (config.environment === 'development' || config.environment === 'dist/esm') {
+                url = `../../${url}`
+            }
+
+            if (config.workerBasePath?.includes('node_modules')) {
+                url = `../../${url}`
+            }
+
+            if (url[0] !== '.') {
+                url = `./${url}`
+            }
+
+            fetch(url)
+                .then(response => response.json())
+                .then(data => {me.createThemeMap(data)});
         }
 
-        if (url[0] !== '.') {
-            url = `./${url}`
+        config.remotesApiUrl && import('../remotes/Api.mjs');
+
+        const aiClientBoot = me.resolveAiClientBoot(config);
+
+        if (aiClientBoot) {
+            me.aiClientPromise = import('../ai/Client.mjs').then(({default: client}) => {
+                aiClientBoot === 'transport' && client.connect()
+            })
         }
 
-        fetch(url)
-            .then(response => response.json())
-            .then(data => {this.createThemeMap(data)});
-
-        config.remotesApiUrl  && import('../remotes/Api.mjs').then(module => module.default.load());
         !config.useVdomWorker && import('../vdom/Helper.mjs')
     }
 
     /**
+     * @summary A window's main thread announces which canvas group its canvas worker belongs to, before that worker
+     * exists, so canvas-bound traffic from this window can be routed to its own group.
      * @param {Object} msg
+     * @param {String} msg.group
+     * @param {String} msg.windowId
+     * @protected
+     */
+    onRegisterCanvasGroup({group, windowId}) {
+        this.canvasGroups.addWindow({group, windowId})
+    }
+
+    /**
+     * @summary Keeps a worker's direct channel. A canvas worker's channel is kept per group — one canvas worker per
+     * window group — and every message on it is attributed to that group; other workers keep one channel each.
+     * @param {Object}      msg
+     * @param {String}      [msg.canvasGroup] Set when the registration arrived over that canvas group's own channel
+     * @param {String}      [msg.group]       The canvas group, for a canvas worker named per group
+     * @param {String}      msg.origin
+     * @param {MessagePort} msg.transfer
      */
     onRegisterPort(msg) {
-        let me   = this,
-            port = msg.transfer;
+        let me              = this,
+            {group, origin} = msg,
+            port            = msg.transfer;
+
+        if (origin === 'canvas' && group) {
+            port.onmessage = event => me.onCanvasChannelMessage(event, group, port);
+            me.canvasGroups.setPort({group, handover: msg.canvasGroup === group, port});
+            return
+        }
 
         port.onmessage = me.onMessage.bind(me);
 
-        me.channelPorts[msg.origin] = port
+        me.channelPorts[origin] = port
+    }
+
+    /**
+     * @param {Object} msg
+     * @param {String} msg.callbackId
+     * @param {Object} msg.data
+     */
+    onRpcStreamData(msg) {
+        let callback = this.rpcStreamCallbacks?.[msg.callbackId];
+
+        if (typeof callback === 'function') {
+            callback(msg.data)
+        }
+    }
+
+    /**
+     * Reported twice: the window's app fires `visibilitychange`, and this worker fires `visibilityChange` for listeners
+     * that serve every window, like {@link Neo.ai.Client}.
+     * @param {Object}  msg
+     * @param {Object}  msg.data
+     * @param {Boolean} msg.data.hidden
+     * @param {String}  msg.data.visibilityState
+     * @param {Number}  msg.data.windowId
+     */
+    onVisibilityChange(msg) {
+        let me = this;
+
+        me.hiddenTick.sync(msg.data);
+        Neo.apps[msg.data.windowId]?.fire('visibilitychange', msg.data);
+        me.fire('visibilityChange', msg.data)
+    }
+
+    /**
+     * @summary Reports completed document font loads to window-scoped measurement consumers.
+     * @param {Object} msg
+     * @param {Object} msg.data
+     * @param {String} msg.data.windowId
+     */
+    onFontChange(msg) {
+        this.fire('fontChange', msg.data)
+    }
+
+    /**
+     * A window of this worker regained focus, reported as the `windowFocus` event
+     * @param {Object} msg
+     * @param {Object} msg.data
+     * @param {String} msg.data.windowId
+     */
+    onWindowFocus(msg) {
+        this.fire('windowFocus', msg.data)
     }
 
     /**
      * @param {Object} data
+     * @param {Object} data.data
+     * @param {Object} [sourcePort]
      */
-    onWindowPositionChange(data) {
-        this.fireMainViewsEvent('windowPositionChange', data.data)
+    onWindowPositionChange({data}, sourcePort) {
+        if (!this.isCurrentPort(sourcePort, {windowId: data.windowId})) {
+            return
+        }
+
+        // Only available in shared workers
+        Neo.manager.Window?.onWindowPositionChange(data);
+        Neo.manager.DragCoordinator?.onWindowPositionChange(data);
+
+        this.fireMainViewsEvent('windowPositionChange', data)
     }
 
     /**
-     * Only needed for SharedWorkers
-     * @param {String} appName
+     * @summary Destroys the apps a window no longer hosts and, once the window left, its own state.
+     *
+     * An app stays hosted while a port of its window still lists its name, so a disconnect the base refused — a stale
+     * port, a window without one — reaps nothing.
+     * @param {String} windowId
+     * @protected
      */
-    registerApp(appName) {
+    reapWindow(windowId) {
+        let me    = this,
+            ports = me.ports.filter(port => port.windowId === windowId);
+
+        Object.values(Neo.appsByName).flat().forEach(app => {
+            if (app.windowId === windowId && !app.isDestroyed && !ports.some(port => me.hasPortApp(port, app.name))) {
+                app.destroy()
+            }
+        });
+
+        if (ports.length === 0) {
+            delete Neo.cssMap?.[windowId];
+            delete Neo.windowConfigs?.[windowId];
+            delete me.windowAddons[windowId];
+            me.hiddenTick.stop(windowId)
+        }
+    }
+
+    /**
+     * An Application instance announces itself for its window. The port bookkeeping matters only for
+     * SharedWorkers; the topology admission runs for both worker types — this is the first moment the
+     * window has a live app, and the window's config carries the identity its carrier presented. The
+     * manager is loaded by the first multi-window participant, never here: an app that loaded none is
+     * admitted by the manager's own sweep the moment one does. The app module imports asynchronously, so a
+     * SharedWorker can see the registration after the window's port retired: that window is gone, and its app
+     * registers nothing — a binding admitted for it would hold its slot with no disconnect left to release it.
+     * The `appRegistered` event closes the registration: only a SharedWorker port fires `connect`, so it is the
+     * one moment a non-SharedWorker app announces its window.
+     * @param {String} appName
+     * @param {String} windowId
+     * @fires appRegistered
+     */
+    registerApp(appName, windowId) {
+        let me   = this,
+            port = me.getPort({windowId});
+
+        if (me.isSharedWorker && !port) {
+            return
+        }
+
         // register the name as fast as possible
-        this.onRegisterApp({ appName });
-        this.sendMessage('main', {action: 'registerAppName', appName})
+        me.onRegisterApp({appName}, port);
+        Neo.manager.Transaction?.admit({topologyIdentity: Neo.windowConfigs?.[windowId]?.topologyIdentity, windowId});
+        me.sendMessage(windowId, {action: 'registerAppName', appName});
+        me.fire('appRegistered', {appName, windowId})
     }
 
     /**
-     * Unregister the app from the CSS map
-     * Only needed for SharedWorkers
-     * @param {String} appName
+     * @summary Retires a port as the base does, and with it the canvas waits that exact port admitted. When it was the
+     * window's last port, that window leaves its canvas group too, so only its own canvas waits reject — as its
+     * departure — and a sibling keeps waiting. Its focus history and pending leave retire at this same boundary,
+     * before disconnect listeners can rescue a component into a different window.
+     * @param {Object} portEntry
+     * @returns {Boolean} True when the entry was live and removed
      */
-    removeAppFromThemeMap(appName) {
-        delete Neo.cssMap[appName.toLowerCase()]
+    removePort(portEntry) {
+        let me         = this,
+            removed    = super.removePort(portEntry),
+            {windowId} = portEntry;
+
+        if (removed) {
+            me.canvasGroups.retirePort(portEntry);
+
+            if (windowId && !me.ports.some(entry => entry.windowId === windowId)) {
+                me.canvasGroups.removeWindow(windowId);
+                FocusManager.removeWindow(windowId)
+            }
+        }
+
+        return removed
+    }
+
+    /**
+     * @summary How a boot hosts the Neural Link client. `allowAiClientInTests` boots the registry without transport;
+     * otherwise `useAiClient` keeps its three forms (`true`, an environment array, an environment name). Never on
+     * GitHub Pages.
+     * @param {Object} config The realm's `Neo.config`
+     * @returns {'registry'|'transport'|null} `null` when the boot loads no client
+     */
+    resolveAiClientBoot({allowAiClientInTests, environment, isGitHubPages, useAiClient}) {
+        if (isGitHubPages) {
+            return null
+        }
+
+        if (allowAiClientInTests) {
+            return 'registry'
+        }
+
+        if (useAiClient === true ||
+            Array.isArray(useAiClient) && useAiClient.includes(environment) ||
+            typeof useAiClient === 'string' && useAiClient === environment) {
+            return 'transport'
+        }
+
+        return null
     }
 
     /**
@@ -388,21 +1033,62 @@ class App extends Base {
     }
 
     /**
-     * Set configs of any app realm based Neo instance from main
-     * @param {Object} data
-     * @param {String} data.id
+     * @summary Sends like the base, except that canvas-bound traffic resolves `windowId` → group → that group's own
+     * channel, and a reply takes the channel its request arrived on. It never falls back to another group's canvas
+     * worker, which would paint into a canvas owned by a different renderer process; an unroutable message is not
+     * sent, and `promiseMessage()` reports it. A canvas worker that registered without a group keeps the base routing.
+     * @param {String} dest
+     * @param {Object} opts
+     * @param {String} [opts.canvasGroup] The group of the channel a request arrived on, set for its reply
+     * @param {Array}  [transfer]
+     * @returns {Neo.worker.Message|undefined}
      */
-    setConfigs(data) {
-        let instance = Neo.get(data.id);
+    sendMessage(dest, opts, transfer) {
+        let me     = this,
+            groups = me.canvasGroups,
+            message, port;
 
-        if (instance) {
-            delete data.id;
-            instance.set(data);
-
-            return true
+        if (dest !== 'canvas' || me.channelPorts.canvas) {
+            return super.sendMessage(dest, opts, transfer)
         }
 
-        return false
+        opts.destination = dest;
+        port             = opts.canvasGroup ? groups.groupPort(opts.canvasGroup) : groups.portFor(opts.windowId ?? opts.data?.windowId);
+
+        if (port) {
+            message = new Message(opts);
+            port.postMessage(message, transfer)
+        }
+
+        return message
+    }
+
+    /**
+     * Set configs of any app realm based Neo instance from main
+     *
+     * @warning This provides legacy testing support for environments where Neural Link
+     * is not available (e.g. React wrappers). For native Neo.mjs E2E testing,
+     * use the Neural Link Bridge instead.
+     *
+     * @param {Object} data
+     * @param {String} data.id
+     * @returns {Object}
+     */
+    setConfigs(data) {
+        try {
+            let instance = Neo.get(data.id);
+
+            if (instance) {
+                delete data.id;
+                instance.set(data);
+                return {success: true}
+            }
+
+            return {success: false, error: {message: `Instance with id ${data.id} not found`}}
+        } catch (error) {
+            console.error(`Error in setConfigs for id: ${data.id}`, error);
+            return {success: false, error: {className: error.name, message: error.message, stack: error.stack}}
+        }
     }
 
     /**
@@ -411,24 +1097,31 @@ class App extends Base {
      * @param {String} [data.priority] optionally pass 'important'
      * @param {String} data.theme=Neo.config.themes[0]
      * @param {String} data.value
+     * @param {String} data.windowId
      * @returns {Promise<any>}
      */
-    setCssVariable(data) {
-        let addon = Neo.main?.addon?.Stylesheet,
-            theme = Neo.config.themes?.[0];
+    async setCssVariable(data) {
+        let appConfig  = Neo.windowConfigs?.[data.windowId] || Neo.config,
+            Stylesheet = await this.getAddon('Stylesheet', data.windowId),
+            theme      = data.theme || appConfig.themes?.[0];
 
-        if (!addon) {
-            return Promise.reject('Neo.main.addon.Stylesheet not imported')
-        } else {
-            if (theme.startsWith('neo-')) {
-                theme = theme.substring(4);
-            }
-
-            return addon.setCssVariable({theme, ...data})
+        if (theme?.startsWith('neo-')) {
+            theme = theme.substring(4)
         }
+
+        return Stylesheet.setCssVariable({theme, ...data})
+    }
+
+    /**
+     * @summary Resolves once the canvas worker of this window's group can take calls — the readiness entry that
+     * replaces polling for its remotes.
+     * @param {String} [windowId] The calling window; may be omitted only while one canvas group is known
+     * @returns {Promise<void>} Rejects with `NEO_UNROUTABLE`, `NEO_WORKER_START_FAILED`, or the window's departure
+     *     (`NEO_DEAD_PORT` naming it, see {@link Neo.worker.Base#isDeparture})
+     */
+    whenCanvasReady(windowId) {
+        return this.canvasGroups.whenReady(windowId)
     }
 }
 
-let instance = Neo.applyClassConfig(App);
-
-export default instance;
+export default Neo.setupClass(App);

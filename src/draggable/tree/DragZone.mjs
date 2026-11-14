@@ -27,6 +27,7 @@ class DragZone extends BaseDragZone {
         /**
          * Limit drag&drop to leaf nodes => excluding folders
          * @member {Boolean} leafNodesOnly_=true
+         * @reactive
          */
         leafNodesOnly_: false
     }
@@ -40,19 +41,19 @@ class DragZone extends BaseDragZone {
      */
     afterSetLeafNodesOnly(value, oldValue) {
         if (oldValue !== undefined) { // we only need to react to dynamic changes
-            let owner = this.owner,
-                store = owner.store,
+            let {owner} = this,
+                {store} = owner,
                 node;
 
-            store.items.forEach(record => {
+            store.forEach(record => {
                 if (!record.isLeaf) {
                     node = owner.getVdomChild(owner.getItemId(record.id), owner.vdom);
                     node.cls = node.cls || [];
-                    NeoArray[value ? 'remove' : 'add'](node.cls, 'neo-draggable');
+                    NeoArray[value ? 'remove' : 'add'](node.cls, 'neo-draggable')
                 }
             });
 
-            owner.update();
+            owner.update()
         }
     }
 
@@ -60,7 +61,7 @@ class DragZone extends BaseDragZone {
      * @returns {Object}
      */
     getDragElementRoot() {
-        return this.dragElement.cn[0];
+        return this.dragElement.cn[0]
     }
 
     /**
@@ -69,33 +70,31 @@ class DragZone extends BaseDragZone {
      * @returns {Object|null} vdom
      */
     getItemVdom(record, index) {
-        let owner = this.owner;
+        let {owner} = this;
 
         if (!(this.leafNodesOnly && !record.isLeaf)) {
-            return owner.getVdomChild(owner.getItemId(record.id), owner.vdom);
+            return owner.getVdomChild(owner.getItemId(record[owner.getKeyProperty()]), owner.vdom)
         }
 
-        return null;
+        return null
     }
 
     /**
      * @param {Object} data
      */
-    onDragStart(data) {
+    async onDragStart(data) {
         let me = this;
 
         if (me.owner.draggable) {
             me.dragElement = {
                 tag: 'ul',
                 cls: ['neo-list-container', 'neo-list'],
-                cn : [VDomUtil.findVdomChild(me.owner.vdom, data.path[0].id).vdom]
+                cn : [VDomUtil.find(me.owner.vdom, data.path[0].id).vdom]
             };
 
-            me.dragStart(data);
+            await me.dragStart(data)
         }
     }
 }
 
-Neo.applyClassConfig(DragZone);
-
-export default DragZone;
+export default Neo.setupClass(DragZone);

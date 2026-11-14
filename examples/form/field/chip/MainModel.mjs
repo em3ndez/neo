@@ -19,6 +19,4 @@ class MainModel extends Model {
     }
 }
 
-Neo.applyClassConfig(MainModel);
-
-export default MainModel;
+export default Neo.setupClass(MainModel);

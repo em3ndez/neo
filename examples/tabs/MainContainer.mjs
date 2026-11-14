@@ -1,6 +1,6 @@
-import TabContainer  from '../../src/tab/Container.mjs';
 import NumberField   from '../../src/form/field/Number.mjs';
 import PasswordField from '../../src/form/field/Password.mjs';
+import TabContainer  from '../../src/tab/Container.mjs';
 
 /**
  * @class Neo.examples.tabs.MainContainer
@@ -97,7 +97,7 @@ class MainContainer extends TabContainer {
                     text   : 'Move Fields',
                     handler: function () {
                         let field  = Neo.getComponent('firstNameField'),
-                            parent = Neo.getComponent(field.parentId),
+                            parent = field.parent,
                             cn     = parent.vdom.cn,
                             tmp    = cn[1];
 
@@ -114,7 +114,7 @@ class MainContainer extends TabContainer {
                     text   : 'Insert Textfield',
                     handler: function () {
                         let button = Neo.getComponent('firstNameField'),
-                            parent = Neo.getComponent(button.parentId);
+                            parent = button.parent;
 
                         // global variable for testing
                         if (!this.fieldCount) {
@@ -142,30 +142,28 @@ class MainContainer extends TabContainer {
                 }]
             }],
 
-            tabButtonConfig: {
+            header: {
                 iconCls: 'fa fa-home',
                 text   : 'Tab 1'
             }
         }, {
-            tabButtonConfig: {
+            header: {
                 iconCls: 'fa fa-play-circle',
                 text   : 'Tab 2'
             },
             vdom: {
-                innerHTML: 'Test 2'
+                html: 'Test 2'
             }
         }, {
-            tabButtonConfig: {
+            header: {
                 iconCls: 'fa fa-user',
                 text   : 'Tab 3'
             },
             vdom: {
-                innerHTML: 'Test 3'
+                html: 'Test 3'
             }
         }]
     }
 }
 
-Neo.applyClassConfig(MainContainer);
-
-export default MainContainer;
+export default Neo.setupClass(MainContainer);

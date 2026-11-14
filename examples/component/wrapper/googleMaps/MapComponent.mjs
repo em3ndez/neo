@@ -15,6 +15,7 @@ class MapComponent extends GoogleMapsComponent {
         /**
          * Center the map initially to Island
          * @member {Object} center={lat: 64.963051,lng: -19.020835}
+         * @reactive
          */
         center: {
             lat: 64.963051,
@@ -53,6 +54,7 @@ class MapComponent extends GoogleMapsComponent {
         /**
          * Ensure only Island is visible
          * @member {Number} zoom=6
+         * @reactive
          */
         zoom: 6
     }
@@ -63,7 +65,7 @@ class MapComponent extends GoogleMapsComponent {
     construct(config) {
         super.construct(config);
 
-        this.fetchData();
+        this.fetchData()
     }
 
     /**
@@ -163,6 +165,4 @@ class MapComponent extends GoogleMapsComponent {
     }
 }
 
-Neo.applyClassConfig(MapComponent);
-
-export default MapComponent;
+export default Neo.setupClass(MapComponent);

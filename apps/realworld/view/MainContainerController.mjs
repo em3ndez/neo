@@ -31,6 +31,7 @@ class MainContainerController extends ComponentController {
         articleComponent: null,
         /**
          * @member {Number} articlesOffset_=0
+         * @reactive
          */
         articlesOffset_: 0,
         /**
@@ -42,6 +43,7 @@ class MainContainerController extends ComponentController {
          * Stores the current user data after logging in
          * @member {Object|null} currentUser_=null
          * @protected
+         * @reactive
          */
         currentUser_: null,
         /**
@@ -91,16 +93,18 @@ class MainContainerController extends ComponentController {
      */
     afterSetCurrentUser(value, oldValue) {
         if (typeof oldValue === 'object') {
-            this.getReference('header').set({
+            let me = this;
+
+            me.getReference('header').set({
                 loggedIn : !!value,
                 userImage: value ? value.image    : null,
                 userName : value ? value.username : null
             }).then(() => {
                 // todo: test to ensure the initial markup is rendered
-                setTimeout(() => {
-                    this.fire('afterSetCurrentUser', value);
-                }, 200);
-            });
+                me.timeout(200).then(() => {
+                    me.fire('afterSetCurrentUser', value)
+                })
+            })
         }
     }
 
@@ -229,12 +233,12 @@ class MainContainerController extends ComponentController {
             value: userData.token
         }).then(() => {
             // wait until the header vdom-update is done to avoid showing sign up & sign in twice
-            setTimeout(() => {
+            this.timeout(50).then(() => {
                 Neo.Main.setRoute({
                     value: '/'
-                });
-            }, 50);
-        });
+                })
+            })
+        })
     }
 
     /**
@@ -247,12 +251,12 @@ class MainContainerController extends ComponentController {
             key: LOCAL_STORAGE_KEY
         }).then(() => {
             // wait until the header vdom-update is done to avoid showing sign up & sign in twice
-            setTimeout(() => {
+            this.timeout(50).then(() => {
                 Neo.Main.setRoute({
                     value: '/'
-                });
-            }, 50);
-        });
+                })
+            })
+        })
     }
 
     /**
@@ -305,9 +309,9 @@ class MainContainerController extends ComponentController {
             else if (hashString.includes('/article/')) {opts = ['articleComponent',  () => import('./article/Component.mjs'),       'article']}
             else if (hashString.includes('/editor'))   {opts = ['createComponent',   () => import('./article/CreateComponent.mjs'), 'editor']}
             else if (hashString.includes('/profile/')) {opts = ['profileComponent',  () => import('./user/ProfileComponent.mjs'),   'profile']}
-            else if (hash.hasOwnProperty('/login'))    {opts = ['signUpComponent',   () => import('./user/SignUpComponent.mjs'),    'signup']; mode = 'signin';}
-            else if (hash.hasOwnProperty('/register')) {opts = ['signUpComponent',   () => import('./user/SignUpComponent.mjs'),    'signup']; mode = 'signup';}
-            else if (hash.hasOwnProperty('/settings')) {opts = ['settingsComponent', () => import('./user/SettingsComponent.mjs'),  'settings']}
+            else if (Object.hasOwn(hash, '/login'))    {opts = ['signUpComponent',   () => import('./user/SignUpComponent.mjs'),    'signup']; mode = 'signin';}
+            else if (Object.hasOwn(hash, '/register')) {opts = ['signUpComponent',   () => import('./user/SignUpComponent.mjs'),    'signup']; mode = 'signup';}
+            else if (Object.hasOwn(hash, '/settings')) {opts = ['settingsComponent', () => import('./user/SettingsComponent.mjs'),  'settings']}
 
             if (opts) {
                 newView = await me.promiseView(...opts);
@@ -318,8 +322,8 @@ class MainContainerController extends ComponentController {
             }
 
             if (!(oldValue && oldValue.hash && (
-                oldValue.hash.hasOwnProperty('/login')    && hash.hasOwnProperty('/register') ||
-                oldValue.hash.hasOwnProperty('/register') && hash.hasOwnProperty('/login')))
+                Object.hasOwn(oldValue.hash, '/login')    && Object.hasOwn(hash, '/register') ||
+                Object.hasOwn(oldValue.hash, '/register') && Object.hasOwn(hash, '/login')))
             ) {
                 if (component.items.length > 2) {
                     component.removeAt(1, false, true);
@@ -375,11 +379,11 @@ class MainContainerController extends ComponentController {
                     break;
                 case 'settings':
                     if (me.currentUser) {
-                        setTimeout(() => { // added a short delay to not interfere with the mainContainer update
-                            me.settingsComponent.onCurrentUserChange(me.currentUser);
-                        }, 50);
+                        me.timeout(50).then(() => { // added a short delay to not interfere with the mainContainer update
+                            me.settingsComponent.onCurrentUserChange(me.currentUser)
+                        })
                     }
-                    break;
+                    break
                 case 'signup':
                     newView.errors = [];
                     break;
@@ -410,12 +414,17 @@ class MainContainerController extends ComponentController {
         let me = this;
 
         if (!me[key]) {
+            let {appName, id, windowId} = me.component;
+
             module = await module();
 
+            // Born with its window: the children a view creates in onConstructed() copy it from the view
             me[key] = Neo.create({
                 module  : module.default,
-                parentId: me.component.id,
-                reference
+                appName,
+                parentId: id,
+                reference,
+                windowId
             });
         }
 
@@ -448,6 +457,4 @@ class MainContainerController extends ComponentController {
     }
 }
 
-Neo.applyClassConfig(MainContainerController);
-
-export default MainContainerController;
+export default Neo.setupClass(MainContainerController);

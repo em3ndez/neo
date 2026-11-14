@@ -19,11 +19,13 @@ class SourceViewComponent extends Component {
         /**
          * @member {Boolean} isHighlighted_=false
          * @protected
+         * @reactive
          */
         isHighlighted_: false,
         /**
          * @member {Number|null} line_=null
          * @protected
+         * @reactive
          */
         line_: null,
         /**
@@ -43,12 +45,12 @@ class SourceViewComponent extends Component {
             overflow: 'auto'
         },
         /**
-         * @member {Object} _vdom={cn: [//...]}
+         * @member {Object} _vdom
          */
         _vdom:
         {cn: [
-            {tag: 'pre', cn: [
-                {tag: 'code', class: 'javascript'}
+            {tag: 'pre', cls: ['hljs'], cn: [
+                {tag: 'code', class: 'language-javascript'}
             ]}
         ]}
     }
@@ -65,9 +67,9 @@ class SourceViewComponent extends Component {
 
         Neo.Xhr.promiseRequest({
             url
-        }).then(data => {
-            me.applySourceCode(data.response);
-        });
+        }).then(data => me.applySourceCode(data.response)).catch(error => {
+            if (error !== Neo.isDestroyed) throw error
+        })
     }
 
     /**
@@ -79,9 +81,9 @@ class SourceViewComponent extends Component {
     afterSetMounted(value, oldValue) {
         super.afterSetMounted(value, oldValue);
 
-        value && setTimeout(() => {
-            this.syntaxHighlight();
-        }, 50);
+        value && this.timeout(50).then(() => {
+            this.syntaxHighlight()
+        })
     }
 
     /**
@@ -94,14 +96,14 @@ class SourceViewComponent extends Component {
         if (value) {
             let me = this;
 
-            setTimeout(() => {
+            me.timeout(50).then(() => {
                 Neo.main.addon.HighlightJS.syntaxHighlightLine({
                     addLine   : me.line,
-                    appName   : me.appName,
                     removeLine: me.previousLine,
-                    vnodeId   : me.vdom.cn[0].id
-                });
-            }, 50)
+                    vnodeId   : me.vdom.cn[0].cn[0].id,
+                    windowId  : me.windowId
+                })
+            })
         }
     }
 
@@ -115,7 +117,7 @@ class SourceViewComponent extends Component {
         let me = this;
 
         if (oldValue) {
-            me.previousLine = oldValue;
+            me.previousLine = oldValue
         }
 
         if (me.isHighlighted) {
@@ -124,15 +126,16 @@ class SourceViewComponent extends Component {
     }
 
     /**
-     *
-     * @param {Object} data
+     * @summary Publishes source text before asking the main thread to highlight its rendered code leaf.
+     * @param {String} data
+     * @returns {Promise<void>}
      */
-    applySourceCode(data) {
+    async applySourceCode(data) {
         let me   = this,
             node = me.vdom.cn[0]; // pre tag
 
-        node.cn[0].innerHTML = data; // code tag
-        me.update();
+        node.cn[0].html = data; // code tag
+        await me.promiseUpdate();
 
         me.mounted && me.syntaxHighlight()
     }
@@ -144,18 +147,16 @@ class SourceViewComponent extends Component {
         let me = this;
 
         Neo.main.addon.HighlightJS.syntaxHighlight({
-            appName: me.appName,
-            vnodeId: me.vdom.cn[0].id
+            vnodeId : me.vdom.cn[0].cn[0].id,
+            windowId: me.windowId
         }).then(() => {
             if (!me.isHighlighted) {
-                me.isHighlighted = true;
+                me.isHighlighted = true
             } else {
-                me.afterSetIsHighlighted(true, false);
+                me.afterSetIsHighlighted(true, false)
             }
         })
     }
 }
 
-Neo.applyClassConfig(SourceViewComponent);
-
-export default SourceViewComponent;
+export default Neo.setupClass(SourceViewComponent);

@@ -17,17 +17,17 @@ class DragProxyComponent extends Base {
          */
         ntype: 'dragproxy',
         /**
+         * @member {Boolean} autoInitVnode=true
+         */
+        autoInitVnode: true,
+        /**
          * @member {Boolean} autoMount=true
          */
         autoMount: true,
         /**
-         * @member {Boolean} autoRender=true
+         * @member {String[]} baseCls=['neo-dragproxy']
          */
-        autoRender: true,
-        /**
-         * @member {String[]} cls=['neo-dragproxy']
-         */
-        cls: ['neo-dragproxy'],
+        baseCls: ['neo-dragproxy'],
         /**
          * @member {Boolean} moveInMainThread=true
          */
@@ -35,29 +35,20 @@ class DragProxyComponent extends Base {
     }
 
     /**
-     * @param {Object} config
+     * Triggered after the mounted config got changed
+     * @param {Boolean} value
+     * @param {Boolean} oldValue
+     * @protected
      */
-    construct(config) {
-        super.construct(config);
+    afterSetMounted(value, oldValue) {
+        super.afterSetMounted(value, oldValue);
 
-        let me = this;
+        if (value && this.moveInMainThread) {
+            let {appName, id, windowId} = this;
 
-        me.on('mounted', me.onMounted, me);
-    }
-
-    /**
-     * @param {String} id
-     */
-    onMounted(id) {
-        if (this.moveInMainThread) {
-            Neo.main.addon.DragDrop.setDragProxyElement({
-                appName: this.appName,
-                id     : id
-            });
+            Neo.main.addon.DragDrop.setDragProxyElement({appName, id, windowId})
         }
     }
 }
 
-Neo.applyClassConfig(DragProxyComponent);
-
-export default DragProxyComponent;
+export default Neo.setupClass(DragProxyComponent);

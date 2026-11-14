@@ -1,3 +1,4 @@
+import BoxLabel     from '../../../src/component/BoxLabel.mjs';
 import CheckBox     from '../../../src/form/field/CheckBox.mjs';
 import CountryHelix from './CountryHelix.mjs';
 import Panel        from '../../../src/container/Panel.mjs';
@@ -29,6 +30,7 @@ class MainContainer extends Viewport {
         helixConfig: null,
         /**
          * @member {Object|null} layout={ntype: 'hbox',align:'stretch'}
+         * @reactive
          */
         layout: {ntype: 'hbox', align: 'stretch'},
         /**
@@ -65,7 +67,7 @@ class MainContainer extends Viewport {
                 }
             }]
         }, {
-            ntype : 'panel',
+            module: Panel,
             cls   : ['neo-controls-panel', 'neo-panel', 'neo-container'],
             layout: {ntype: 'vbox',align: 'stretch'},
             style : {backgroundColor: '#2b2b2b'},
@@ -352,7 +354,7 @@ class MainContainer extends Viewport {
                 hideLabel     : true,
                 hideValueLabel: false,
                 style         : {marginLeft: '10px', marginTop: '10px'},
-                valueLabelText: 'logDeltaUpdates',
+                valueLabel    : 'logDeltaUpdates',
 
                 listeners: {
                     change: function (data) {
@@ -363,40 +365,22 @@ class MainContainer extends Viewport {
                     }
                 }
             }, {
-                ntype: 'label',
-                text : [
+                module: BoxLabel,
+                html  : [
                     '<b>Navigation Concept</b>',
                     '<p>Click on an item to select it. Afterwards you can use the Arrow Keys to walk through the items.</p>',
                     '<p>Hit the Space Key to rotate the currently selected item to the front.</p>',
                     '<p>Hit the Enter Key to expand the currently selected item.</p>'
-                ].join(''),
-
-                style: {
-                    backgroundColor: '#323232',
-                    color          : '#ddd',
-                    fontSize       : '13px',
-                    margin         : '10px',
-                    padding        : '10px',
-                    whiteSpace     : 'normal'
-                }
+                ].join('')
             }, {
-                ntype: 'label',
-                cls  : ['neo-link-color'],
-                text : [
+                module: BoxLabel,
+                cls   : ['neo-link-color'],
+                html  : [
                     '<b>Attribution</b>',
                     '<p>App created with <a href="https://github.com/neomjs/neo">neo.mjs</a>.</p>',
                     '<p>Data provided by <a href="https://github.com/disease-sh/API">disease.sh/API</a>.</p>',
                     '<p>Icons made by <a href="https://www.flaticon.com/authors/freepik" title="Freepik">Freepik</a> from <a href="https://www.flaticon.com/" title="Flaticon"> www.flaticon.com</a>.</p>'
-                ].join(''),
-
-                style: {
-                    backgroundColor: '#323232',
-                    color          : '#ddd',
-                    fontSize       : '13px',
-                    margin         : '10px',
-                    padding        : '10px',
-                    whiteSpace     : 'normal'
-                }
+                ].join('')
             }]
         }]
     }
@@ -408,7 +392,9 @@ class MainContainer extends Viewport {
         super.construct(config);
 
         let me  = this,
-            url = 'https://disease.sh/v3/covid-19/countries';
+            url = Neo.config.useFallbackApi ?
+                'https://raw.githubusercontent.com/neomjs/pages/main/resources_pub/data/cvid_static_countries.json' :
+                'https://disease.sh/v3/covid-19/countries';
 
         me.helix = Neo.create({
             module: CountryHelix,
@@ -426,26 +412,25 @@ class MainContainer extends Viewport {
         if (me.showGitHubStarButton) {
             me.on('mounted', () => {
                 Neo.main.DomAccess.addScript({
-                    async: true,
-                    defer: true,
-                    src  : 'https://buttons.github.io/buttons.js'
-                });
-            });
+                    async   : true,
+                    defer   : true,
+                    src     : 'https://buttons.github.io/buttons.js',
+                    windowId: me.windowId
+                })
+            })
         }
     }
 
     addStoreItems(data) {
-        this.getStore().data = data;
+        this.getStore().data = data
     }
 
     /**
      * @returns {Neo.data.Store}
      */
     getStore() {
-        return this.items[0].items[0].store;
+        return this.items[0].items[0].store
     }
 }
 
-Neo.applyClassConfig(MainContainer);
-
-export default MainContainer;
+export default Neo.setupClass(MainContainer);

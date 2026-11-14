@@ -33,6 +33,7 @@ class NumberContainer extends Container {
         fieldModule: Number,
         /**
          * @member {Object} layout={ntype: 'hbox', align: 'stretch'}
+         * @reactive
          */
         layout: {ntype: 'hbox', align: 'stretch'},
         /**
@@ -42,10 +43,12 @@ class NumberContainer extends Container {
         fieldConfig: null,
         /**
          * @member {String|null} operator_=null
+         * @reactive
          */
         operator_: null,
         /**
          * @member {Boolean|null} value_=null
+         * @reactive
          */
         value_: null
     }
@@ -56,12 +59,13 @@ class NumberContainer extends Container {
      * @param {String|null} oldValue
      */
     afterSetOperator(value, oldValue) {
+        this.projectChildValue(0, value);
         if (oldValue !== undefined) {
             this.fire('operatorChange', {
                 component: this,
                 oldValue,
                 value
-            });
+            })
         }
     }
 
@@ -71,12 +75,31 @@ class NumberContainer extends Container {
      * @param {Boolean|null} oldValue
      */
     afterSetValue(value, oldValue) {
+        this.projectChildValue(1, value);
         if (oldValue !== undefined) {
             this.fire('change', {
                 component: this,
                 oldValue,
                 value
-            });
+            })
+        }
+    }
+
+    /**
+     * @summary Paints the composite's public value into its child without echoing a second input event.
+     * @param {Number} index
+     * @param {*} value
+     */
+    projectChildValue(index, value) {
+        const child = this.items?.[index];
+        if (child?.isConstructed) {
+            const suspended = child.suspendEvents;
+            child.suspendEvents = true;
+            try {
+                child.value = value
+            } finally {
+                child.suspendEvents = suspended
+            }
         }
     }
 
@@ -97,27 +120,26 @@ class NumberContainer extends Container {
             flex     : '1 1 auto',
             hideLabel: true,
             listeners: {change: me.onValueChange, scope: me},
+            value    : me.value,
             ...me.fieldConfig
         }];
 
-        super.createItems();
+        super.createItems()
     }
 
     /**
      * @param {Object} data
      */
     onOperatorChange(data) {
-        this.operator = data.component.value;
+        this.operator = data.component.value
     }
 
     /**
      * @param {Object} data
      */
     onValueChange(data) {
-        this.value = data.component.value;
+        this.value = data.component.value
     }
 }
 
-Neo.applyClassConfig(NumberContainer);
-
-export default NumberContainer;
+export default Neo.setupClass(NumberContainer);

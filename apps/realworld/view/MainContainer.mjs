@@ -20,10 +20,12 @@ class MainContainer extends Viewport {
         baseCls: [],
         /**
          * @member {Neo.controller.Component} controller=MainContainerController
+         * @reactive
          */
         controller: MainContainerController,
         /**
          * @member {Object} layout={ntype: 'vbox'}
+         * @reactive
          */
         layout: {ntype: 'base'},
 
@@ -36,6 +38,4 @@ class MainContainer extends Viewport {
     }
 }
 
-Neo.applyClassConfig(MainContainer);
-
-export default MainContainer;
+export default Neo.setupClass(MainContainer);

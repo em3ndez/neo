@@ -38,7 +38,7 @@ class MainContainer extends Viewport {
                     helper: 'Helper Text'
                 }],
 
-                tabButtonConfig: {
+                header: {
                     iconCls: 'fa fa-home',
                     text   : 'Filled'
                 }
@@ -64,7 +64,7 @@ class MainContainer extends Viewport {
                     helper: 'Helper Text'
                 }],
 
-                tabButtonConfig: {
+                header: {
                     iconCls: 'fa fa-play-circle',
                     text   : 'Outlined'
                 }
@@ -73,6 +73,4 @@ class MainContainer extends Viewport {
     }
 }
 
-Neo.applyClassConfig(MainContainer);
-
-export default MainContainer;
+export default Neo.setupClass(MainContainer);

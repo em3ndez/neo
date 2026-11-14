@@ -25,6 +25,7 @@ class Panel extends BasePanel {
         /**
          * @member {Neo.menu.List} list_=List
          * @protected
+         * @reactive
          */
         list_: List,
         /**
@@ -35,12 +36,14 @@ class Panel extends BasePanel {
         /**
          * Optionally pass menu.Store data directly
          * @member {Object[]|null} listItems_=null
+         * @reactive
          */
         listItems_: null,
         /**
          * The distance in px between a menu and a child menu
          * See: https://github.com/neomjs/neo/issues/2569
          * @member {Number} subMenuGap_=0
+         * @reactive
          */
         subMenuGap_: 0
     }
@@ -52,7 +55,7 @@ class Panel extends BasePanel {
      * @protected
      */
     afterSetList(value, oldValue) {
-        this.add(value);
+        this.add(value)
     }
 
     /**
@@ -62,7 +65,7 @@ class Panel extends BasePanel {
      * @protected
      */
     afterSetListItems(value, oldValue) {
-        this.list.items = value;
+        this.list.items = value
     }
 
     /**
@@ -72,7 +75,7 @@ class Panel extends BasePanel {
      * @protected
      */
     afterSetSubMenuGap(value, oldValue) {
-        this.list.subMenuGap = value;
+        this.list.subMenuGap = value
     }
 
     /**
@@ -82,11 +85,9 @@ class Panel extends BasePanel {
      * @protected
      */
     beforeSetList(value, oldValue) {
-        oldValue && oldValue.destroy();
-        return ClassSystemUtil.beforeSetInstance(value, List, this.listConfig);
+        oldValue?.destroy();
+        return ClassSystemUtil.beforeSetInstance(value, List, this.listConfig)
     }
 }
 
-Neo.applyClassConfig(Panel);
-
-export default Panel;
+export default Neo.setupClass(Panel);

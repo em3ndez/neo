@@ -1,13 +1,11 @@
+import AccordionTree         from '../../src/tree/Accordion.mjs';
+import CheckBox              from '../../src/form/field/CheckBox.mjs';
 import ConfigurationViewport from '../ConfigurationViewport.mjs';
-
-import AccordionTree  from '../../src/tree/Accordion.mjs';
-import CheckBox       from "../../src/form/field/CheckBox.mjs";
-import NumberField    from '../../src/form/field/Number.mjs';
-import Panel          from '../../src/container/Panel.mjs';
-import Store          from '../../src/data/Store.mjs';
-// Do not remove the ViewController nor ViewModel
-import ViewController from '../../src/controller/Component.mjs';
-import ViewModel      from '../../src/model/Component.mjs';
+import NumberField           from '../../src/form/field/Number.mjs';
+import Panel                 from '../../src/container/Panel.mjs';
+import StateProvider         from '../../src/state/Provider.mjs';
+import Store                 from '../../src/data/Store.mjs';
+import ViewController        from '../../src/controller/Component.mjs';
 
 /**
  * @class Neo.examples.treeAccordion.MainContainer
@@ -23,10 +21,6 @@ class MainContainer extends ConfigurationViewport {
         cls                 : ['examples-container-accordion']
     }
 
-    onConfigChange(config, opts) {
-        this.exampleComponent.items[0][config] = opts.value;
-    }
-
     createConfigurationComponents() {
         let me       = this,
             treeList = me.exampleComponent.items[0];
@@ -37,7 +31,7 @@ class MainContainer extends ConfigurationViewport {
             hideLabel     : true,
             hideValueLabel: false,
             listeners     : {change: me.onConfigChange.bind(me, 'rootParentsAreCollapsible')},
-            valueLabelText: 'rootParentsAreCollapsible'
+            valueLabel    : 'rootParentsAreCollapsible'
         }, {
             module        : CheckBox,
             checked       : treeList.firstParentIsVisible,
@@ -45,7 +39,7 @@ class MainContainer extends ConfigurationViewport {
             hideValueLabel: false,
             listeners     : {change: me.onConfigChange.bind(me, 'firstParentIsVisible')},
             style         : {marginTop: '10px'},
-            valueLabelText: 'firstParentIsVisible'
+            valueLabel    : 'firstParentIsVisible'
         }, {
             module        : CheckBox,
             checked       : treeList.showIcon,
@@ -53,7 +47,7 @@ class MainContainer extends ConfigurationViewport {
             hideValueLabel: false,
             listeners     : {change: me.onConfigChange.bind(me, 'showIcon')},
             style         : {marginTop: '10px'},
-            valueLabelText: 'showIcon'
+            valueLabel    : 'showIcon'
         }, {
             module   : NumberField,
             clearable: true,
@@ -74,7 +68,13 @@ class MainContainer extends ConfigurationViewport {
             stepSize : 3,
             style    : {marginTop: '10px'},
             value    : 400
-        }];
+        }, {
+            ntype  : 'button',
+            handler: me.onRemoveDomButtonClick.bind(me),
+            style  : {marginTop: '20px'},
+            text   : 'Remove DOM',
+            width  : 100
+        }]
     }
 
     /**
@@ -103,7 +103,7 @@ class MainContainer extends ConfigurationViewport {
         return Neo.ntype({
             ntype: 'container',
 
-            model: {
+            stateProvider: {
                 data: {
                     selection: [{name: 'Please select something'}]
                 }
@@ -113,11 +113,11 @@ class MainContainer extends ConfigurationViewport {
             items : [{
                 module: AccordionTree,
 
-                bind: {selection: {twoWay: true, value: data => data.selection}},
+                bind: {selection: {key: 'selection', twoWay: true}},
 
                 store: store,
 
-                /**
+                /*
                  * We are using data-binding.
                  * Here is an example for listener and controller
                  */
@@ -167,10 +167,25 @@ class MainContainer extends ConfigurationViewport {
                     bind     : {html: data => data.selection[0].name}
                 }]
             }]
-        });
+        })
+    }
+
+    /**
+     * @param {String} config
+     * @param {Object} opts
+     */
+    onConfigChange(config, opts) {
+        this.exampleComponent.items[0][config] = opts.value
+    }
+
+    /**
+     *
+     * @param {Object} data
+     */
+    onRemoveDomButtonClick(data) {
+        let accordion = this.exampleComponent.items[0];
+        accordion.hidden = !accordion.hidden
     }
 }
 
-Neo.applyClassConfig(MainContainer);
-
-export default MainContainer;
+export default Neo.setupClass(MainContainer);

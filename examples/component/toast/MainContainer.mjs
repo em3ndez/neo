@@ -1,23 +1,26 @@
 import Button                  from '../../../src/button/Base.mjs';
 import CheckBox                from '../../../src/form/field/CheckBox.mjs';
+import ComboBox                from '../../../src/form/field/ComboBox.mjs';
 import Component               from '../../../src/component/Base.mjs';
 import FormContainer           from '../../../src/form/Container.mjs';
 import MainContainerController from './MainContainerController.mjs';
 import NumberField             from '../../../src/form/field/Number.mjs';
-import SelectField             from '../../../src/form/field/Select.mjs';
+import StringUtil              from '../../../src/util/String.mjs';
 import TextField               from '../../../src/form/field/Text.mjs';
 import Viewport                from '../../../src/container/Viewport.mjs';
 
 /**
  * @class Neo.examples.component.toast.MainContainer
  * @extends Neo.container.Viewport
+ * @summary Toast configuration form with an escaped, syntax-highlighted code preview.
  */
 class MainContainer extends Viewport {
     static config = {
         className : 'Neo.examples.component.toast.MainContainer',
         autoMount : true,
+        cls       : ['neo-examples-toast'],
         controller: MainContainerController,
-        layout: {ntype: 'hbox', align: 'stretch'},
+        layout    : {ntype: 'hbox', align: 'stretch'},
 
         items: [{
             module   : FormContainer,
@@ -51,19 +54,19 @@ class MainContainer extends Viewport {
                 labelText: 'iconCls',
                 name     : 'iconCls'
             }, {
-                module    : SelectField,
+                module    : ComboBox,
                 labelText : 'position = tr',
                 name      : 'position',
                 store     : {data: [{name: 'tl'}, {name: 'tc'}, {name: 'tr'}, {name: 'bl'}, {name: 'bc'}, {name: 'br'}]},
                 valueField: 'name'
             }, {
-                module   : SelectField,
+                module   : ComboBox,
                 labelText: 'slideDirection = right',
                 name     : 'slideDirection',
                 store    : {data: [{name: 'down'}, {name: 'up'}, {name: 'left'}, {name: 'right'}]},
                 valueField: 'name'
             }, {
-                module   : SelectField,
+                module   : ComboBox,
                 labelText: 'ui = info',
                 name     : 'ui',
                 store    : {data: [{name: 'info'}, {name: 'danger'}, {name: 'success'}]},
@@ -110,31 +113,25 @@ class MainContainer extends Viewport {
                 ]}
             ]},
 
+            /**
+             * @summary Keeps VDOM child ids out of HighlightJS's replacement markup with one escaped code leaf.
+             * @param {Object} data Toast form values.
+             * @returns {String}
+             */
             itemTpl: data => {
-                return [
-                    {cls: 'import', innerHTML: 'import Toast from \'../../../../node_modules/neo.mjs/src/component/Toast.mjs\';'},
-                    {innerHTML: 'Neo.toast({'},
-                    {cls: 'tab', cn: [
-                        {cls: 'grey', innerHTML: '/* mandatory */'},
-                        {innerHTML: `appName: '${data.appName}',`},
-                        {innerHTML: `msg: '${data.msg}',`},
-                        {innerHTML: '/* optional */'},
-                        {innerHTML: `title: '${data.title}',`, removeDom: !data.title},
-                        {innerHTML: `iconCls: '${data.iconCls}',`, removeDom: !data.iconCls},
-                        {innerHTML: `closable: ${data.closable},`, removeDom: !data.closable},
-                        {innerHTML: `position: '${data.position}',`, removeDom: !data.position},
-                        {innerHTML: `slideDirection: '${data.slideDirection}',`, removeDom: !data.slideDirection},
-                        {innerHTML: `maxWidth: ${data.maxWidth},`, removeDom: !data.maxWidth},
-                        {innerHTML: `minHeight: ${data.minHeight},`, removeDom: !data.minHeight},
-                        {innerHTML: `ui: '${data.ui}'`, removeDom: !data.ui},
-                    ]},
-                    {innerHTML: '})'}
-                ]
+                const config = {appName: data.appName, msg: data.msg, windowId: data.windowId};
+
+                for (const key of ['title', 'iconCls', 'closable', 'position', 'slideDirection', 'maxWidth', 'minHeight', 'ui']) {
+                    if (data[key]) config[key] = data[key];
+                }
+
+                return StringUtil.escapeHtml(
+                    "import Toast from '../../../../node_modules/neo.mjs/src/component/Toast.mjs';\n\n" +
+                    'Neo.toast(' + JSON.stringify(config, null, 4) + ')'
+                )
             }
         }]
     }
 }
 
-Neo.applyClassConfig(MainContainer);
-
-export default MainContainer;
+export default Neo.setupClass(MainContainer);

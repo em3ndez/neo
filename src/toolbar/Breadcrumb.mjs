@@ -1,7 +1,7 @@
 import ClassSystemUtil from '../util/ClassSystem.mjs';
 import HashHistory     from '../util/HashHistory.mjs';
 import Store           from '../data/Store.mjs';
-import Toolbar         from '../toolbar/Base.mjs';
+import Toolbar         from './Base.mjs';
 
 /**
  * @class Neo.toolbar.Breadcrumb
@@ -21,6 +21,7 @@ class Breadcrumb extends Toolbar {
         ntype: 'breadcrumb-toolbar',
         /**
          * @member {Number|String|null} activeKey_=null
+         * @reactive
          */
         activeKey_: null,
         /**
@@ -28,7 +29,16 @@ class Breadcrumb extends Toolbar {
          */
         baseCls: ['neo-breadcrumb-toolbar', 'neo-toolbar'],
         /**
+         * @member {Object} itemDefaults={ntype:'button', ui: 'tertiary'}
+         * @reactive
+         */
+        itemDefaults: {
+            ntype: 'button',
+            ui   : 'tertiary'
+        },
+        /**
          * @member {Neo.data.Store|Object} store_=null
+         * @reactive
          */
         store_: null
     }
@@ -68,7 +78,7 @@ class Breadcrumb extends Toolbar {
 
         let me = this;
 
-        me.updateOnHashChange && HashHistory.on('change', me.onHashChange, me);
+        me.updateOnHashChange && HashHistory.on('change', me.onHashChange, me)
     }
 
     /**
@@ -112,7 +122,7 @@ class Breadcrumb extends Toolbar {
      */
     beforeSetStore(value, oldValue) {
         oldValue?.destroy();
-        return ClassSystemUtil.beforeSetInstance(value, null, this.defaultStoreConfig);
+        return ClassSystemUtil.beforeSetInstance(value, null, this.defaultStoreConfig)
     }
 
     /**
@@ -123,7 +133,7 @@ class Breadcrumb extends Toolbar {
 
         me.updateOnHashChange && HashHistory.un('change', me.onHashChange, me);
 
-        super.destroy(...args);
+        super.destroy(...args)
     }
 
     /**
@@ -132,7 +142,7 @@ class Breadcrumb extends Toolbar {
     getPathItems() {
         let items    = [],
             parentId = this.activeKey,
-            store    = this.store,
+            {store}  = this,
             item;
 
         while (parentId !== null) {
@@ -140,10 +150,10 @@ class Breadcrumb extends Toolbar {
 
             items.unshift(item);
 
-            parentId = item.parentId;
+            parentId = item.parentId
         }
 
-        return items;
+        return items
     }
 
     /**
@@ -152,17 +162,17 @@ class Breadcrumb extends Toolbar {
      */
     onHashChange(value, oldValue) {
         let hashString = value?.hashString,
-            store      = this.store,
+            {store}    = this,
             activeKey;
 
         if (hashString && !hashString.endsWith('/')) {
-            hashString += '/';
+            hashString += '/'
         }
 
         activeKey = hashString && store.findFirst({route: hashString})?.[store.keyProperty] || null;
 
         if (activeKey !== null) {
-            this.activeKey = activeKey;
+            this.activeKey = activeKey
         }
     }
 
@@ -170,7 +180,7 @@ class Breadcrumb extends Toolbar {
      * @param {Object[]} items
      */
     onStoreLoad(items) {
-       this.afterSetActiveKey(this.activeKey, null);
+       this.afterSetActiveKey(this.activeKey, null)
     }
 
     /**
@@ -178,7 +188,7 @@ class Breadcrumb extends Toolbar {
      */
     updateItems() {
         let me        = this,
-            items     = me.items,
+            {items}   = me,
             pathItems = me.getPathItems(),
             i         = 0,
             len       = pathItems.length,
@@ -191,11 +201,10 @@ class Breadcrumb extends Toolbar {
             item = pathItems[i];
 
             config = {
-                disabled : i === len - 1,
-                editRoute: false,
-                hidden   : false,
-                route    : item.route,
-                text     : item.name
+                disabled: i === len - 1,
+                hidden  : false,
+                route   : item.route,
+                text    : item.name
             };
 
             if (items[i]) {
@@ -221,6 +230,4 @@ class Breadcrumb extends Toolbar {
     }
 }
 
-Neo.applyClassConfig(Breadcrumb);
-
-export default Breadcrumb;
+export default Neo.setupClass(Breadcrumb);

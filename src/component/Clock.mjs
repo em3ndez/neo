@@ -25,21 +25,25 @@ class Clock extends Component {
         /**
          * Value in px
          * @member {Number} fontSize_=20
+         * @reactive
          */
         fontSize_: 20,
         /**
          * Show a small disc on the center of the clock (above the pointers)
          * @member {Boolean} showDisc_=true
+         * @reactive
          */
         showDisc_: true,
         /**
          * Value in px
          * @member {Number|null} size_=500
+         * @reactive
          */
         size_: 500,
         /**
          * Format: hh:mm
-         * @member {String} time_='10:20'
+         * @member {String} time_='00:00'
+         * @reactive
          */
         time_: '00:00',
         /**
@@ -59,10 +63,10 @@ class Clock extends Component {
      * @protected
      */
     afterSetFontSize(value, oldValue) {
-        let style = this.style;
+        let {style} = this;
 
         style.fontSize = `${value}px`;
-        this.style = style;
+        this.style = style
     }
 
     /**
@@ -72,30 +76,30 @@ class Clock extends Component {
      * @protected
      */
     afterSetShowDisc(value, oldValue) {
-        let cls = this.cls;
+        let {cls} = this;
 
         NeoArray[value ? 'add' : 'remove'](cls, 'neo-show-disc')
-        this.cls = cls;
+        this.cls = cls
     }
 
     /**
-     * Triggered after the size config got changed
-     * @param {Number} value
-     * @param {Number} oldValue
+     * @summary Applies numeric dimensions or clears them through explicit null style overrides.
+     * @param {Number|String|null} value
+     * @param {Number|String|null} oldValue
      * @protected
      */
     afterSetSize(value, oldValue) {
-        let style = this.style;
+        let {style} = this;
 
         if (Neo.isNumber(value)) {
             style.height = `${value}px`;
             style.width  = `${value}px`;
         } else {
-            delete style.height;
-            delete style.width;
+            style.height = null;
+            style.width  = null
         }
 
-        this.style = style;
+        this.style = style
     }
 
     /**
@@ -113,10 +117,8 @@ class Clock extends Component {
         vdom.cn[0].style.transform = `rotate(${minutesAngle}deg)`;
         vdom.cn[1].style.transform = `rotate(${hoursAngle}deg)`;
 
-        this.update();
+        this.update()
     }
 }
 
-Neo.applyClassConfig(Clock);
-
-export default Clock;
+export default Neo.setupClass(Clock);

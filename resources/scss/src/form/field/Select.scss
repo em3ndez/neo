@@ -1,48 +1,41 @@
 .neo-selectfield {
-    .neo-input-field-wrapper {
-        flex    : 1 1 30px;
-        position: relative;
+    display       : flex;
+    flex-direction: column;
+    gap           : .35em;
 
-        .neo-textfield-input, .neo-typeahead-input {
-            height  : 100% !important;
-            left    : 0;
-            position: absolute;
-            top     : 0;
-            width   : 100% !important;
-        }
+    .neo-selectfield-label {
+        color: var(--selectfield-color);
+    }
 
-        .neo-textfield-input {
-            background-color: transparent;
-        }
+    .neo-selectfield-input {
+        background   : var(--selectfield-background);
+        border       : 1px solid var(--selectfield-border-color);
+        border-radius: 3px;
+        color        : var(--selectfield-color);
+        font         : inherit;
+        min-height   : 32px;
+        padding      : .4em .6em;
+        width        : 100%;
 
-        .neo-typeahead-input {
-            border-color: transparent;
-            color       : var(--selectfield-input-hint-color);
-            font        : var(--textfield-input-font);
-            opacity     : var(--selectfield-input-hint-opacity);
+        &:focus-visible {
+            outline       : 2px solid var(--selectfield-focus-color);
+            outline-offset: 2px;
         }
     }
 
-    .neo-list {
-        overflow-x: hidden;
-        overflow-y: auto;
-        text-align: left;
-
-        .neo-highlight-search {
-            background-color: var(--selectfield-list-search-background-color);
-            color           : var(--selectfield-list-search-color) !important;
-        }
-
-        .neo-selected {
-            .neo-highlight-search {
-                color: var(--selectfield-list-search-color-selected) !important;
-            }
+    &.neo-selectfield-customizable {
+        .neo-selectfield-input,
+        .neo-selectfield-input::picker(select) {
+            appearance: base-select;
         }
     }
 
-    .neo-picker-container {
-        border       : var(--selectfield-picker-container-border);
-        border-radius: var(--selectfield-picker-container-border-radius);
-        font-weight  : 400;
+    .neo-selectfield-error {
+        color    : var(--selectfield-error-color);
+        font-size: .85em;
+    }
+
+    &.neo-invalid .neo-selectfield-input {
+        border-color: var(--selectfield-error-color);
     }
 }

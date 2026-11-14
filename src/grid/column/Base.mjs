@@ -1,0 +1,373 @@
+import Base              from '../../core/Base.mjs';
+import {resolveCallback} from '../../util/Function.mjs';
+
+/**
+ * @class Neo.grid.column.Base
+ * @extends Neo.core.Base
+ */
+class Column extends Base {
+    /**
+     * Valid values for hideMode
+     * @member {String[]} hideModes=['display','removeDom','visibility']
+     * @protected
+     * @static
+     */
+    static hideModes = ['display', 'removeDom', 'visibility']
+
+    static config = {
+        /**
+         * @member {String} className='Neo.grid.column.Base'
+         * @protected
+         */
+        className: 'Neo.grid.column.Base',
+        /**
+         * What an open edit of this column does when pooling takes its cell out of the DOM — the row out of the row
+         * pool, or the column out of the mounted window.
+         *
+         * False, the default, suspends it: the editor and its draft live on in the App Worker, and the render that
+         * shows the cell again embodies them. True is for an editor that cannot be suspended, one holding state only
+         * its DOM has: the edit is cancelled instead, the draft discarded, and the grid fires `cellEditCancel` with
+         * `reason: 'projectionLoss'` — never silently.
+         * @member {Boolean} cancelEditOnProjectionLoss=false
+         */
+        cancelEditOnProjectionLoss: false,
+        /**
+         * Additional CSS classes to add to the cell.
+         * These classes are appended to the default ones (e.g. 'neo-grid-cell').
+         * @member {Function|String|String[]|null} cellCls=null
+         */
+        cellCls: null,
+        /**
+         * Overrides the Grid's column menu opt-in; null inherits it.
+         * @member {Boolean|null} columnMenu_=null
+         * @reactive
+         */
+        columnMenu_: null,
+        /**
+         * The field name of the data.Model to read the value from.
+         * Must be unique within the grid instance.
+         *
+         * **Runtime Updates:**
+         * You can change this config at runtime to point the column to a different model field.
+         * The Grid will automatically:
+         * 1. Update the internal `columnPositions` map (preserving sort order).
+         * 2. Refresh the visible rows to display the new data.
+         *
+         * @member {String|null} dataField_=null
+         * @reactive
+         */
+        dataField_: null,
+        /**
+         * True lets `Neo.grid.plugin.CellEditing` edit this column's cells. Turning it off while one of them is
+         * being edited cancels that edit.
+         * @member {Boolean} editable_=false
+         * @reactive
+         */
+        editable_: false,
+        /**
+         * The field config a cell editor is created from, e.g. `{module: NumberField, maxValue: 100}`.
+         * `null` edits with a `Neo.form.field.Text`.
+         * @member {Object|null} editor=null
+         */
+        editor: null,
+        /**
+         * Returns the value `Neo.grid.Container#getCellValues()` yields for this column's cell in `export` mode, in
+         * place of `record.get(dataField)`. Receives `{record, value}`. A renderer's output is markup for display, so
+         * it is never exported; this is the place for a column whose exported value needs formatting.
+         * @member {Function|null} exportRenderer=null
+         */
+        exportRenderer: null,
+        /**
+         * The header group this column sits under, as `{id, text}`: set by `Neo.grid.Container` for a column declared
+         * inside a `{text, columns: [...]}` entry, and shared by every column of that group. `null` outside a group.
+         * @member {Object|null} headerGroup=null
+         */
+        headerGroup: null,
+        /**
+         * @member {String} hideMode_='removeDom'
+         */
+        hideMode_: 'removeDom',
+        /**
+         * Use 'start' to pin the column to the start of the row.
+         * Use 'end' to pin the column to the end of the row.
+         * Use null for standard, scrollable columns.
+         * @member {String|null} locked_=null
+         * @reactive
+         */
+        locked_: null,
+        /**
+         * @member {Neo.grid.Container|null} parent=null
+         */
+        parent: null,
+        /**
+         * @member {Function|String|null} renderer_='cellRenderer'
+         * @reactive
+         */
+        renderer_: 'cellRenderer',
+        /**
+         * Scope to execute the column renderer and a function `cellCls` in.
+         *
+         * Three sources can name it, and this config is the first: an instance set here wins. A `renderer` string
+         * resolves against an instance and records it here — `'up.name'` the ancestor that defines the method,
+         * a plain name the column itself, which is what the default `cellRenderer` and every subclass override of
+         * it need to reach their own configs, and a plain name the column does not define the closest view
+         * controller above the grid that does. A `renderer` function names no instance and runs on the grid
+         * Container. The strings `'this'` and `'me'` mean the column, as {@link Neo.grid.column.Component} sets.
+         * @member {Neo.core.Base|String|null} rendererScope=null
+         */
+        rendererScope: null,
+        /**
+         * @member {String} type='column'
+         * @protected
+         */
+        type: 'column',
+        /**
+         * Gives cells with the same value the same background color, as long as they are below each other.
+         * @member {Boolean} useValueBanding_=false
+         * @reactive
+         */
+        useValueBanding_: false,
+        /**
+         * @member {Number|null} windowId_=null
+         * @reactive
+         */
+        windowId_: null,
+        /**
+         * Content-sized rows: true lets this column's text wrap and drive the row height. Rows take the tallest
+         * wrapped text of their `wrapText` columns, and never less than the grid's `rowHeight`. Applies to
+         * renderers that return text or html. Without `contentSizedRows` on the grid it has no effect.
+         * @member {Boolean} wrapText_=false
+         * @reactive
+         */
+        wrapText_: false
+    }
+
+    /**
+     * Triggered after the dataField config got changed
+     * @param {String|null} value
+     * @param {String|null} oldValue
+     */
+    afterSetDataField(value, oldValue) {
+        if (oldValue !== undefined) {
+            let me            = this,
+                gridContainer = me.parent,
+                body          = gridContainer?.body,
+                colPositions  = body?.columnPositions,
+                columns       = gridContainer?.columns,
+                button        = gridContainer?.getButton(oldValue),
+                pos           = colPositions?.get(oldValue);
+
+            if (pos) {
+                // The columnPositions collection is keyed by 'dataField'.
+                // To update the key in the internal Map, we must remove the item (using the old key),
+                // update the property, and re-add it (indexing with the new key).
+                // Modifying it in-place would break the Map index.
+                colPositions.map.delete(oldValue);
+                pos.dataField = value;
+                colPositions.map.set(value, pos)
+            }
+
+            // The grid's columns collection is keyed by 'dataField' too. Its item already carries the
+            // new value, so the Map index is re-keyed here directly; the items array keeps the
+            // column's position, and grid.columns.get(newDataField) resolves again.
+            if (columns?.get(oldValue) === me) {
+                columns.map.delete(oldValue);
+                columns.map.set(value, me)
+            }
+
+            if (button) {
+                button.dataField = value
+            }
+
+            // The stored search scope stays fixed; only its caption relative to these columns changes.
+            gridContainer?.syncSearchToolbar()
+        }
+    }
+
+    /**
+     * @summary Projects this column's menu override into its current physical header.
+     * @param {Boolean|null} value
+     * @param {Boolean|null} oldValue
+     */
+    afterSetColumnMenu(value, oldValue) {
+        if (oldValue !== undefined && this.parent) {
+            const button = this.parent.getButton(this.dataField);
+            if (button) button.columnMenu = value ?? this.parent.columnMenu
+        }
+    }
+
+    /**
+     * Triggered after the editable config got changed
+     * @param {Boolean} value
+     * @param {Boolean} oldValue
+     */
+    afterSetEditable(value, oldValue) {
+        if (oldValue !== undefined) {
+            this.parent?.onColumnEditableChange(this)
+        }
+    }
+
+    /**
+     * Triggered after the locked config got changed
+     * @param {String|null} value
+     * @param {String|null} oldValue
+     */
+    afterSetLocked(value, oldValue) {
+        if (oldValue !== undefined) {
+            this.parent?.onColumnLockChange(this)
+        }
+    }
+
+    /**
+     * Triggered after the useValueBanding config got changed
+     * @param {Boolean} value
+     * @param {Boolean} oldValue
+     * @protected
+     */
+    afterSetUseValueBanding(value, oldValue) {
+        if (oldValue !== undefined) {
+            let me            = this,
+                gridContainer = me.parent,
+                body          = gridContainer?.body;
+
+            if (gridContainer) {
+                gridContainer.syncValueBandingFields();
+
+                if (body) {
+                    body.createViewData(false, true)
+                }
+            }
+        }
+    }
+
+    /**
+     * Triggered after the windowId config got changed.
+     *
+     * **Non-Component Theme Injection**
+     * Although `Neo.grid.column.Base` and its subclasses are not components (they extend `core.Base`),
+     * they hook into the theme engine exactly like components do.
+     *
+     * This is a powerful architectural pattern. It allows specific column implementations
+     * (like `Neo.grid.column.Icon` or `Neo.grid.column.Component`) to inject their own SCSS
+     * theme files (e.g., `resources/scss/theme-neo-dark/grid/column/IconLink.scss`).
+     *
+     * **Best Practice:**
+     * Because columns do not render their own outer DOM nodes with unique CSS classes,
+     * any CSS rules defined in these injected files MUST be scoped inside `.neo-grid-cell`
+     * to prevent unintended side effects on standalone components elsewhere in the application.
+     *
+     * @param {Number} value
+     * @param {Number|null} oldValue
+     * @protected
+     */
+    afterSetWindowId(value, oldValue) {
+        value && Neo.currentWorker.insertThemeFiles(value, this.__proto__)
+    }
+
+    /**
+     * Triggered after the wrapText config got changed. A content-sized grid forgets its measured row heights and
+     * measures the rows it renders again.
+     * @param {Boolean} value
+     * @param {Boolean} oldValue
+     * @protected
+     */
+    afterSetWrapText(value, oldValue) {
+        oldValue !== undefined && this.parent?.view?.resetRowHeights()
+    }
+
+    /**
+     * Triggered before the hideMode config gets changed
+     * @param {String} value
+     * @param {String} oldValue
+     * @protected
+     */
+    beforeSetHideMode(value, oldValue) {
+        return this.beforeSetEnumValue(value, oldValue, 'hideMode')
+    }
+
+    /**
+     * Triggered before the renderer config gets changed
+     * @param {Function|String|null} value
+     * @param {Function|String|null} oldValue
+     * @protected
+     */
+    beforeSetRenderer(value, oldValue) {
+        let me          = this,
+            {fn, scope} = resolveCallback(value, me);
+
+        // A column is no component and has no controller of its own, so a plain name only a view controller defines
+        // is looked up through the grid's: the closest controller above it that defines the method runs it, as it
+        // would a component's string handler. The column is asked first, so a controller method of the same name
+        // never takes over `cellRenderer` or a subclass override of it.
+        if (!fn && Neo.isString(value) && !value.startsWith('up.')) {
+            scope = me.parent?.getController?.()?.getHandlerScope(value, null) || scope;
+            fn    = scope[value]
+        }
+
+        // A name is resolved against an instance, and that instance is the one the method must run on: `up.name`
+        // names an ancestor, a plain name names the column itself or the view controller that defines it. A
+        // function carries no such instance and falls through to the grid Container. An explicit rendererScope
+        // stays the author's choice, whichever of the two configs is applied first.
+        if (Neo.isString(value) && fn && !me.rendererScope) {
+            me.rendererScope = scope
+        }
+
+        // A name nothing defines stays the plain value
+        return fn || value
+    }
+
+    /**
+     * @param {Object}             data
+     * @param {Neo.button.Base}    data.column
+     * @param {Number}             data.columnIndex
+     * @param {String}             data.dataField
+     * @param {Neo.grid.Container} data.gridContainer
+     * @param {Object}             data.record
+     * @param {Number}             data.rowIndex
+     * @param {Neo.data.Store}     data.store
+     * @param {Number|String}      data.value
+     * @returns {*}
+     */
+    cellRenderer({value}) {
+        return value
+    }
+
+    /**
+     * @summary Reads a field's value from a row record, resolving a dotted path such as `metrics.load`.
+     *
+     * A record resolves the path through `Record#get`. In Turbo Mode (`autoInitRecords: false`) a row can
+     * be a plain object without `get`, and `Neo.ns` resolves the same path on it. Column types that read
+     * a value themselves use this, so a nested `dataField` reaches them the way it reaches a plain cell.
+     * @param {Neo.data.Record|Object|null} record
+     * @param {String} [field=this.dataField]
+     * @returns {*} The value at the path, or `undefined` when the record or a segment is missing
+     */
+    getRecordValue(record, field=this.dataField) {
+        if (!record) {
+            return undefined
+        }
+
+        return typeof record.get === 'function' ? record.get(field) : Neo.ns(field, false, record)
+    }
+
+    /**
+     * Serializes the instance into a JSON-compatible object for the Neural Link.
+     * @returns {Object}
+     */
+    toJSON() {
+        let me  = this,
+            out = super.toJSON();
+
+        out.dataField = me.dataField;
+        out.columnMenu = me.columnMenu;
+        out.type      = me.type;
+
+        if (Neo.isString(me.renderer)) {
+            out.renderer = me.renderer
+        }
+
+        return out
+    }
+}
+
+export default Neo.setupClass(Column);

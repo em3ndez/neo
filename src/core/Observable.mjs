@@ -1,4 +1,15 @@
-import Base from './Base.mjs';
+import Base              from './Base.mjs';
+import NeoArray          from '../util/Array.mjs';
+import {isDescriptor}    from '../core/ConfigSymbols.mjs';
+import {resolveCallback} from '../util/Function.mjs';
+
+/**
+ * A unique, non-enumerable key for the internal event map.
+ * Using a Symbol prevents property name collisions on the consuming class instance,
+ * providing a robust way to manage private state within a mixin.
+ * @type {Symbol}
+ */
+const eventMapSymbol = Symbol('eventMap');
 
 /**
  * @class Neo.core.Observable
@@ -17,11 +28,34 @@ class Observable extends Base {
          */
         ntype: 'mixin-observable',
         /**
-         * @member {Boolean} mixin=true
-         * @protected
+         * A declarative way to assign event listeners to an instance upon creation.
+         * The framework processes this config and calls `on()` to populate the
+         * internal event registry. This config should not be manipulated directly after
+         * instantiation; use `on()` and `un()` instead.
+         * @member {Object|null} listeners_
+         * @example
+         * listeners: {
+         *     myEvent: 'onMyEvent',
+         *     otherEvent: {
+         *         fn: 'onOtherEvent',
+         *         delay: 100,
+         *         once: true
+         *     },
+         *     scope: this
+         * }
+         * @reactive
          */
-        mixin: true
+        listeners_: {
+            [isDescriptor]: true,
+            merge         : 'deep',
+            value         : {}
+        }
     }
+
+    /**
+     * @member {Object} [eventMapSymbol]
+     * @private
+     */
 
     /**
      * @param {Object|String} name
@@ -29,66 +63,187 @@ class Observable extends Base {
      * @param {Object} [scope]
      * @param {String} [eventId]
      * @param {Object} [data]
-     * @param {Number} [order]
+     * @param {Number|String} [order]
      * @returns {String|null} eventId null in case an object gets passed as the name (multiple ids)
      */
     addListener(name, opts, scope, eventId, data, order) {
-        let me         = this,
-            nameObject = typeof name === 'object',
+        let me            = this,
+            delay         = 0,
+            eventIdObject = typeof eventId === 'object',
+            nameObject    = typeof name    === 'object',
+            once          = false,
+            optsType      = typeof opts,
             listener, existing, eventConfig;
 
+        /*
+         * let us support the following format too:
+         *
+         * currentWorker.on('connected', () => {
+         *     Base.sendRemotes(className, remote)
+         * }, me, {once: true})
+         */
+        if (eventIdObject && optsType === 'function') {
+            eventId.fn = opts;
+            opts     = eventId;
+            optsType = 'object';
+            eventId  = null;
+        }
+
         if (nameObject) {
-            if (name.hasOwnProperty('scope')) {
+            // parse a COPY: mutating the caller's object would silently break shared-object
+            // usage like `subject.on(listeners)` followed by `otherSubject.un(listeners)`
+            name = {...name};
+
+            if (Object.hasOwn(name, 'delay')) {
+                delay = name.delay;
+                delete name.delay
+            }
+
+            if (Object.hasOwn(name, 'once')) {
+                once = name.once;
+                delete name.once
+            }
+
+            if (Object.hasOwn(name, 'order')) {
+                order = name.order;
+                delete name.order
+            }
+
+            if (Object.hasOwn(name, 'scope')) {
                 scope = name.scope;
-                delete name.scope;
+                delete name.scope
             }
 
             Object.entries(name).forEach(([key, value]) => {
-                me.addListener(key, value, scope);
-            });
-        } else if (typeof opts === 'object') {
-            scope    = scope || opts.scope;
-            listener = opts.fn;
-            order    = order || opts.order;
+                if (Neo.isObject(value)) {
+                    me.addListener(key, {delay, once, order, scope, ...value})
+                } else {
+                    me.addListener(key, {delay, fn: value, once, order, scope})
+                }
+            })
+        } else if (optsType === 'object') {
+            delay    = delay   || opts.delay;
             eventId  = eventId || opts.eventId;
-        } else if (typeof opts === 'function') {
-            listener = opts;
-        } else if (typeof opts === 'string') {
-            listener = opts; // VC hook, can get parsed after onConstructed in case the view uses the parent VC
+            listener = opts.fn;
+            once     = once    || opts.once;
+            order    = order   || opts.order;
+            scope    = scope   || opts.scope
+        } else if (optsType === 'function') {
+            listener = opts
+        } else if (optsType === 'string') {
+            listener = opts // VC hook, can get parsed after onConstructed in case the view uses the parent VC
         } else {
-            throw new Error('Invalid addListener call: ' + name);
+            throw new Error('Invalid addListener call: ' + name)
         }
 
         if (!nameObject) {
-            eventConfig = {
-                fn: listener,
-                scope,
-                data,
-                id: eventId || Neo.getId('event')
-            };
+            // LAZY INITIALIZATION: The key to a robust mixin.
+            // This ensures the private internal listener store exists on the instance.
+            // `eventMapSymbol` is the *actual* registry of handler arrays, and is
+            // intentionally separate from the public `listeners_` config.
+            me[eventMapSymbol] ??= {};
 
-            if (existing = me.listeners?.[name]) {
+            eventConfig = {fn: listener, id: eventId || Neo.getId('event')};
+
+            if (data)      {eventConfig.data   = data}
+            if (delay > 0) {eventConfig.delay  = delay}
+            if (once)      {eventConfig.once   = once}
+            if (scope)     {eventConfig.scope  = scope}
+
+            if ((existing = me[eventMapSymbol][name])) {
                 existing.forEach(cfg => {
                     if (cfg.id === eventId || (cfg.fn === listener && cfg.scope === scope)) {
-                        console.error('Duplicate event handler attached:', name, me);
+                        console.error('Duplicate event handler attached:', name, me)
                     }
                 });
 
                 if (typeof order === 'number') {
-                    existing.splice(order, 0, eventConfig);
+                    existing.splice(order, 0, eventConfig)
                 } else if (order === 'before') {
-                    existing.unshift(eventConfig);
+                    existing.unshift(eventConfig)
                 } else {
-                    existing.push(eventConfig);
+                    existing.push(eventConfig)
                 }
             } else {
-                me.listeners[name] = [eventConfig];
+                me[eventMapSymbol][name] = [eventConfig] // Use the private eventMapSymbol registry
             }
 
-            return eventConfig.id;
+            return eventConfig.id
         }
 
-        return null;
+        return null
+    }
+
+    /**
+     * This hook is the bridge between the declarative `listeners_` config and the
+     * imperative `on()`/`un()` methods. It's called automatically by the framework
+     * whenever the `listeners` config property is changed.
+     * @param {Object} value The new listeners object
+     * @param {Object} oldValue The old listeners object
+     * @protected
+     */
+    afterSetListeners(value, oldValue) {
+        let me        = this,
+            oldConfig = oldValue || {},
+            newConfig = value    || {},
+            // delay/once/order/scope sit at the config top level and apply to EVERY event entry, so
+            // they must travel with each per-event slice — and a change to any of them changes every
+            // event's effective registration (→ full re-bind).
+            reservedKeys = ['delay', 'once', 'order', 'scope'],
+            pickShared   = config => reservedKeys.reduce((opts, key) => {
+                if (key in config) {opts[key] = config[key]}
+                return opts
+            }, {}),
+            oldShared    = pickShared(oldConfig),
+            newShared    = pickShared(newConfig),
+            sharedSame   = reservedKeys.every(key => oldShared[key] === newShared[key]),
+            eventNames   = config => Object.keys(config).filter(key => !reservedKeys.includes(key)),
+            names        = new Set([...eventNames(oldConfig), ...eventNames(newConfig)]);
+
+        // Diff per event name: only apply the delta. An event whose handler reference AND the shared
+        // opts are unchanged keeps its live registration untouched — avoiding the un()+on() churn the
+        // prior brute-force rebuild caused, and leaving imperatively-added on() listeners unaffected.
+        for (const name of names) {
+            let inOld = name in oldConfig,
+                inNew = name in newConfig;
+
+            if (inOld && inNew && sharedSame && oldConfig[name] === newConfig[name]) {
+                continue
+            }
+
+            // Pass FRESH per-event slices (event entry + shared opts): on()/un() delete the reserved
+            // keys off the object they receive, so reusing the stored config objects would corrupt them.
+            if (inOld) {me.un({[name]: oldConfig[name], ...oldShared})}
+            if (inNew) {me.on({[name]: newConfig[name], ...newShared})}
+        }
+    }
+
+    /**
+     * Call the passed function, or a function by *name* which exists in the passed scope's
+     * or this component's ownership chain.
+     * @param {Function|String} fn A function, or the name of a function to find in the passed scope object.
+     * @param {Object} scope       The scope to find the function in if it is specified as a string.
+     * @param {Array} args         Arguments to pass to the callback.
+     */
+    callback(fn, scope=this, args) {
+        if (fn) {
+            const handler = resolveCallback(fn, scope);
+            handler.fn.apply(handler.scope, args)
+        }
+    }
+
+    /**
+     * Internal helper method for events which use the delay option
+     * @param {Object} cb
+     * @param {Array} args
+     * @param {Number} delay
+     */
+    delayedCallback(cb, args, delay) {
+        this.timeout(delay).then(() => {
+            if (!cb.scope?.isDestroyed) {
+                cb.fn.apply(cb.scope, args)
+            }
+        })
     }
 
     /**
@@ -97,73 +252,42 @@ class Observable extends Base {
     fire(name) {
         let me        = this,
             args      = [].slice.call(arguments, 1),
-            listeners = me.listeners,
-            eventConfig, events, i, len;
+            listeners = me[eventMapSymbol], // Always use the private, structured registry for firing events.
+            delay, handler, handlers, i, len;
 
         if (listeners && listeners[name]) {
-            events = [...listeners[name]];
-            len    = events.length;
+            handlers = [...listeners[name]];
+            len      = handlers.length;
 
             for (i = 0; i < len; i++) {
-                eventConfig = events[i];
+                handler = handlers[i];
+                delay   = handler.delay;
 
-                if (!Neo.isFunction(eventConfig.fn)) {
-                    eventConfig.fn = eventConfig.scope[eventConfig.fn];
-                }
+                // Resolve function name on the scope (or me), or, if it starts with 'up.'
+                // look in the ownership hierarchy from me.
+                const cb = resolveCallback(handler.fn, handler.scope || me);
 
-                // remove the listener, in case the scope no longer exists
-                if (eventConfig.scope && !eventConfig.scope.id) {
-                    listeners[name].splice(i, 1);
+                // remove the listener if the scope has no id or has been destroyed
+                if (cb.scope && (!cb.scope.id || cb.scope.isDestroyed)) {
+                    NeoArray.remove(listeners[name], handler)
                 } else {
                     if (!me.suspendEvents) {
-                        eventConfig.fn.apply(eventConfig.scope || me, eventConfig.data ? args.concat(eventConfig.data) : args);
+                        // Object event format. Inject firer reference in as 'source'
+                        if (args.length === 1 && Neo.isObject(args[0])) {
+                            args[0].source = me.id
+                        }
+
+                        // remove the listener if it has the once flag
+                        handler.once && NeoArray.remove(listeners[name], handler);
+
+                        if (Neo.isNumber(delay) && delay > 0) {
+                            me.delayedCallback(cb, handler.data ? args.concat(handler.data) : args, delay)
+                        } else {
+                            cb.fn.apply(cb.scope, handler.data ? args.concat(handler.data) : args)
+                        }
                     }
                 }
             }
-        }
-    }
-
-    /**
-     * @param {Object} config
-     */
-    initObservable(config) {
-        let me = this,
-            proto = me.__proto__,
-            ctor  = proto.constructor,
-            listeners;
-
-        if (config.listeners) {
-            me.listeners = config.listeners;
-            delete config.listeners;
-        }
-
-        listeners = me.listeners;
-
-        me.listeners = {};
-
-        if (listeners) {
-            if (Neo.isObject(listeners)) {
-                listeners = {...listeners};
-            }
-
-            me.addListener(listeners);
-        }
-
-        while (proto?.constructor.isClass) {
-            ctor = proto.constructor;
-
-            if (ctor.observable && !ctor.listeners) {
-                Object.assign(ctor, {
-                    addListener   : me.addListener,
-                    fire          : me.fire,
-                    listeners     : {},
-                    on            : me.on,
-                    removeListener: me.removeListener,
-                    un            : me.un
-                });
-            }
-
-            proto = proto.__proto__;
         }
     }
 
@@ -178,25 +302,64 @@ class Observable extends Base {
      * @returns {String} eventId
      */
     on(...args) {
-        return this.addListener(...args);
+        return this.addListener(...args)
     }
 
     /**
+     * @summary Remove listeners by id, handler, or object-valued listener specs.
+     *
+     * Function selectors match by identity; explicit String selectors can match handler names.
+     *
+     * There are different syntax's how you can use this method.
+     * Using the eventId:
+     * ```
+     * this.removeListener('change', 'neo-event-7');
+     * ```
+     * Passing the handler method:
+     * ```
+     * this.removeListener('change', this.onChange, this);
+     * ```
+     * Passing an object:
+     * ```
+     * me.field.un({
+     *     change                    : me.onFieldChange,
+     *     changeClearToOriginalValue: me.onFieldChange,
+     *     scope                     : me
+     * });
+     * ```
      * @param {Object|String} name
-     * @param {String} [eventId]
+     * @param {Function|String} [eventId]
+     * @param {Neo.core.Base} [scope]
      */
-    removeListener(name, eventId) {
+    removeListener(name, eventId, scope) {
         let me = this,
-            i, len, listener, listeners, match, scope;
+            i, len, listener, listeners, match;
+
+        // LAZY INITIALIZATION: Ensure the internal listener store exists.
+        me[eventMapSymbol] ??= {};
+
+        if (Neo.isFunction(eventId)) {
+            me.removeListener({[name]: eventId, scope});
+            return
+        }
 
         if (Neo.isObject(name)) {
+            // parse a COPY: mutating the caller's object would silently break shared-object
+            // usage like `subject.on(listeners)` followed by `otherSubject.un(listeners)`
+            name = {...name};
+
             if (name.scope) {
                 scope = name.scope;
                 delete name.scope;
             }
 
             Object.entries(name).forEach(([key, value]) => {
-                listeners = me.listeners[key] || [];
+                const
+                    valueObject = Neo.isObject(value),
+                    fn          = valueObject ? value.fn : value,
+                    entryScope  = valueObject && Object.hasOwn(value, 'scope') ? value.scope : scope;
+
+                listeners = me[eventMapSymbol][key] || [];
                 i         = 0;
                 len       = listeners.length;
 
@@ -204,41 +367,32 @@ class Observable extends Base {
                     listener = listeners[i];
 
                     if (
-                        listener.fn.name === (Neo.isString(value) ? value : value.name) &&
-                        listener.scope   === scope
+                        (
+                            listener.fn === fn ||
+                            (Neo.isString(fn) && listener.fn?.name === fn)
+                        ) &&
+                        listener.scope === entryScope
                     ) {
                         listeners.splice(i, 1);
-                        break;
+                        break
                     }
                 }
-            });
+            })
         } else if (Neo.isString(eventId)) {
-            listeners = me.listeners[name];
+            listeners = me[eventMapSymbol][name];
             match     = false;
 
             listeners.forEach((eventConfig, idx) => {
                 if (eventConfig.id === eventId) {
-                    return match = idx;
+                    return match = idx
                 }
             });
 
             if (match !== false) {
-                listeners.splice(match, 1);
+                listeners.splice(match, 1)
             }
         }
     }
-
-    // removeAllListeners: function(name) {
-
-    // },
-
-    // suspendListeners: function(queue) {
-
-    // },
-
-    // resumeListeners: function() {
-
-    // }
 
     /**
      * Alias for removeListener
@@ -248,8 +402,29 @@ class Observable extends Base {
     un(...args) {
         this.removeListener(...args);
     }
+
+    /**
+     * Serializes the observable state into a JSON-compatible object.
+     * @returns {Object}
+     */
+    toJSON() {
+        let me        = this,
+            listeners = {},
+            eventMap  = me[eventMapSymbol];
+
+        if (eventMap) {
+            Object.entries(eventMap).forEach(([eventName, handlers]) => {
+                if (handlers.length > 0) {
+                    listeners[eventName] = handlers.map(handler => me.serializeConfig(handler))
+                }
+            })
+        }
+
+        return {
+            ...super.toJSON(),
+            listeners
+        }
+    }
 }
 
-Neo.applyClassConfig(Observable);
-
-export default Observable;
+export default Neo.setupClass(Observable);

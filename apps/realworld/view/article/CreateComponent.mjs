@@ -20,14 +20,17 @@ class CreateComponent extends Component {
         baseCls: ['editor-page'],
         /**
          * @member {String} body_=''
+         * @reactive
          */
         body_: '',
         /**
          * @member {Object[]} errors_=[]
+         * @reactive
          */
         errors_: [],
         /**
          * @member {String} description_=''
+         * @reactive
          */
         description_: '',
         /**
@@ -36,10 +39,12 @@ class CreateComponent extends Component {
         slug: null,
         /**
          * @member {String[]} tagList_=[]
+         * @reactive
          */
         tagList_: [],
         /**
          * @member {String} title_=''
+         * @reactive
          */
         title_: '',
         /**
@@ -66,7 +71,7 @@ class CreateComponent extends Component {
                                     {tag: 'input', cls: ['form-control', 'field-tags'], flag: 'tags', name: 'tags', placeholder: 'Enter tags', type: 'text'},
                                     {cls: ['tag-list'], flag: 'tag-list'}
                                 ]},
-                                {tag: 'button', cls: ['btn', 'btn-lg', 'btn-primary', 'pull-xs-right'], html: 'Publish Article', type: 'button'}
+                                {tag: 'button', cls: ['btn', 'btn-lg', 'btn-primary', 'pull-xs-right'], text: 'Publish Article', type: 'button'}
                             ]}
                         ]}
                     ]}
@@ -128,7 +133,7 @@ class CreateComponent extends Component {
         Object.entries(value || {}).forEach(([key, value]) => {
             list.cn.push({
                 tag : 'li',
-                html: key + ' ' + value.join(' and ')
+                text: key + ' ' + value.join(' and ')
             });
         });
 
@@ -159,7 +164,7 @@ class CreateComponent extends Component {
                     'data-value': value,
                 }, {
                     vtype: 'text',
-                    html : value
+                    text : value
                 }]
             });
         });
@@ -188,9 +193,10 @@ class CreateComponent extends Component {
         if (event.key === 'Enter') {
             Neo.main.DomAccess.getAttributes({
                 id        : event.target.id,
-                attributes: 'value'
+                attributes: 'value',
+                windowId  : me.windowId
             }).then(data => {
-                VNodeUtil.findChildVnode(me.vnode, {className: 'field-tags'}).vnode.attributes.value = data.value;
+                VNodeUtil.find(me.vnode, {className: 'field-tags'}).vnode.attributes.value = data.value;
                 me.tagList = [...me._tagList, data.value];
             });
         }
@@ -213,7 +219,8 @@ class CreateComponent extends Component {
 
         Neo.main.DomAccess.getAttributes({
             id        : ids,
-            attributes: 'value'
+            attributes: 'value',
+            windowId  : me.windowId
         }).then(data => {
             ArticleApi[me.slug ? 'put' : 'post']({
                 data: JSON.stringify({
@@ -261,6 +268,4 @@ class CreateComponent extends Component {
     }
 }
 
-Neo.applyClassConfig(CreateComponent);
-
-export default CreateComponent;
+export default Neo.setupClass(CreateComponent);

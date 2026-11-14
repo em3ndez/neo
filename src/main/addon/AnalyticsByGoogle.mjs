@@ -1,12 +1,11 @@
-import Base from '../../core/Base.mjs';
+import Base from './Base.mjs';
 
 /**
  * Required for the online version of the examples & docs app
  * We can not name the file GoogleAnalytics, since it does break when using uBlock origin for dist versions.
  * See: https://github.com/neomjs/neo/issues/651
  * @class Neo.main.addon.AnalyticsByGoogle
- * @extends Neo.core.Base
- * @singleton
+ * @extends Neo.main.addon.Base
  */
 class AnalyticsByGoogle extends Base {
     static config = {
@@ -14,12 +13,7 @@ class AnalyticsByGoogle extends Base {
          * @member {String} className='Neo.main.addon.AnalyticsByGoogle'
          * @protected
          */
-        className: 'Neo.main.addon.AnalyticsByGoogle',
-        /**
-         * @member {Boolean} singleton=true
-         * @protected
-         */
-        singleton: true
+        className: 'Neo.main.addon.AnalyticsByGoogle'
     }
 
     /**
@@ -27,7 +21,7 @@ class AnalyticsByGoogle extends Base {
      */
     construct(config) {
         super.construct(config);
-        this.insertGoogleAnalyticsScript();
+        this.insertGoogleAnalyticsScript()
     }
 
     /**
@@ -37,23 +31,21 @@ class AnalyticsByGoogle extends Base {
         window.dataLayer = window.dataLayer || [];
 
         function gtag() {
-            dataLayer.push(arguments);
+            dataLayer.push(arguments)
         }
 
         gtag('js', new Date());
         gtag('config', Neo.config.gtagId);
 
-        const script = document.createElement('script');
+        let script = document.createElement('script');
 
         Object.assign(script, {
             async: true,
             src  : `https://www.googletagmanager.com/gtag/js?id=${Neo.config.gtagId}`
         });
 
-        document.head.appendChild(script);
+        document.head.appendChild(script)
     }
 }
 
-let instance = Neo.applyClassConfig(AnalyticsByGoogle);
-
-export default instance;
+export default Neo.setupClass(AnalyticsByGoogle);

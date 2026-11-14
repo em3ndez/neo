@@ -12,33 +12,32 @@ class Toolbar extends Base {
          */
         className: 'Neo.dialog.header.Toolbar',
         /**
+         * @member {Object} actionMap
+         */
+        actionMap: {
+            close   : () => ({action: 'close',    iconCls: 'far fa-window-close'}),
+            maximize: () => ({action: 'maximize', iconCls: 'far fa-window-maximize'})
+        },
+        /**
+         * You can define the action order and directly add custom actions.
+         * @example
+         * {
+         *     actions: [
+         *         'close',
+         *         'maximize',
+         *         {action: 'help', iconCls: 'far fa-circle-question'}
+         *     ]
+         * }
+         *
+         * You can also extend the actionMap if needed.
+         * @member {Object[]|String[]|null} actions=['maximize','close']
+         */
+        actions: ['maximize', 'close'],
+        /**
          * @member {String|null} title=null
          */
         title_: null
     }
-
-    /**
-     * @member {Object} actionMap
-     */
-    actionMap = {
-        close   : () => ({action: 'close',    iconCls: 'far fa-window-close'}),
-        maximize: () => ({action: 'maximize', iconCls: 'far fa-window-maximize'})
-    }
-    /**
-     * You can define the action order and directly add custom actions.
-     * @example
-     * {
-     *     actions: [
-     *         'close',
-     *         'maximize',
-     *         {action: 'help', iconCls: 'far fa-circle-question'}
-     *     ]
-     * }
-     *
-     * You can also extend the actionMap if needed.
-     * @member {Object[]|String[]|null} actions=['maximize','close']
-     */
-    actions = ['maximize', 'close']
 
     /**
      * Triggered after the title config got changed
@@ -58,39 +57,27 @@ class Toolbar extends Base {
      */
     createItems() {
         let me      = this,
-            handler = me.fireAction.bind(me),
-            items   = me.items || [];
+            items   = me.items || [],
+            {title} = me;
 
         items.push({
             ntype : 'label',
             cls   : ['neo-panel-header-text', 'neo-label'],
             flag  : 'title-label',
-            hidden: !me.title,
-            text  : me.title
+            hidden: !title,
+            text  : title
         });
-
-        if (me.actions) {
-            items.push('->');
-
-            me.actions.forEach(action => {
-                if (Neo.typeOf(action) !== 'Object') {
-                    action = me.actionMap[action]()
-                }
-
-                items.push({handler, ...action})
-            })
-        }
 
         me.items = items;
 
-        super.createItems();
+        super.createItems()
     }
 
     /**
      * @param {Object} data
      */
     fireAction(data) {
-        let component = data.component;
+        let {component} = data;
 
         this.fire('headerAction', {
             action: component.action,
@@ -100,6 +87,4 @@ class Toolbar extends Base {
     }
 }
 
-Neo.applyClassConfig(Toolbar);
-
-export default Toolbar;
+export default Neo.setupClass(Toolbar);

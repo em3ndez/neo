@@ -1,11 +1,10 @@
-import Model    from '../Model.mjs';
-import VDomUtil from '../../util/VDom.mjs';
+import BaseModel from './BaseModel.mjs';
 
 /**
  * @class Neo.selection.grid.ColumnModel
- * @extends Neo.selection.Model
+ * @extends Neo.selection.grid.BaseModel
  */
-class ColumnModel extends Model {
+class ColumnModel extends BaseModel {
     static config = {
         /**
          * @member {String} className='Neo.selection.grid.ColumnModel'
@@ -18,115 +17,79 @@ class ColumnModel extends Model {
          */
         ntype: 'selection-grid-columnmodel',
         /**
-         * @member {String} cls='selection-columnmodel'
+         * @member {String} cls='neo-selection-columnmodel'
          * @protected
          */
-        cls: 'neo-selection-columnmodel'
+        cls: 'neo-selection-columnmodel',
+        /**
+         * @member {Boolean} selectsColumns=true
+         * @protected
+         */
+        selectsColumns: true
     }
 
     /**
      *
      */
     addDomListener() {
-        let me   = this,
-            view = me.view;
+        let me            = this,
+            {view}        = me,
+            {parent}      = view,
+            gridContainer = view.gridContainer || parent, // Fallback if no specific Multi-Body structure
+            listener      = {cellClick: me.onCellClick, scope: me};
 
-        view.addDomListeners({
-            click   : me.onCellClick,
-            delegate: '.neo-grid-cell',
-            scope   : me
-        });
+        gridContainer.on(listener)
     }
 
     /**
-     * @param {Object} eventPath
-     * @returns {String|null} cellId
+     * @param args
      */
-    static getCellId(eventPath) {
-        let id   = null,
-            i    = 0,
-            len  = eventPath.length;
+    destroy(...args) {
+        let me            = this,
+            {view}        = me,
+            {parent}      = view,
+            gridContainer = view.gridContainer || parent;
 
-        for (; i < len; i++) {
-            if (eventPath[i].cls.includes('neo-grid-cell')) {
-                id = eventPath[i].id;
-                break;
-            }
-        }
+        gridContainer.un('cellClick', me.onCellClick, me);
 
-        return id;
+        super.destroy(...args)
     }
 
     /**
-     * todo: move to grid.Container or view
-     * @param {String} cellId
-     * @param {Object[]} columns
-     * @returns {Number} index
+     * @returns {Boolean}
      */
-    static getColumnIndex(cellId, columns) {
-        let idArray       = cellId.split('__'),
-            currentColumn = idArray[2],
-            dataFields    = columns.map(c => c.field);
-
-        return dataFields.indexOf(currentColumn);
+    hasSelection() {
+        return this.selectedColumns.length > 0
     }
 
     /**
+     * The View-owned model hears each click once, from whichever body received it.
      * @param {Object} data
+     * @param {String} data.dataField
      */
-    onCellClick(data) {
-        let me = this,
-            id = ColumnModel.getCellId(data.path),
-            columnNodeIds, index, tbodyNode;
-
-        if (id) {
-            index         = ColumnModel.getColumnIndex(id, me.view.items[0].items);
-            tbodyNode     = VDomUtil.findVdomChild(me.view.vdom, {cls: 'neo-grid-view'}).vdom;
-            columnNodeIds = VDomUtil.getColumnNodesIds(tbodyNode, index);
-
-            me.select(columnNodeIds);
-        }
+    onCellClick({dataField}) {
+        dataField && this.setSelectedColumns(this.isSelectedColumn(dataField) ? [] : [dataField])
     }
 
     /**
      * @param {Object} data
      */
     onKeyDownLeft(data) {
-        this.onNavKeyColumn(data, -1);
+        this.canNavigate(data) && this.onNavKeyColumn(-1)
     }
 
     /**
      * @param {Object} data
      */
     onKeyDownRight(data) {
-        this.onNavKeyColumn(data, 1);
+        this.canNavigate(data) && this.onNavKeyColumn(1)
     }
 
     /**
-     * @param {Object} data
      * @param {Number} step
      */
-    onNavKeyColumn(data, step) {
-        let me            = this,
-            idArray       = ColumnModel.getCellId(data.path).split('__'),
-            currentColumn = idArray[2],
-            view          = me.view,
-            fields        = view.columns.map(c => c.field),
-            newIndex      = (fields.indexOf(currentColumn) + step) % fields.length,
-            columnNodeIds, id, tbodyNode;
-
-        while (newIndex < 0) {
-            newIndex += fields.length;
-        }
-
-        idArray[2] = fields[newIndex];
-        id = idArray.join('__');
-
-        tbodyNode     = VDomUtil.findVdomChild(me.view.vdom, {cls: 'neo-grid-view'}).vdom;
-        columnNodeIds = VDomUtil.getColumnNodesIds(tbodyNode, newIndex);
-
-        me.select(columnNodeIds);
-        view.focus(id); // we have to focus one cell to ensure the keynav keeps working
+    onNavKeyColumn(step) {
+        this.view.gridContainer.scrollByColumns(this.stepSelectedColumn(step), step)
     }
 
     /**
@@ -135,44 +98,27 @@ class ColumnModel extends Model {
     register(component) {
         super.register(component);
 
-        let me   = this,
-            id   = me.id,
-            view = me.view;
+        let {id, view} = this;
 
-        view.keys?._keys.push({
-            fn   : 'onKeyDownLeft',
-            key  : 'Left',
-            scope: id
-        }, {
-            fn   : 'onKeyDownRight',
-            key  : 'Right',
-            scope: id
-        });
+        view.keys?._keys.push(
+            {fn: 'onKeyDownLeft',  key: 'Left',  scope: id},
+            {fn: 'onKeyDownRight', key: 'Right', scope: id}
+        )
     }
-
 
     /**
      *
      */
     unregister() {
-        let me   = this,
-            id   = me.id,
-            view = me.view;
+        let {id, view} = this;
 
-        view.keys?.removeKeys([{
-            fn   : 'onKeyDownLeft',
-            key  : 'Left',
-            scope: id
-        }, {
-            fn   : 'onKeyDownRight',
-            key  : 'Right',
-            scope: id
-        }]);
+        view.keys?.removeKeys([
+            {fn: 'onKeyDownLeft',  key: 'Left',  scope: id},
+            {fn: 'onKeyDownRight', key: 'Right', scope: id}
+        ]);
 
-        super.unregister();
+        super.unregister()
     }
 }
 
-Neo.applyClassConfig(ColumnModel);
-
-export default ColumnModel;
+export default Neo.setupClass(ColumnModel);

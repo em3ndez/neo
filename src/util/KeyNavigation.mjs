@@ -20,6 +20,7 @@ class KeyNavigation extends Base {
         /**
          * Internally stores the component id inside _component
          * @member {Neo.component.Base|null} component_=null
+         * @reactive
          */
         component_: null,
         /**
@@ -29,12 +30,13 @@ class KeyNavigation extends Base {
         keyDownEventBubble: false,
         /**
          * @member {Array|null} keys_=null
+         * @reactive
          */
         keys_: null
     }
 
     add(value) {
-        this._keys.push(...this.parseKeys(value));
+        this._keys.push(...this.parseKeys(value))
     }
 
     /**
@@ -42,7 +44,7 @@ class KeyNavigation extends Base {
      * @returns {Neo.component.Base}
      */
     beforeGetComponent() {
-        return Neo.getComponent(this._component);
+        return Neo.getComponent(this._component)
     }
 
     /**
@@ -51,7 +53,7 @@ class KeyNavigation extends Base {
      * @returns {String} the component id
      */
     beforeSetComponent(value) {
-        return value?.id;
+        return value?.id
     }
 
     /**
@@ -59,14 +61,14 @@ class KeyNavigation extends Base {
      */
     destroy() {
         this.unregister();
-        super.destroy();
+        super.destroy()
     }
 
     /**
      * @param {Object} data
      */
     onKeyDown(data) {
-        // Using the chrome auto-fill feature does trigger a keydown event, not containing a key. See: #64
+        // Chrome's auto-fill triggers a keydown event carrying no key, so guard on its presence.
         if (data.key) {
             let me           = this,
                 upperCaseKey = data.key.toUpperCase(),
@@ -75,12 +77,16 @@ class KeyNavigation extends Base {
             upperCaseKey = me.parseUpperCaseKey(upperCaseKey);
 
             me.keys.forEach(key => {
-                scope = Neo.get(key.scope);
+                scope = Neo.isString(key.scope) ? Neo.get(key.scope) : key.scope;
 
                 if (key.key.toUpperCase() === upperCaseKey) {
-                    scope[key.fn]?.apply(scope, [data]);
+                    if (Neo.isFunction(key.fn)) {
+                        key.fn.apply(scope, [data, me.component])
+                    } else {
+                        scope[key.fn]?.apply(scope, [data, me.component])
+                    }
                 }
-            });
+            })
         }
     }
 
@@ -94,19 +100,21 @@ class KeyNavigation extends Base {
                 keyArray    = [];
 
             if (componentId) {
-                Object.entries(value).forEach(([key, value]) => {
-                    keyArray.push({
-                        fn   : value,
-                        key,
-                        scope: componentId // todo: support VCs later on
-                    })
+                Object.entries(value).forEach(([key, val]) => {
+                    if (key !== 'scope') {
+                        keyArray.push({
+                            fn   : val,
+                            key,
+                            scope: value.scope || componentId // todo: support VCs later on
+                        })
+                    }
                 });
 
-                value = keyArray;
+                value = keyArray
             }
         }
 
-        return value;
+        return value
     }
 
     /**
@@ -119,22 +127,22 @@ class KeyNavigation extends Base {
         switch (key) {
             case ' ':
                 key = 'SPACE';
-                break;
+                break
             case 'ARROWDOWN':
                 key = 'DOWN';
-                break;
+                break
             case 'ARROWLEFT':
                 key = 'LEFT';
-                break;
+                break
             case 'ARROWRIGHT':
                 key = 'RIGHT';
-                break;
+                break
             case 'ARROWUP':
                 key = 'UP';
-                break;
+                break
         }
 
-        return key;
+        return key
     }
 
     /**
@@ -152,7 +160,7 @@ class KeyNavigation extends Base {
                 fn    : me.onKeyDown,
                 scope : me
             }
-        });
+        })
     }
 
     /**
@@ -171,7 +179,7 @@ class KeyNavigation extends Base {
 
             if (Neo.isEqual(key, config)) {
                 NeoArray.remove(keys, key);
-                break;
+                break
             }
         }
     }
@@ -181,7 +189,7 @@ class KeyNavigation extends Base {
      * @param {Array} items
      */
     removeKeys(items) {
-        Array.isArray(items) && items.forEach(item => this.removeKey(item));
+        Array.isArray(items) && items.forEach(item => this.removeKey(item))
     }
 
     /**
@@ -190,8 +198,20 @@ class KeyNavigation extends Base {
     unregister() {
         // todo: remove the dom listener from the owner component
     }
+
+    /**
+     * Serializes the KeyNavigation into a JSON-compatible object.
+     * @returns {Object}
+     */
+    toJSON() {
+        let me = this;
+
+        return {
+            ...super.toJSON(),
+            component: me.serializeConfig(me.component),
+            keys     : me.serializeConfig(me.keys)
+        }
+    }
 }
 
-Neo.applyClassConfig(KeyNavigation);
-
-export default KeyNavigation;
+export default Neo.setupClass(KeyNavigation);

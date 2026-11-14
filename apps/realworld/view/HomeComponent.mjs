@@ -21,6 +21,7 @@ class HomeComponent extends Component {
         activeTag: null,
         /**
          * @member {Object[]|null} articlePreviews_=null
+         * @reactive
          */
         articlePreviews_: null,
         /**
@@ -29,14 +30,17 @@ class HomeComponent extends Component {
         baseCls: ['home-page'],
         /**
          * @member {Number} countArticles_=10
+         * @reactive
          */
         countArticles_: 10,
         /**
          * @member {Number} countArticles_=10
+         * @reactive
          */
         currentPage_: 1,
         /**
          * @member {Object[]} feeds_
+         * @reactive
          */
         feeds_: [
             {name: 'Your Feed',   disabled: true},
@@ -44,10 +48,12 @@ class HomeComponent extends Component {
         ],
         /**
          * @member {Boolean} loggedIn_=false
+         * @reactive
          */
         loggedIn_: false,
         /**
          * @member {Number} pageSize_=10
+         * @reactive
          */
         pageSize_: 10,
         /**
@@ -56,6 +62,7 @@ class HomeComponent extends Component {
         previewComponents: [],
         /**
          * @member {RealWorld.view.article.TagListComponent|null} tagList_=null
+         * @reactive
          */
         tagList_: null,
         /**
@@ -65,8 +72,8 @@ class HomeComponent extends Component {
         {cn: [
             {cls: ['banner'], cn: [
                 {cls: ['container'], cn: [
-                    {tag: 'h1', cls: ['logo-font'], html: 'conduit'},
-                    {tag: 'p', html: 'A place to share your knowledge.'}
+                    {tag: 'h1', cls: ['logo-font'], text: 'conduit'},
+                    {tag: 'p', text: 'A place to share your knowledge.'}
                 ]}
             ]},
             {cls: ['container', 'page'], cn: [
@@ -90,12 +97,13 @@ class HomeComponent extends Component {
     construct(config) {
         super.construct(config);
 
-        Neo.main.DomEvents.registerPreventDefaultTargets({
-            name: 'click',
-            cls : 'prevent-click'
-        });
-
         let me = this;
+
+        Neo.main.DomEvents.registerPreventDefaultTargets({
+            name    : 'click',
+            cls     : 'prevent-click',
+            windowId: me.windowId
+        });
 
         me.addDomListeners([
             {click: {fn: me.onNavLinkClick,     delegate: '.nav-link',  scope: me}},
@@ -118,7 +126,9 @@ class HomeComponent extends Component {
 
         me.tagList = Neo.create({
             module  : TagListComponent,
+            appName : me.appName,
             parentId: me.id,
+            windowId: me.windowId,
 
             listeners: {
                 tagChange: me.onTagChange,
@@ -126,7 +136,7 @@ class HomeComponent extends Component {
             }
         });
 
-        me.vdom.cn[1].cn[0].cn.push(me.tagList.vdom);
+        me.vdom.cn[1].cn[0].cn.push(me.tagList.createVdomReference());
         me.update();
     }
 
@@ -161,7 +171,9 @@ class HomeComponent extends Component {
                 if (!me.previewComponents[index]) {
                     me.previewComponents[index] = Neo.create({
                         module  : PreviewComponent,
+                        appName : me.appName,
                         parentId: me.id,
+                        windowId: me.windowId,
                         ...config
                     });
                 } else {
@@ -211,7 +223,7 @@ class HomeComponent extends Component {
                         cls : ['page-link', 'prevent-click'],
                         id  : me.getNavLinkVdomId(i),
                         href: '',
-                        html: i
+                        text: i
                     }]
                 });
             }
@@ -231,8 +243,8 @@ class HomeComponent extends Component {
             node, oldNode;
 
         if (me.mounted) {
-            node    = VDomUtil.findVdomChild(me.vdom, me.getNavLinkVdomId(value)).parentNode;
-            oldNode = VDomUtil.findVdomChild(me.vdom, me.getNavLinkVdomId(oldValue)).parentNode;
+            node    = VDomUtil.find(me.vdom, me.getNavLinkVdomId(value)).parentNode;
+            oldNode = VDomUtil.find(me.vdom, me.getNavLinkVdomId(oldValue)).parentNode;
 
             NeoArray.add(node.cls, 'active');
             NeoArray.remove(oldNode.cls, 'active');
@@ -272,9 +284,9 @@ class HomeComponent extends Component {
                 id : me.id + '__nav-item_' + index,
                 cn : [{
                     tag : 'a',
-                    cls : cls,
+                    cls,
                     href: '',
-                    html: item.name,
+                    text: item.name,
                     id  : me.id + '__nav-item-link_' + index,
                 }]
             });
@@ -289,7 +301,7 @@ class HomeComponent extends Component {
      */
     afterSetLoggedIn(value, oldValue) {
         let me      = this,
-            navItem = VDomUtil.findVdomChild(me.vdom, me.id + '__nav-item-link_0').vdom;
+            navItem = VDomUtil.find(me.vdom, me.id + '__nav-item-link_0').vdom;
 
         NeoArray[value ? 'remove' : 'add'](navItem.cls, 'disabled');
         me.update();
@@ -305,8 +317,6 @@ class HomeComponent extends Component {
     afterSetPageSize(value, oldValue) {
         let me = this,
             i  = 0;
-
-        console.log('afterSetPageSize', value);
 
         for (; i < value; i++) {
 
@@ -339,16 +349,15 @@ class HomeComponent extends Component {
             me.set({
                 articlePreviews: data.json.articles,
                 countArticles  : data.json.articlesCount
-            });
-        });
+            })
+        })
     }
 
     /**
      * @returns {Object} vdom
      */
     getContainer() {
-        let el = VDomUtil.findVdomChild(this.vdom, {cls: 'col-md-9'});
-        return el?.vdom;
+        return VDomUtil.find(this.vdom, {cls: 'col-md-9'})?.vdom
     }
 
     /**
@@ -356,7 +365,7 @@ class HomeComponent extends Component {
      * @returns {Number}
      */
     getNavLinkId(nodeId) {
-        return parseInt(nodeId.split('__')[1]);
+        return parseInt(nodeId.split('__')[1])
     }
 
     /**
@@ -364,7 +373,7 @@ class HomeComponent extends Component {
      * @returns {String}
      */
     getNavLinkVdomId(id) {
-        return this.id + '__' + id;
+        return this.id + '__' + id
     }
 
     /**
@@ -372,12 +381,12 @@ class HomeComponent extends Component {
      */
     onNavLinkClick(data) {
         let me         = this,
-            el         = VDomUtil.findVdomChild(me.vdom, data.path[0].id),
+            el         = VDomUtil.find(me.vdom, data.path[0].id),
             feedHeader = VDomUtil.getByFlag(me.vdom, 'feed-header'),
             opts       = {};
 
         if (!el.vdom.cls.includes('disabled')) {
-            switch(el.vdom.html) {
+            switch (el.vdom.text) {
                 case 'Global Feed':
                     me.activeTag = null;
                     break;
@@ -388,7 +397,7 @@ class HomeComponent extends Component {
                     };
                     break;
                 default: // tag
-                    me.activeTag = el.vdom.html.substring(2); // remove the '# '
+                    me.activeTag = el.vdom.text.substring(2); // remove the '# '
                     break;
             }
 
@@ -401,7 +410,7 @@ class HomeComponent extends Component {
             me.update();
 
             me.getController()._articlesOffset = 0; // silent update
-            me.getArticles({}, opts);
+            me.getArticles({}, opts)
         }
     }
 
@@ -409,14 +418,14 @@ class HomeComponent extends Component {
      * @param {Object} value
      */
     onCurrentUserChange(value) {
-        this.loggedIn = !!value;
+        this.loggedIn = !!value
     }
 
     /**
      * @param {Object} data
      */
     onPageNavLinkClick(data) {
-        this.currentPage = this.getNavLinkId(data.path[0].id);
+        this.currentPage = this.getNavLinkId(data.path[0].id)
     }
 
     /**
@@ -453,10 +462,8 @@ class HomeComponent extends Component {
 
         me.getArticles({
             tag: opts.value
-        });
+        })
     }
 }
 
-Neo.applyClassConfig(HomeComponent);
-
-export default HomeComponent;
+export default Neo.setupClass(HomeComponent);

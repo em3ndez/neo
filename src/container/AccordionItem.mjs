@@ -45,7 +45,12 @@ class AccordionContainer extends Base {
          * Title for Headerbar
          * @member {String|null} title=null
          */
-        title_: null
+        title_: null,
+        /**
+         * @member {Object} _vdom={tabIndex:-1,cn:[]}
+         */
+        _vdom:
+        {tabIndex: -1, cn: []}
     }
 
     /**
@@ -55,9 +60,8 @@ class AccordionContainer extends Base {
     createItems() {
         let me       = this,
             arrowCls = me.arrowCls || 'fa-caret-down',
-            iconCls  = me.iconCls || ['no-icon'],
-            items    = me.items,
-            title    = me.title,
+            iconCls  = me.iconCls  || ['no-icon'],
+            {items, title} = me,
             header, content;
 
         if (!Neo.isArray(iconCls)) {
@@ -69,8 +73,11 @@ class AccordionContainer extends Base {
         }
 
         header = Neo.create({
-            module: Toolbar,
-            items : [{
+            module : Toolbar,
+            flag   : 'header',
+            baseCls: ['neo-accordion-header', 'neo-toolbar'],
+            vdom   : {tabIndex: -1, cn: []},
+            items  : [{
                 flag   : 'iconEl',
                 ntype  : 'component',
                 baseCls: ['neo-accordion-header-icon'],
@@ -79,7 +86,7 @@ class AccordionContainer extends Base {
                 flag   : 'titleEl',
                 ntype  : 'component',
                 baseCls: ['neo-accordion-header-title'],
-                html   : title
+                text   : title
             }, {
                 ntype  : 'component',
                 baseCls: ['neo-accordion-header-arrow'],
@@ -108,17 +115,21 @@ class AccordionContainer extends Base {
      * @param {Boolean} isExpanded
      */
     afterSetExpanded(isExpanded) {
-        let me  = this,
-            cls = me.cls,
-            fn  = isExpanded ? 'add' : 'remove';
+        let me    = this,
+            {cls} = me,
+            fn    = isExpanded ? 'add' : 'remove';
 
         NeoArray[fn](cls, 'neo-expanded');
         me.cls = cls;
 
         // Ensure scrollbars are not flipping in and out
         me.timeout(450).then(() => {
-            NeoArray[fn](cls, 'neo-scrollable');
-            me.cls = cls;
+            if (!me.isDestroyed) {
+                let currentCls = me.cls;
+
+                NeoArray[me.expanded ? 'add' : 'remove'](currentCls, 'neo-scrollable');
+                me.cls = currentCls
+            }
         })
     }
 
@@ -141,7 +152,7 @@ class AccordionContainer extends Base {
 
             NeoArray.remove(cls, oldValue);
             NeoArray.add(cls, newValue);
-            iconEl.cls = cls;
+            iconEl.cls = cls
         }
     }
 
@@ -154,7 +165,17 @@ class AccordionContainer extends Base {
     afterSetTitle(newValue) {
         let titleEl = this.down({flag: 'titleEl'});
 
-        if (titleEl) titleEl.html = newValue;
+        if (titleEl) {
+            titleEl.text = newValue
+        }
+    }
+
+    /**
+     * @summary Returns the AccordionItem's header toolbar component.
+     * @returns {Neo.toolbar.Base|null}
+     */
+    getHeader() {
+        return this.down({flag: 'header'})
     }
 
     /**
@@ -166,17 +187,15 @@ class AccordionContainer extends Base {
             currentState = me.expanded,
             parent       = me.up('accordion');
 
-        if (parent.ntype === 'accordion') {
+        if (parent?.ntype === 'accordion') {
             parent.childExpandChange({
                 expanded: !currentState,
                 target  : me
-            });
+            })
         } else {
-            me.expanded = !currentState;
+            me.expanded = !currentState
         }
     }
 }
 
-Neo.applyClassConfig(AccordionContainer);
-
-export default AccordionContainer;
+export default Neo.setupClass(AccordionContainer);

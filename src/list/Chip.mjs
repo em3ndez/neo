@@ -29,6 +29,11 @@ class Chip extends ComponentList {
             iconCls: 'fa fa-home'
         },
         /**
+         * Chip components get their own tabIndex, so list items must not contain one as well.
+         * @member {Boolean} itemsFocusable=false
+         */
+        itemsFocusable: false,
+        /**
          * The type of the node / tag for each list item
          * @member {String} itemTagName='div'
          */
@@ -36,6 +41,7 @@ class Chip extends ComponentList {
         /**
          * True will flex each list item horizontally
          * @member {Boolean} stacked_=true
+         * @reactive
          */
         stacked_: true,
         /**
@@ -57,8 +63,8 @@ class Chip extends ComponentList {
                 items = me.items || [];
 
             items.forEach(item => {
-                item.display = value ? 'flex' : 'inline-flex';
-            });
+                item.display = value ? 'flex' : 'inline-flex'
+            })
         }
     }
 
@@ -80,7 +86,8 @@ class Chip extends ComponentList {
             };
 
         if (listItem) {
-            listItem.setSilent(config);
+            me.updateDepth = 2;
+            listItem.setSilent(config)
         } else {
             items[index] = listItem = Neo.create({
                 appName  : me.appName,
@@ -88,15 +95,13 @@ class Chip extends ComponentList {
                 tabIndex : -1,
                 ...me.itemDefaults,
                 ...config
-            });
+            })
         }
 
         me.items = items;
 
-        return [listItem.vdom];
+        return [listItem.createVdomReference()]
     }
 }
 
-Neo.applyClassConfig(Chip);
-
-export default Chip;
+export default Neo.setupClass(Chip);

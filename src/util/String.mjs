@@ -14,18 +14,26 @@ class StringUtil extends Base {
         '<' : '&lt;',
         '>' : '&gt;',
         '"' : '&quot;',
-        '\'': '&#039;'
+        '\'': '&apos;',
+        '$' : '&dollar;',
+        '\\': '&bsol;',
+        '/' : '&sol;'
     }
     /**
      * @member {RegExp} charPattern
      * @static
      */
-    static charPattern = /[&<>"']/g
+    static charPattern = /[&<>"'$\\]/g
     /**
      * @member {RegExp} entityPattern
      * @static
      */
-    static entityPattern = /(&amp;)|(&lt;)|(&gt;)|(&quot;)|(&#039;)/g
+    static entityPattern = /(&amp;)|(&lt;)|(&gt;)|(&quot;)|(&apos;)|(&dollar;)|(&bsol;)|(&sol;)/g
+    /**
+     * @member {RegExp} regExpMetaPattern
+     * @static
+     */
+    static regExpMetaPattern = /[\\^$.*+?()[\]{}|/\-]/g
 
     static config = {
         /**
@@ -42,11 +50,25 @@ class StringUtil extends Base {
     static escapeHtml(value) {
         let me = this; // inside a static method, we are pointing to the class prototype
 
-        if (Neo.typeOf(value) !== 'String') {
-            return value;
+        if (!Neo.isString(value)) {
+            return value
         }
 
-        return value.replace(me.charPattern, me.getEntityFromChar.bind(me));
+        return value.replace(me.charPattern, me.getEntityFromChar.bind(me))
+    }
+
+    /**
+     * Escapes regular expression metacharacters in a string so it matches literally.
+     * @summary Escapes regex metacharacters (`\ ^ $ . * + ? ( ) [ ] { } | / -`) in string inputs.
+     * @param {String} value
+     * @returns {String}
+     */
+    static escapeRegExp(value) {
+        if (!Neo.isString(value)) {
+            return value
+        }
+
+        return value.replace(this.regExpMetaPattern, '\\$&')
     }
 
     /**
@@ -54,8 +76,8 @@ class StringUtil extends Base {
      * @param {String} entity
      */
     static getCharFromEntity(entity) {
-        const mappedChar = Object.keys(this.charEntityMap).find(key => this.charEntityMap[key] === entity);
-        return mappedChar || entity;
+        let mappedChar = Object.keys(this.charEntityMap).find(key => this.charEntityMap[key] === entity);
+        return mappedChar || entity
     }
 
     /**
@@ -63,7 +85,7 @@ class StringUtil extends Base {
      * @param {String} char
      */
     static getEntityFromChar(char) {
-        return this.charEntityMap[char] || char;
+        return this.charEntityMap[char] || char
     }
 
     /**
@@ -73,14 +95,21 @@ class StringUtil extends Base {
     static unescapeHtml(value) {
         let me = this; // inside a static method, we are pointing to the class prototype
 
-        if (Neo.typeOf(value) !== 'String') {
-            return value;
+        if (!Neo.isString(value)) {
+            return value
         }
 
-        return value.replace(me.entityPattern, me.getCharFromEntity.bind(me));
+        return value.replace(me.entityPattern, me.getCharFromEntity.bind(me))
+    }
+
+    /**
+     * Returns the passed string with the first letter uncapitalized.
+     * @param {String} value
+     * @returns  {String}
+     */
+    static uncapitalize(value) {
+        return value && value[0].toLowerCase() + value.substring(1)
     }
 }
 
-Neo.applyClassConfig(StringUtil);
-
-export default StringUtil;
+export default Neo.setupClass(StringUtil);

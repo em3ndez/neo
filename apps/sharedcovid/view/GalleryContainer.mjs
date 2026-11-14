@@ -22,6 +22,7 @@ class GalleryContainer extends Container {
         baseCls: ['neo-gallery-maincontainer', 'neo-viewport'],
         /**
          * @member {Neo.controller.Component|null} controller=GalleryContainerController
+         * @reactive
          */
         controller: GalleryContainerController,
         /**
@@ -34,6 +35,7 @@ class GalleryContainer extends Container {
         galleryConfig: null,
         /**
          * @member {Object|null} layout={ntype: 'hbox', align: 'stretch'}
+         * @reactive
          */
         layout: {ntype: 'hbox', align: 'stretch'},
         /**
@@ -185,7 +187,7 @@ class GalleryContainer extends Container {
                 }]
             }, {
                 module: BoxLabel,
-                text  : [
+                html  : [
                     '<b>Navigation Concept</b>',
                     '<p>You can use the Arrow Keys to walk through the items.</p>'
                 ].join('')
@@ -207,14 +209,14 @@ class GalleryContainer extends Container {
             parentId : me.id,
             reference: 'gallery',
 
-            model: {
-                parent: me.getModel()
+            stateProvider: {
+                parent: me.getStateProvider()
             },
 
             ...me.galleryConfig
         });
 
-        me.items[0].items.push(me.gallery);
+        me.items[0].items.push(me.gallery)
     }
 
     /**
@@ -222,10 +224,8 @@ class GalleryContainer extends Container {
      */
     destroy(...args) {
         this.gallery = null;
-        super.destroy(...args);
+        super.destroy(...args)
     }
 }
 
-Neo.applyClassConfig(GalleryContainer);
-
-export default GalleryContainer;
+export default Neo.setupClass(GalleryContainer);

@@ -1,5 +1,6 @@
 import Container      from '../../src/container/Base.mjs';
 import TableContainer from '../../src/table/Container.mjs';
+import fields         from './fields.mjs';
 
 /**
  * @class Neo.examples.tablePerformance.MainContainer3
@@ -33,7 +34,7 @@ class MainContainer3 extends Container {
 
             items: [{
                 ntype: 'label',
-                text : 'TableContainer App3 (Default Scollbars)',
+                text : 'TableContainer App3 (Default Scrollbars)',
                 style: {
                     margin: '4px 10px 0 5px'
                 }
@@ -43,58 +44,43 @@ class MainContainer3 extends Container {
             }, {
                 ntype     : 'numberfield',
                 clearable : false,
-                id        : 'amountRows3',
                 labelText : 'Rows:',
                 labelWidth: 50,
                 maxValue  : 1500,
                 minValue  : 1,
+                reference : 'amount-rows-field',
                 value     : 100,
                 width     : 120
             }, {
                 ntype     : 'numberfield',
                 clearable : false,
-                id        : 'interval3',
                 labelText : 'Interval:',
                 labelWidth: 62,
                 maxValue  : 5000,
                 minValue  : 10,
+                reference : 'interval-field',
                 value     : 50,
                 width     : 130
             }, {
+                handler: 'up.updateTableViewData',
                 iconCls: 'fa fa-sync-alt',
-                text   : 'Refresh Data',
-                handler: function () {
-                    let rows = Neo.getComponent('amountRows3').value;
-                    Neo.getComponent('myTableContainer3').createRandomViewData(rows);
-                }
+                text   : 'Refresh Data'
             }, {
+                handler: 'up.updateTableViewData100x',
                 iconCls: 'fa fa-sync-alt',
                 text   : 'Refresh 100x',
-                style  : {margin: 0},
-                handler: function () {
-                    let interval     = Neo.getComponent('interval3').value,
-                        rows         = Neo.getComponent('amountRows3').value,
-                        maxRefreshes = 100,
-                        intervalId   = setInterval(function(){
-                            if (maxRefreshes < 1) {
-                                clearInterval(intervalId);
-                            }
-
-                            Neo.getComponent('myTableContainer3').createRandomViewData(rows);
-                            maxRefreshes--;
-                        }, interval);
-                }
+                style  : {margin: 0}
             }]
         }, {
-            ntype              : 'table-container',
-            id                 : 'myTableContainer3',
-            amountRows         : 100, // testing var
-            createRandomData   : true,
+            module             : TableContainer,
+            bodyConfig         : {useRowRecordIds: false},
+            reference          : 'table',
+            store              : {model: {fields}},
             useCustomScrollbars: false,
             width              : '100%',
 
             columnDefaults: {
-                renderer: function(data) {
+                renderer(data) {
                     return {
                         html : data.value,
                         style: {
@@ -143,8 +129,43 @@ class MainContainer3 extends Container {
             }]
         }]
     }
+
+    /**
+     *
+     */
+    onConstructed() {
+        super.onConstructed();
+        this.updateTableViewData()
+    }
+
+    /**
+     *
+     */
+    updateTableViewData() {
+        let me        = this,
+            table     = me.getReference('table'),
+            columns   = table.headerToolbar.items.length,
+            rows      = me.getReference('amount-rows-field').value,
+            inputData = me.up('viewport').createRandomData(columns, rows);
+
+        table.store.data = inputData
+    }
+
+    /**
+     *
+     */
+    updateTableViewData100x() {
+        let interval     = this.getReference('interval-field').value,
+            maxRefreshes = 100,
+            intervalId   = setInterval(() => {
+                if (maxRefreshes < 1) {
+                    clearInterval(intervalId);
+                }
+
+                this.updateTableViewData();
+                maxRefreshes--
+            }, interval)
+    }
 }
 
-Neo.applyClassConfig(MainContainer3);
-
-export default MainContainer3;
+export default Neo.setupClass(MainContainer3);

@@ -18,10 +18,11 @@ class NeoArray extends Base {
      * Only primitive items will get found as duplicates
      * @param {Array} arr
      * @param {*} items
+     * @returns {Array}
      */
     static add(arr, items) {
         if (!Array.isArray(items)) {
-            items = [items];
+            items = [items]
         }
 
         items.forEach(item => {
@@ -29,6 +30,8 @@ class NeoArray extends Base {
                 arr.push(item);
             }
         });
+
+        return arr
     }
 
     /**
@@ -38,7 +41,7 @@ class NeoArray extends Base {
      * @returns {Array}
      */
     static difference(array1=[], array2=[]) {
-        return array1.filter(item => !array2.includes(item));
+        return array1.filter(item => !array2.includes(item))
     }
 
     /**
@@ -47,7 +50,42 @@ class NeoArray extends Base {
      * @param {*} item
      */
     static hasItem(arr, item) {
-        return arr.includes(item);
+        return arr.includes(item)
+    }
+
+    /**
+     * Inserts an item or Array of items to an array in case it does not already exist.
+     * Duplicates will only get matched by reference.
+     * @param {Array} arr
+     * @param {Number} index
+     * @param {*} items
+     * @returns {Array}
+     */
+    static insert(arr, index, items) {
+        if (!Array.isArray(items)) {
+            items = [items]
+        }
+
+        let len = items.length -1,
+            i   = len,
+            currentIndex, item;
+
+        // Iterate backwards
+        for (; i > -1; i--) {
+            item = items[i];
+
+            currentIndex = arr.indexOf(item);
+
+            if (index !== currentIndex) {
+                if (currentIndex > -1) {
+                    this.move(arr, currentIndex, index)
+                } else {
+                    arr.splice(index, 0, item)
+                }
+            }
+        }
+
+        return arr
     }
 
     /**
@@ -58,7 +96,7 @@ class NeoArray extends Base {
      * @returns {Array}
      */
     static intersection(array1=[], array2=[]) {
-        return array1.filter(item => array2.includes(item));
+        return array1.filter(item => array2.includes(item))
     }
 
     /**
@@ -69,15 +107,15 @@ class NeoArray extends Base {
      */
     static move(arr, fromIndex, toIndex) {
         if (fromIndex === toIndex) {
-            return arr;
+            return arr
         }
 
         if (fromIndex >= arr.length) {
-            fromIndex = arr.length - 1;
+            fromIndex = arr.length - 1
         }
 
         arr.splice(toIndex, 0, arr.splice(fromIndex, 1)[0]);
-        return arr;
+        return arr
     }
 
     /**
@@ -89,14 +127,16 @@ class NeoArray extends Base {
         let index;
 
         if (!Array.isArray(items)) {
-            items = [items];
+            items = [items]
         }
 
         items.forEach(item => {
             index = arr.indexOf(item);
 
-            index > -1 && arr.splice(index, 1);
+            index > -1 && arr.splice(index, 1)
         });
+
+        return arr
     }
 
     /**
@@ -108,7 +148,7 @@ class NeoArray extends Base {
      */
     static removeAdd(arr, removeItems, addItems) {
         this.remove(arr, removeItems);
-        this.add(arr, addItems);
+        return this.add(arr, addItems)
     }
 
     /**
@@ -117,30 +157,18 @@ class NeoArray extends Base {
      * @param {*} item
      * @param {Boolean} [add]
      */
-    static toggle(arr, item, add) {
-        let operation;
-
-        if (add === true) {
-            operation = 'add';
-        } else if (add === false) {
-            operation = 'remove';
-        } else {
-            operation = this.hasItem(arr, item) ? 'remove' : 'add';
-        }
-
-        this[operation](arr, item);
+    static toggle(arr, item, add = !this.hasItem(arr, item)) {
+        return this[add ? 'add' : 'remove'](arr, item);
     }
 
     /**
      * Returns an array of items which are present in the passed arrays.
      * Multiple arrays may be passed.
      * Only supports primitive items
-     * @param {Array} array1
-     * @param {Array} array2
      * @returns {Array}
      */
     static union() {
-        return [...new Set(Array.prototype.concat(...arguments))];
+        return [...new Set(Array.prototype.concat(...arguments))]
     }
 
     /**
@@ -151,17 +179,17 @@ class NeoArray extends Base {
      */
     static unshift(arr, items) {
         if (!Array.isArray(items)) {
-            items = [items];
+            items = [items]
         }
 
         items.forEach(item => {
             if (!arr.includes(item)) {
-                arr.unshift(item);
+                arr.unshift(item)
             }
         });
+
+        return arr
     }
 }
 
-Neo.applyClassConfig(NeoArray);
-
-export default NeoArray;
+export default Neo.setupClass(NeoArray);

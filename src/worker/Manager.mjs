@@ -1,18 +1,42 @@
 import Base               from '../core/Base.mjs';
+import CanvasGroups, {
+    CANVAS_GROUP_STORAGE_KEY,
+    CANVAS_WORKER_NAME_PREFIX
+}                         from './CanvasGroups.mjs';
 import DomAccess          from '../main/DomAccess.mjs';
 import DomEvents          from '../main/DomEvents.mjs';
+import {generateUUID}     from '../util/UUID.mjs';
 import Message            from './Message.mjs';
 import Observable         from '../core/Observable.mjs';
 import RemoteMethodAccess from './mixin/RemoteMethodAccess.mjs';
 
-const NeoConfig = Neo.config,
-      devMode   = NeoConfig.environment === 'development';
+const NeoConfig   = Neo.config,
+      useMjsFiles = NeoConfig.environment === 'development' || NeoConfig.environment === 'dist/esm';
+
+// Using ?. since SWs do not exist for http (only https)
+navigator.serviceWorker?.addEventListener('controllerchange', function() {
+    window.location.reload()
+}, {once: true});
 
 /**
- * The worker manager lives inside the main thread and creates the App, Data & VDom worker.
- * Also responsible for sending messages from the main thread to the different workers.
+ * @summary Orchestrates the multi-threaded worker environment and handles message routing.
+ *
+ * This class is the central nervous system of the Neo.mjs runtime in the main thread. It is responsible for:
+ * 1.  **Worker Creation:** Instantiating the App, Data, VDom, and other workers based on configuration.
+ * 2.  **Message Routing:** Acting as the hub for inter-worker communication. While standard messages are routed
+ *     via the main thread, this manager also facilitates the initial handshake to establish direct
+ *     **MessageChannel** connections between workers (e.g., App <-> Canvas) for high-performance,
+ *     bi-directional communication. The VDOM update process is a notable exception, using a triangular
+ *     flow (App -> VDom -> Main -> App) by design.
+ * 3.  **DOM Update Coordination:** intercepting VDOM update requests and synchronizing them with the
+ *     browser's animation frame to ensure smooth rendering. This involves a complex promise-based
+ *     mechanism to delay worker replies until the DOM changes are actually painted.
+ * 4.  **Configuration Management:** synchronizing `Neo.config` changes across all threads.
+ *
  * @class Neo.worker.Manager
  * @extends Neo.core.Base
+ * @mixes Neo.core.Observable
+ * @mixes Neo.worker.mixin.RemoteMethodAccess
  * @singleton
  */
 class Manager extends Base {
@@ -23,11 +47,6 @@ class Manager extends Base {
          */
         className: 'Neo.worker.Manager',
         /**
-         * @member {Boolean} singleton=true
-         * @protected
-         */
-        singleton: true,
-        /**
          * @member {Number} activeWorkers=0
          * @protected
          */
@@ -37,27 +56,42 @@ class Manager extends Base {
          * @protected
          */
         appNames: [],
-        /**
-         * The base path for the worker file URLs, can e.g. get set inside the index.html.
-         * @member {String|null} basePath=Neo.config.workerBasePath || 'worker/'
-         * @protected
-         */
-        basePath: NeoConfig.workerBasePath || 'worker/',
-        /**
-         * @member {Number} constructedThreads=0
-         * @protected
-         */
-        constructedThreads: 0,
-        /**
+            /**
+             * @member {Boolean} applicationLoaded=false
+             * @protected
+             */
+            applicationLoaded: false,
+            /**
+             * @member {Boolean} constructedThreads=0
+             * @protected
+             */
+            constructedThreads: 0,        /**
          * @member {String[]|Neo.core.Base[]|null} mixins=[Observable, RemoteMethodAccess]
          */
         mixins: [Observable, RemoteMethodAccess],
+        /**
+         * Remote method access for other workers
+         * @member {Object} remote
+         * @protected
+         */
+        remote: {
+            app   : ['setNeoConfig', 'startWorker'],
+            canvas: ['setNeoConfig'],
+            data  : ['setNeoConfig'],
+            task  : ['setNeoConfig'],
+            vdom  : ['setNeoConfig']
+        },
         /**
          * True in case the current browser supports window.SharedWorker.
          * @member {Boolean} sharedWorkersEnabled=false
          * @protected
          */
         sharedWorkersEnabled: false,
+        /**
+         * @member {Boolean} singleton=true
+         * @protected
+         */
+        singleton: true,
         /**
          * Internal flag to stop the worker communication in case their creation fails
          * @member {Boolean} stopCommunication=false
@@ -72,22 +106,40 @@ class Manager extends Base {
          */
         webWorkersEnabled: false,
         /**
+         * Using the shared UUID helper for a unique window identifier
+         * @member {String} windowId=window.__NEO_SSR__?.windowId||generateUUID()
+         * @protected
+         */
+        windowId: window.__NEO_SSR__?.windowId || generateUUID(),
+        /**
+         * The `sessionStorage` key carrying this window's topology identity — `{groupId, workspaceKey,
+         * generationToken}` — across page loads. Read once per worker registration and sent with the
+         * config, so every window arrives in the App Worker already carrying what it is; `Neo.Main`
+         * writes it on the worker's word and hands a staged popup its reserved slot under the same key.
+         * @member {String} topologyIdentityStorageKey='neo-topology-identity'
+         * @protected
+         */
+        topologyIdentityStorageKey: 'neo-topology-identity',
+        /**
          * Contains the fileNames for the App, Data & Vdom workers
          * @member {Object} workers
          * @protected
          */
         workers: {
             app: {
-                fileName: devMode ? 'App.mjs'    : 'appworker.js'
+                fileName: useMjsFiles ? 'App.mjs'    : 'appworker.js'
             },
             canvas: {
-                fileName: devMode ? 'Canvas.mjs' : 'canvasworker.js'
+                fileName: useMjsFiles ? 'Canvas.mjs' : 'canvasworker.js'
             },
             data: {
-                fileName: devMode ? 'Data.mjs'   : 'dataworker.js'
+                fileName: useMjsFiles ? 'Data.mjs'   : 'dataworker.js'
+            },
+            task: {
+                fileName: useMjsFiles ? 'Task.mjs'   : 'taskworker.js'
             },
             vdom: {
-                fileName: devMode ? 'VDom.mjs'   : 'vdomworker.js'
+                fileName: useMjsFiles ? 'VDom.mjs'   : 'vdomworker.js'
             }
         }
     }
@@ -100,45 +152,102 @@ class Manager extends Base {
      * @member {ServiceWorker|null} serviceWorker=null
      */
     serviceWorker = null
+    /**
+     * @summary This window's canvas group, which names the canvas SharedWorker it shares. Resolved once per boot
+     * by {@link Neo.worker.CanvasGroups.resolveCarrier}.
+     * @member {String|null} canvasGroup=null
+     */
+    canvasGroup = null
 
     /**
      * @param {Object} config
      */
     construct(config) {
-        super.construct(config);
-
         let me = this;
-
-        me.detectFeatures();
-
-        !Neo.insideWorker && me.createWorkers();
-
-        Neo.workerId = 'main';
 
         me.promises = {};
 
+        super.construct(config);
+
+        me.detectFeatures();
+
+        if (!Neo.insideWorker) {
+            me.canvasGroup = me.resolveCanvasGroup();
+            me.createWorkers()
+        }
+
+        if (navigator.serviceWorker) {
+            // Bind the message handler globally to ensure even "unmanaged" apps (those not using the SW addon)
+            // can receive critical recovery commands (like 'reloadWindow') from the Service Worker.
+            //
+            // CRITICAL: We must bind this even if Neo.config.useServiceWorker is false.
+            // Scenario: User visits App A (uses SW), then navigates to App B (no SW). The SW from App A
+            // *still controls* App B (if in scope). If App B hits a version mismatch (404), the SW will
+            // send a 'reloadWindow' command. App B must be listening to execute this recovery command,
+            // otherwise it will crash with a blank page.
+            navigator.serviceWorker.onmessage = me.onWorkerMessage.bind(me);
+            me.checkServiceWorkerVersion()
+        }
+
+        Neo.setGlobalConfig = me.setGlobalConfig.bind(me);
+        Neo.workerId        = 'main';
+
         me.on({
-            'message:addDomListener'    : {fn: DomEvents.addDomListener,       scope: DomEvents},
-            'message:getOffscreenCanvas': {fn: DomAccess.onGetOffscreenCanvas, scope: DomAccess},
-            'message:readDom'           : {fn: DomAccess.onReadDom,            scope: DomAccess},
-            'message:registerRemote'    : {fn: me.onRegisterRemote,            scope: me},
-            'message:workerConstructed' : {fn: me.onWorkerConstructed,         scope: me}
-        });
+            'message:addDomListener'   : {fn: DomEvents.addDomListener, scope: DomEvents},
+            'message:readDom'          : {fn: DomAccess.onReadDom,      scope: DomAccess},
+            'message:registerRemote'   : {fn: me.onRegisterRemote,      scope: me},
+            'message:workerConstructed': {fn: me.onWorkerConstructed,   scope: me}
+        })
     }
 
     /**
      * Sends a message to each worker defined inside the this.workers config.
-     * @param {Object} msg
+     * Only sends to workers that are currently active and available.
+     * @param {Object} msg             The message payload to broadcast.
+     * @param {Object} [excludeOrigin] Optionally pass the origin realm name to exclude from the broadcast.
      */
-    broadcast(msg) {
-        Object.keys(this.workers).forEach(name => {
-            if (!(
-                name === 'canvas' && !NeoConfig.useCanvasWorker ||
-                name === 'vdom'   && !NeoConfig.useVdomWorker
-            )) {
-                this.sendMessage(name, msg);
+    broadcast(msg, excludeOrigin) {
+        let me = this;
+
+        Object.keys(me.workers).forEach(name => {
+            if (name !== excludeOrigin && me.getWorker(name)) {
+                me.sendMessage(name, msg)
             }
-        });
+        })
+    }
+
+    /**
+     * Proactively checks if the controlling Service Worker's version matches the client's version.
+     * This is the primary defense against "Zombie Apps" (stale client code running against a new Service Worker).
+     *
+     * If a mismatch is detected, it forces a hard reload to fetch fresh assets.
+     * Includes a throttle mechanism (via sessionStorage) to prevent infinite reload loops in case of persistent mismatches.
+     *
+     * @returns {Promise<void>}
+     */
+    async checkServiceWorkerVersion() {
+        if (navigator.serviceWorker?.controller) {
+            let swVersion = await this.promiseMessage('service', {
+                action: 'getVersion'
+            });
+
+            if (swVersion?.version && swVersion.version !== Neo.config.version) {
+                const
+                    key        = 'neoVersionReload',
+                    lastReload = parseInt(sessionStorage.getItem(key) || '0'),
+                    now        = Date.now();
+
+                if (now - lastReload < 5000) {
+                    console.error('Reload loop detected. Aborting version enforcement.');
+                    return
+                }
+
+                sessionStorage.setItem(key, String(now));
+
+                console.error(`Version Mismatch! Client: ${Neo.config.version}, SW: ${swVersion.version}. Reloading.`);
+                location.reload(true)
+            }
+        }
     }
 
     /**
@@ -147,31 +256,49 @@ class Manager extends Base {
      * @returns {SharedWorker|Worker}
      */
     createWorker(opts) {
-        let me       = this,
-            fileName = opts.fileName,
-            filePath = (opts.basePath || me.basePath) + fileName,
-            name     = `neomjs-${fileName.substring(0, fileName.indexOf('.')).toLowerCase()}-worker`,
-            isShared = me.sharedWorkersEnabled && NeoConfig.useSharedWorkers,
-            cls      = isShared ? SharedWorker : Worker,
-            worker   = devMode  // todo: switch to the new syntax to create a worker from a JS module once browsers are ready
-                ? new cls(filePath, {name: name, type: 'module'})
-                : new cls(filePath, {name: name});
+        let me            = this,
+            {canvasGroup} = me,
+            {fileName}    = opts,
+            filePath      = (opts.basePath || Neo.config.workerBasePath) + fileName,
+            isCanvas      = opts === me.workers.canvas,
+            name          = isCanvas ? CANVAS_WORKER_NAME_PREFIX + canvasGroup : `neomjs-${fileName.substring(0, fileName.indexOf('.')).toLowerCase()}-worker`,
+            isShared      = me.sharedWorkersEnabled && NeoConfig.useSharedWorkers,
+            cls           = isShared ? SharedWorker : Worker,
+            worker;
+
+        // The app worker must know this window's group before the canvas worker can register anything with it
+        isCanvas && me.sendMessage('app', {action: 'registerCanvasGroup', group: canvasGroup});
+
+        worker = new cls(filePath, {name, type: 'module'});
 
         (isShared ? worker.port : worker).onmessage = me.onWorkerMessage.bind(me);
         (isShared ? worker.port : worker).onerror   = me.onWorkerError  .bind(me);
 
+        // `error` on the worker object is the only programmatic signal that a canvas worker failed to load or
+        // parse; the app worker fails the group's waits instead of letting them run into the silent-start bound
+        isCanvas && worker.addEventListener('error', () => {
+            me.sendMessage('app', {action: 'canvasStartFailed', group: canvasGroup})
+        });
+
         me.activeWorkers++;
 
-        return worker;
+        return worker
     }
 
     /**
-     * Calls createWorker for each worker inside the this.workers config.
+     * @summary Instantiates the configured worker threads.
+     *
+     * This method reads the `Neo.config` to determine which workers to create (App, Data, VDom, etc.)
+     * and whether to use `Worker` or `SharedWorker`. It injects the initial configuration and environment
+     * data (like window ID) into each worker upon creation. The URL payload keeps the effective
+     * document base beside its location, so workspace connections honor the page's base element.
      */
     createWorkers() {
-        let me     = this,
-            config = Neo.clone(NeoConfig, true),
-            hash   = location.hash,
+        let me                   = this,
+            config               = Neo.clone(NeoConfig, true),
+            {hash, href, search} = location,
+            {windowId}           = me,
+            ssrData              = window.__NEO_SSR__,
             key, value;
 
         // remove configs which are not relevant for the workers scope
@@ -180,30 +307,48 @@ class Manager extends Base {
         // pass the initial hash value as Neo.configs
         if (hash) {
             config.hash = {
-                hash      : DomEvents.parseHash(hash.substr(1)),
-                hashString: hash.substr(1)
-            };
+                hash      : DomEvents.parseHash(hash.substring(1)),
+                hashString: hash.substring(1),
+                windowId
+            }
         }
+
+        config.url = {base: document.baseURI, href, search};
 
         for ([key, value] of Object.entries(me.workers)) {
             if (key === 'canvas' && !config.useCanvasWorker ||
+                key === 'task'   && !config.useTaskWorker   ||
                 key === 'vdom'   && !config.useVdomWorker
             ) {
-                continue;
+                continue
             }
 
             try {
-                value.worker = me.createWorker(value);
+                value.worker = me.createWorker(value)
             } catch (e) {
                 document.body.innerHTML = e;
                 me.stopCommunication = true;
-                break;
+                break
+            }
+
+            let workerConfig = {...config, topologyIdentity: me.readTopologyIdentity(), windowId};
+
+            if (ssrData && key === 'app') {
+                Object.assign(workerConfig, {
+                    cssMap : ssrData.cssMap,
+                    useSSR: true,
+                    vnode : ssrData.vnode
+                });
+
+                if (ssrData.hash) {
+                    workerConfig.hash = ssrData.hash;
+                }
             }
 
             me.sendMessage(key, {
                 action: 'registerNeoConfig',
-                data  : config
-            });
+                data  : workerConfig
+            })
         }
     }
 
@@ -213,17 +358,26 @@ class Manager extends Base {
     detectFeatures() {
         let me = this;
 
-        NeoConfig.hasMouseEvents = matchMedia('(pointer:fine)').matches;
-        NeoConfig.hasTouchEvents = ('ontouchstart' in window) || (navigator.maxTouchPoints > 0);
+        NeoConfig.devicePixelRatio = window.devicePixelRatio || 1;
+        NeoConfig.hasMouseEvents   = matchMedia('(pointer:fine)').matches;
+        NeoConfig.hasTouchEvents   = ('ontouchstart' in window) || (navigator.maxTouchPoints > 0);
+        NeoConfig.prefersDarkTheme = matchMedia('(prefers-color-scheme: dark)').matches;
+
+        // Useful for styling
+        document.body.classList.add(NeoConfig.hasMouseEvents ? 'neo-mouse' : 'neo-no-mouse');
+
+        if (NeoConfig.hasTouchEvents) {
+            document.body.classList.add('neo-has-touch');
+        }
 
         if (window.Worker) {
-            me.webWorkersEnabled = true;
+            me.webWorkersEnabled = true
         } else {
-            throw new Error('Your browser does not support Web Workers');
+            throw new Error('Your browser does not support Web Workers')
         }
 
         if (window.SharedWorker) {
-            me.sharedWorkersEnabled = true;
+            me.sharedWorkersEnabled = true
         }
     }
 
@@ -233,21 +387,90 @@ class Manager extends Base {
      */
     getWorker(name) {
         if (name === 'service') {
-            return navigator.serviceWorker?.controller || this.serviceWorker;
+            return navigator.serviceWorker?.controller || this.serviceWorker
         }
 
-        return name instanceof Worker ? name : this.workers[name].worker;
+        const item = this.workers[name];
+
+        if (item) {
+            return name instanceof Worker ? name : item.worker
+        }
+
+        return null
     }
 
     /**
-     * @param {String} path
+     * @param {String} name
+     * @returns {Boolean}
      */
-    loadApplication(path) {
-        this.sendMessage('app', {
-            action       : 'loadApplication',
-            path,
-            resourcesPath: NeoConfig.resourcesPath
-        });
+    hasWorker(name) {
+        return !!this.getWorker(name)
+    }
+
+    /**
+     * @summary Handles the queuing and processing of DOM update operations.
+     *
+     * This helper method centralizes the logic for both standard VDOM updates and direct `App.applyDeltas` calls.
+     * Its primary purpose is to enforce the **"delayed reply"** pattern:
+     * - If the update contains DOM deltas or component metadata, it registers a promise and queues the update for the next animation frame.
+     *   The reply to the worker is sent only *after* the main thread has processed the queue, ensuring the DOM is updated.
+     *   Metadata-only updates still run Main's before/after-delta hooks.
+     * - If the update has neither deltas nor metadata entries, it sends an immediate reply to avoid unnecessary latency.
+     *
+     * This method also handles the firing of the `updateVdom` event, which triggers the actual processing in `Main.mjs`.
+     *
+     * @param {Object} data The message payload from the worker.
+     * @param {Object[]} deltas The array of DOM deltas to process.
+     * @param {String} replyDest The destination for the reply message (e.g., 'app').
+     * @param {Boolean} [forward=false] If true, forwards the original message as the reply (VDOM worker path).
+     *                                  If false, constructs a new success reply (App worker path).
+     */
+    handleDomUpdate(data, deltas, replyDest, forward=false) {
+        const me = this, payload = forward ? data.data : data;
+
+        if (deltas?.length > 0 || Object.keys(payload.meta || {}).length > 0) {
+            me.promiseForwardMessage(data).then(msgData => {
+                me.sendMessage(replyDest, forward ? msgData : {action: 'reply', replyId: msgData.id, success: true})
+            }).catch(({originalData, error}) => {
+                // A delta failed to apply (see Main.mjs#processQueue). The reply MUST still reach the
+                // originating worker — a dropped reply permanently wedges every component awaiting the
+                // batch (isVdomUpdating never clears). We reply with the reject marker and the
+                // error INSTEAD of the computed vnodes: the App worker's executeVdomUpdate() catch then
+                // clears its in-flight state WITHOUT adopting a vnode the DOM never received, keeping
+                // the vnode truthful so the next update cycle re-diffs and self-heals.
+                let reply = forward
+                    ? {...originalData, data: {error}}
+                    : {replyId: originalData.id, data: {error}};
+
+                reply.action = 'reply';
+                reply.reject = true;
+
+                me.sendMessage(replyDest, reply)
+            });
+
+            me.fire('updateVdom', forward ? data : {data, replyId: data.id});
+            return
+        }
+
+        me.sendMessage(replyDest, forward ? data : {action: 'reply', replyId: data.id, success: true})
+    }
+
+    /**
+     * @summary Whether a message names a window other than this one, so the DOM deltas it carries belong to that
+     * window's document. A message naming no window, or `'main'`, names none.
+     * @param {String|null} [windowId]
+     * @returns {Boolean}
+     * @protected
+     */
+    isForeignWindowId(windowId) {
+        return Boolean(windowId) && windowId !== 'main' && windowId !== this.windowId
+    }
+
+    /**
+     *
+     */
+    loadApplication() {
+        this.sendMessage('app', {action: 'loadApplication', windowId: this.windowId})
     }
 
     /**
@@ -258,10 +481,14 @@ class Manager extends Base {
 
         me.constructedThreads++;
 
-        if (me.constructedThreads === me.activeWorkers) {
-            NeoConfig.appPath && setTimeout(() => { // better save than sorry => all remotes need to be registered
-                me.loadApplication(NeoConfig.appPath);
-            }, NeoConfig.loadApplicationDelay);
+        // To include the main thread as ready, we must wait for activeWorkers + 1
+        if (!me.applicationLoaded && me.constructedThreads === me.activeWorkers + 1) {
+            me.applicationLoaded = true;
+
+            // better safe than sorry => all remotes need to be registered
+            NeoConfig.appPath && me.timeout(NeoConfig.loadApplicationDelay).then(() => {
+                me.loadApplication()
+            })
         }
     }
 
@@ -270,79 +497,137 @@ class Manager extends Base {
      * @param {Object} e
      */
     onWorkerError(e) {
-        // starting a worker from a JS module will show JS errors in a correct way
-        !devMode && console.log('Worker Error:', e);
+        // The `!useMjsFiles` deferral is true for a DEDICATED module worker, whose errors the browser
+        // surfaces on its own, and false for a SharedWorker, whose output goes to an inspector context
+        // no page can read. The comment predates that distinction: it was written in 2019 to explain
+        // the CLASSIC branch of `new Worker(...)`, and the commit that dropped that branch renamed
+        // `hasJsModules` to `useMjsFiles` inside the guard in the same diff — the guard outlived what
+        // it was guarding by one hunk.
+        //
+        // `error` level, not `log`: this is the ONLY signal for a SharedWorker that fails to load or
+        // parse. `Neo.worker.Base#forwardErrorToMainThread` cannot cover it — a worker that never ran
+        // cannot mirror its own failure.
+        if (NeoConfig.useSharedWorkers) {
+            console.error('Worker Error:', e)
+        } else {
+            !useMjsFiles && console.log('Worker Error:', e)
+        }
     }
 
     /**
-     * Handler method for worker message events
-     * @param {Object} e
+     * Handler method for worker message events.
+     *
+     * @summary Intercepts and routes messages from workers.
+     *
+     * This method contains critical routing logic:
+     * 1.  **DOM Update Interception:** It catches `updateVdom` actions (from App) and `reply` messages (from VDom)
+     *     that contain DOM updates. It normalizes `autoMount` operations into `insertNode` deltas and delegates
+     *     them to `handleDomUpdate`.
+     * 2.  **Promise Resolution:** It resolves pending promises for `reply` messages (e.g., remote method calls).
+     * 3.  **Message Forwarding:** It routes messages between workers (e.g., App -> Data), preserving
+     *     a rejected worker's named cause inside the reply `data` field the origin consumes.
+     *
+     * @param {Object} event
      */
-    onWorkerMessage(e) {
+    onWorkerMessage(event) {
         let me       = this,
-            data     = e.data,
+            {data}   = event,
             transfer = null,
             promise;
 
         const {action, destination: dest, replyId} = data;
 
-        // console.log('Main: Incoming Worker message: ' + data.origin + ':' + action, data);
-
         me.fire('message:'+action, data);
+
+        if (action === 'updateVdom') {
+            if (me.isForeignWindowId(dest)) {
+                me.refuseForeignDomUpdate(data, data.origin, dest);
+                return
+            }
+
+            data.replyId = data.id;
+            me.handleDomUpdate(data, data.deltas, data.origin, false);
+            return
+        }
 
         if (action === 'reply') {
             promise = me.promises[replyId];
 
             if (!promise) {
-                if (data.data) {
-                    data.data.autoMount  && me.fire('automount',  data);
-                    data.data.updateVdom && me.fire('updateVdom', data);
+                let payload = data.data;
 
-                    // we want to delay the message until the rendering queue has processed it
-                    // see: https://github.com/neomjs/neo/issues/2864
-                    me.promiseForwardMessage(data).then(msgData => {
-                        me.sendMessage(msgData.destination, msgData);
-                    });
+                if (payload) {
+                    if (payload.autoMount || payload.updateVdom) {
+                        if (me.isForeignWindowId(data.windowId)) {
+                            me.refuseForeignDomUpdate(data, dest, data.windowId);
+                            return
+                        }
+
+                        let deltas = payload.deltas;
+
+                        if (payload.autoMount) {
+                            // Parent-less automounts previously appended via an undefined childNodes
+                            // index. Keep append semantics while making the wire field explicit.
+                            const index = payload.parentIndex ?? Number.MAX_SAFE_INTEGER;
+
+                            deltas = [{
+                                action   : 'insertNode',
+                                index,
+                                outerHTML: payload.outerHTML,
+                                parentId : payload.parentId,
+                                vnode    : payload.vnode
+                            }];
+
+                            payload.deltas = deltas
+                        }
+
+                        me.handleDomUpdate(data, deltas, dest, true)
+                    } else {
+                        me.sendMessage(dest, data)
+                    }
                 }
             } else {
-                if (data.destination === 'main') {
-                    data = data.data;
-                }
-
-                promise[data.reject ? 'reject' : 'resolve'](data);
-                delete me.promises[replyId];
+                // Settled like worker.Base settles its own replies, whatever the payload's truthiness. A reply to a
+                // request this thread forwarded keeps the envelope, which the forward sends on.
+                promise[data.reject ? 'reject' : 'resolve'](dest === 'main' || dest === me.windowId ? data.data : data);
+                delete me.promises[replyId]
             }
         }
 
-        if (dest !== 'main' && action !== 'reply') {
+        if (dest !== 'main' && dest !== me.windowId && action !== 'reply') {
             if (data.transfer) {
-                transfer = [data.transfer];
+                transfer = [data.transfer]
             }
 
             me.promiseMessage(dest, data, transfer).then(response => {
-                me.sendMessage(response.destination, response);
+                me.sendMessage(response.destination, response)
             }).catch(err => {
+                const
+                    reason  = err?.data ?? err,
+                    message = reason?.error?.message || reason?.error || reason?.message ||
+                        'Worker message forwarding failed',
+                    error   = reason instanceof Error ? reason : new Error(String(message));
+
                 me.sendMessage(data.origin, {
                     action : 'reply',
+                    data   : error,
                     reject : true,
-                    replyId: data.id,
-                    error  : err.message
-                });
-            });
+                    replyId: data.id
+                })
+            })
         }
 
         // only needed for SharedWorkers
-        else if (dest === 'main' && action === 'registerAppName') {
-            me.appNames.push(data.appName);
+        else if ((dest === 'main' || dest === me.windowId) && action === 'registerAppName') {
+            let {appName} = data;
 
-            me.broadcast({
-                action : 'registerApp',
-                appName: data.appName
-            });
+            me.appNames.push(appName);
+
+            me.broadcast({action: 'registerApp', appName})
         }
 
-        else if (dest === 'main' && action === 'remoteMethod') {
-            me.onRemoteMethod(data);
+        else if ((dest === 'main' || dest === me.windowId) && action === 'remoteMethod') {
+            me.onRemoteMethod(data)
         }
     }
 
@@ -353,8 +638,8 @@ class Manager extends Base {
      */
     promiseForwardMessage(data) {
         return new Promise((resolve, reject) => {
-            this.promises[data.replyId] = { data, reject, resolve };
-        });
+            this.promises[data.replyId] = {data, reject, resolve}
+        })
     }
 
     /**
@@ -370,10 +655,105 @@ class Manager extends Base {
 
         return new Promise((resolve, reject) => {
             let message = me.sendMessage(dest, opts, transfer),
-                msgId   = message.id;
+                msgId;
 
-            me.promises[msgId] = { reject, resolve };
+            if (!message) {
+                reject(new Error(me.stopCommunication ? 'Communication is stopped.' : `Target worker '${dest}' does not exist.`));
+                return
+            }
+
+            msgId = message.id;
+
+            me.promises[msgId] = {reject, resolve}
+        })
+    }
+
+    /**
+     * Reads this window's carried topology identity for a worker registration. An empty object means
+     * "no identity yet": the App Worker mints one and asks `Neo.Main#setTopologyIdentity` to write it
+     * back. Unavailable storage and a malformed or incomplete record read the same way, so the window
+     * boots as a fresh root instead of failing.
+     * @returns {{groupId: String, workspaceKey: String, generationToken: String}|{}}
+     */
+    readTopologyIdentity() {
+        try {
+            const {generationToken, groupId, workspaceKey} = JSON.parse(window.sessionStorage?.getItem(this.topologyIdentityStorageKey) || 'null') || {};
+
+            return groupId && workspaceKey && generationToken ? {generationToken, groupId, workspaceKey} : {}
+        } catch {
+            return {}
+        }
+    }
+
+    /**
+     * @summary Answers a DOM update addressed to another window without applying it.
+     *
+     * A SharedWorker relays a worker-bound reply through any window of its app once the window the reply names has
+     * departed (`Neo.worker.Base#sendMessage`), so a vdom reply can arrive here carrying another document's deltas.
+     * Applying them would edit this window's DOM. The answer is the rejection a departed port produces, so the caller
+     * settles silently and adopts no vnode. It is a plain object: a cloned `Error` keeps only standard names.
+     * @param {Object} data The message carrying the deltas
+     * @param {String} dest Where the answer goes
+     * @param {String} windowId The window the deltas belong to
+     * @protected
+     */
+    refuseForeignDomUpdate(data, dest, windowId) {
+        const error = {
+            code   : 'NEO_DEAD_PORT',
+            message: `A DOM update for window ${windowId} reached window ${this.windowId}`,
+            name   : 'PortDisconnectedError',
+            windowId
+        };
+
+        this.sendMessage(dest, data.action === 'reply'
+            ? {...data, data: error, reject: true}
+            : {action: 'reply', data: error, reject: true, replyId: data.id})
+    }
+
+    /**
+     * Rejects the delayed-reply promise for a DOM operation whose delta application threw.
+     *
+     * Counterpart to {@link #resolveDomOperationPromise}: a failed operation must settle its
+     * promise too — otherwise the originating worker's update promise hangs forever and every
+     * component in that batch wedges with `isVdomUpdating: true`. The rejection value
+     * carries the error message; `handleDomUpdate`'s catch relays it as a `reject: true` reply,
+     * which the far side's `worker.Base#onMessage` turns into a promise rejection.
+     * @param {String} replyId
+     * @param {Error|String} error The reason the DOM operation failed
+     */
+    rejectDomOperationPromise(replyId, error) {
+        if (replyId) {
+            let {promises} = this,
+                promise    = promises[replyId];
+
+            if (promise) {
+                promise.reject({originalData: promise.data, error: error?.message || String(error)});
+                delete promises[replyId]
+            }
+        }
+    }
+
+    /**
+     * @summary Resolves this window's canvas group by the carrier rule and keeps it in the window's sessionStorage,
+     * where a `reload` of this window and a popup opened from it find it again.
+     * @returns {String}
+     * @protected
+     */
+    resolveCanvasGroup() {
+        let stored, group;
+
+        try {stored = sessionStorage.getItem(CANVAS_GROUP_STORAGE_KEY)} catch {}
+
+        group = CanvasGroups.resolveCarrier({
+            hasLiveOpener : Boolean(window.opener && !window.opener.closed),
+            mint          : CanvasGroups.mint,
+            navigationType: performance.getEntriesByType?.('navigation')[0]?.type,
+            stored
         });
+
+        try {sessionStorage.setItem(CANVAS_GROUP_STORAGE_KEY, group)} catch {}
+
+        return group
     }
 
     /**
@@ -381,11 +761,12 @@ class Manager extends Base {
      */
     resolveDomOperationPromise(replyId) {
         if (replyId) {
-            let promise = this.promises[replyId];
+            let {promises} = this,
+                promise    = promises[replyId];
 
             if (promise) {
                 promise.resolve(promise.data);
-                delete this.promises[replyId];
+                delete promises[replyId]
             }
         }
     }
@@ -396,7 +777,7 @@ class Manager extends Base {
      * @param {Array} [transfer] An optional array of Transferable objects to transfer ownership of.
      * If the ownership of an object is transferred, it becomes unusable (neutered) in the context it was sent from
      * and becomes available only to the worker it was sent to.
-     * @returns {Neo.worker.Message}
+     * @returns {Neo.worker.Message|null}
      * @protected
      */
     sendMessage(dest, opts, transfer) {
@@ -406,25 +787,116 @@ class Manager extends Base {
         if (!me.stopCommunication) {
             if (opts.channelPort) {
                 worker = opts.channelPort;
-                delete opts.channelPort;
+                delete opts.channelPort
             } else {
-                worker = me.getWorker(dest);
+                worker = me.getWorker(dest)
             }
 
-            if (!worker) {
-                throw new Error('Called sendMessage for a worker that does not exist: ' + dest);
+            if (worker) {
+                opts.destination = dest;
+                opts.windowId ??= me.windowId;
+
+                message = new Message(opts);
+
+                (worker.port ? worker.port : worker).postMessage(message, transfer);
+                return message
             }
-
-            opts.destination = dest;
-
-            message = new Message(opts);
-
-            (worker.port ? worker.port : worker).postMessage(message, transfer);
-            return message;
         }
+
+        return null
+    }
+
+    /**
+     * Initiates a global Neo.config change from the Main Thread.
+     *
+     * This method acts as a proxy, routing the config change request to the App Worker.
+     * This design centralizes the complex multi-threaded and multi-window synchronization
+     * logic within the App Worker's `setGlobalConfig` method.
+     *
+     * Developers should typically use `Neo.setGlobalConfig(config)` directly,
+     * which will correctly resolve to this proxy when called from the Main Thread.
+     *
+     * @param {Object} config The partial or full Neo.config object with changes to apply.
+     */
+    setGlobalConfig(config) {
+        // Remotely calls the App Worker's setGlobalConfig method.
+        // This ensures all global config changes are processed through the App Worker
+        // which contains the centralized multi-window synchronization logic.
+        Neo.worker.App.setGlobalConfig(config)
+    }
+
+    /**
+     * Change Neo.config globally from a worker
+     * @param {Object}  data
+     * @param {Boolean} data.broadcast
+     * @param {Object}  data.config
+     * @param {String}  [data.excludeOrigin]
+     */
+    setNeoConfig({broadcast, config, excludeOrigin}) {
+        let me = this;
+
+        Neo.merge(Neo.config, config);
+
+        me.fire('neoConfigChange', config);
+
+        broadcast && me.broadcast({action: 'setNeoConfig', config}, excludeOrigin)
+    }
+
+    /**
+     * @summary Starts a worker with the same effective document base as initial worker registration.
+     * @param {Object} data
+     * @param {String} data.name
+     * @returns {Boolean} true in case the worker was started or is already running
+     */
+    startWorker({name}) {
+        let me = this;
+
+        if (me.hasWorker(name)) {
+            return true
+        }
+
+        let item = me.workers[name];
+
+        if (!item) {
+            console.error(`Worker with name '${name}' is not defined.`);
+            return false
+        }
+
+        // 1. Update Config (in case it was false)
+        let configKey = 'use' + Neo.capitalize(name) + 'Worker';
+
+        if (NeoConfig[configKey] === false) {
+            NeoConfig[configKey] = true
+        }
+
+        // 2. Create
+        item.worker = me.createWorker(item);
+
+        // 3. Register Config
+        let config               = Neo.clone(NeoConfig, true),
+            {hash, href, search} = location,
+            {windowId}           = me;
+
+        delete config.cesiumJsToken;
+        config.url = {base: document.baseURI, href, search};
+
+        if (hash) {
+            config.hash = {
+                hash      : DomEvents.parseHash(hash.substring(1)),
+                hashString: hash.substring(1),
+                windowId
+            }
+        }
+
+        let workerConfig = {...config, windowId};
+
+        me.sendMessage(name, {
+            action: 'registerNeoConfig',
+            data  : workerConfig
+        });
+
+        return true
     }
 }
 
-let instance = Neo.applyClassConfig(Manager);
-
-export default instance;
+export default Neo.setupClass(Manager);

@@ -23,6 +23,14 @@ class MainContainerController extends ComponentController {
          */
         activeMainTabIndex: 0,
         /**
+         * @member {String} apiSummaryUrl='https://raw.githubusercontent.com/neomjs/pages/main/resources_pub/data/cvid_static/all.json'
+         */
+        apiFallbackSummaryUrl: 'https://raw.githubusercontent.com/neomjs/pages/main/resources_pub/data/cvid_static/all.json',
+        /**
+         * @member {String} apiUrl='https://raw.githubusercontent.com/neomjs/pages/main/resources_pub/data/cvid_static_countries.json'
+         */
+        apiFallbackUrl: 'https://raw.githubusercontent.com/neomjs/pages/main/resources_pub/data/cvid_static_countries.json',
+        /**
          * @member {String} apiSummaryUrl='https://disease.sh/v3/covid-19/all'
          */
         apiSummaryUrl: 'https://disease.sh/v3/covid-19/all',
@@ -73,11 +81,11 @@ class MainContainerController extends ComponentController {
 
         data.forEach(item => {
             if (item.country.includes('"')) {
-                item.country = item.country.replace('"', "\'");
+                item.country = item.country.replace(/"/g, "\'");
             }
 
             item.casesPerOneMillion = item.casesPerOneMillion > item.cases ? 'N/A' : item.casesPerOneMillion || 0;
-            item.infected           = item.casesPerOneMillion;
+            item.infected           = item.casesPerOneMillion
         });
 
         me.data = data;
@@ -88,23 +96,23 @@ class MainContainerController extends ComponentController {
             me.onCountryFieldChange({
                 component: countryField,
                 value    : countryField.value
-            });
+            })
         }
 
         if (['gallery', 'helix', 'table'].includes(reference)) {
             if (activeTab) {
-                activeTab.store.data = data;
+                activeTab.store.data = data
             }
         }
 
         else if (reference === 'mapboxglmap') {
             me.getReference('mapboxglmap').chartData = data;
-            me.mapboxglMapHasData = true;
+            me.mapboxglMapHasData = true
         }
 
         else if (reference === 'worldmap') {
             activeTab.loadData(data);
-            me.worldMapHasData = true;
+            me.worldMapHasData = true
         }
     }
 
@@ -119,27 +127,28 @@ class MainContainerController extends ComponentController {
     applySummaryData(data) {
         let me        = this,
             container = me.getReference('total-stats'),
-            vdom      = container.vdom;
+            vdom;
 
         me.summaryData = data;
 
-        vdom.cn[0].cn[1].html = Util.formatNumber({value: data.cases});
-        vdom.cn[1].cn[1].html = Util.formatNumber({value: data.active});
-        vdom.cn[2].cn[1].html = Util.formatNumber({value: data.recovered});
-        vdom.cn[3].cn[1].html = Util.formatNumber({value: data.deaths});
+        container.items[0].vdom.cn[1].text = Util.formatNumber({value: data.cases});
+        container.items[1].vdom.cn[1].text = Util.formatNumber({value: data.active});
+        container.items[2].vdom.cn[1].text = Util.formatNumber({value: data.recovered});
+        container.items[3].vdom.cn[1].text = Util.formatNumber({value: data.deaths});
 
+        container.updateDepth = 2;
         container.update();
 
         container = me.getReference('last-update');
         vdom      = container.vdom;
 
-        vdom.html = 'Last Update: ' + new Intl.DateTimeFormat('default', {
+        vdom.text = 'Last Update: ' + new Intl.DateTimeFormat('default', {
             hour  : 'numeric',
             minute: 'numeric',
             second: 'numeric'
         }).format(new Date(data.updated));
 
-        container.update();
+        container.update()
     }
 
     /**
@@ -149,10 +158,10 @@ class MainContainerController extends ComponentController {
      */
     getTabIndex(hashObject) {
         if (!hashObject || !hashObject.mainview) {
-            return 0;
+            return 0
         }
 
-        return this.mainTabs.indexOf(hashObject.mainview);
+        return this.mainTabs.indexOf(hashObject.mainview)
     }
 
     /**
@@ -160,18 +169,19 @@ class MainContainerController extends ComponentController {
      * @returns {Neo.component.Base}
      */
     getView(tabIndex) {
-        return this.getReference(this.mainTabs[tabIndex]);
+        return this.getReference(this.mainTabs[tabIndex])
     }
 
     /**
      *
      */
     loadData() {
-        let me = this;
+        let me     = this,
+            apiUrl = Neo.config.useFallbackApi ? me.apiFallbackUrl : me.apiUrl;
 
-        fetch(me.apiUrl)
+        fetch(apiUrl)
             .then(response => response.json())
-            .catch(err => console.log('Can’t access ' + me.apiUrl, err))
+            .catch(err => console.log('Can’t access ' + apiUrl, err))
             .then(data => me.addStoreItems(data));
     }
 
@@ -179,18 +189,19 @@ class MainContainerController extends ComponentController {
      *
      */
     loadSummaryData() {
-        let me = this;
+        let me            = this,
+            apiSummaryUrl = Neo.config.useFallbackApi ? me.apiFallbackSummaryUrl : me.apiSummaryUrl;
 
-        fetch(me.apiSummaryUrl)
+        fetch(apiSummaryUrl)
             .then(response => response.json())
-            .catch(err => console.log('Can’t access ' + me.apiSummaryUrl, err))
+            .catch(err => console.log('Can’t access ' + apiSummaryUrl, err))
             .then(data => me.applySummaryData(data));
 
-        setTimeout(() => {
+        me.timeout(2000).then(() => {
             if (!me.summaryData) {
-                me.onLoadSummaryDataFail();
+                me.onLoadSummaryDataFail()
             }
-        }, 2000);
+        })
     }
 
     /**
@@ -204,7 +215,7 @@ class MainContainerController extends ComponentController {
                 country   : 'all',
                 hash      : {mainview: 'table'},
                 hashString: 'mainview=table'
-            }, null);
+            }, null)
         }
     }
 
@@ -219,7 +230,7 @@ class MainContainerController extends ComponentController {
         me.loadData();
         me.loadSummaryData();
 
-        me.component.on('mounted', me.onMainViewMounted, me);
+        me.component.on('mounted', me.onMainViewMounted, me)
     }
 
     /**
@@ -232,17 +243,17 @@ class MainContainerController extends ComponentController {
             record;
 
         if (store.getCount() > 0) {
-            if (Neo.isObject(value)) {
+            if (Neo.isRecord(value)) {
                 record = value;
-                value  = value[component.displayField];
+                value  = value[component.displayField]
             } else {
-                record = value && store.find('country', value)?.[0];
+                record = value && store.find('country', value)?.[0]
             }
 
-            this.getModel().setData({
+            this.setState({
                 country      : value,
                 countryRecord: record || null
-            });
+            })
         }
     }
 
@@ -261,14 +272,14 @@ class MainContainerController extends ComponentController {
         me.activeMainTabIndex = activeIndex;
 
         if (!activeView) {
-            setTimeout(() => {
+            me.timeout(10).then(() => {
                 me.onHashChange(value, oldValue);
-            }, 10);
+            });
 
-            return;
+            return
         }
 
-        me.getModel().setData({
+        me.setState({
             country: country || null
         });
 
@@ -282,22 +293,22 @@ class MainContainerController extends ComponentController {
         if (ntype === 'mapboxgl' && me.data) {
             if (me.mapboxStyle) {
                 activeView.mapboxStyle = activeView[me.mapboxStyle];
-                delete me.mapboxStyle;
+                delete me.mapboxStyle
             }
 
             if (!me.mapboxglMapHasData) {
                 activeView.chartData = me.data;
-                me.mapboxglMapHasData = true;
+                me.mapboxglMapHasData = true
             }
 
-            countryRecord = me.getModel().data.countryRecord;
+            countryRecord = me.getStateProvider().data.countryRecord;
             countryRecord && MainContainerController.selectMapboxGlCountry(activeView, countryRecord);
 
-            activeView.autoResize();
+            activeView.autoResize()
         } else if (ntype === 'covid-world-map' && me.data) {
             if (!me.worldMapHasData) {
                 activeView.loadData(me.data);
-                me.worldMapHasData = true;
+                me.worldMapHasData = true
             }
         }
     }
@@ -320,7 +331,7 @@ class MainContainerController extends ComponentController {
             ].join('')
         });
 
-        table.update();
+        table.update()
     }
 
     /**
@@ -330,12 +341,13 @@ class MainContainerController extends ComponentController {
         let me = this;
 
         Neo.main.DomAccess.addScript({
-            async: true,
-            defer: true,
-            src  : 'https://buttons.github.io/buttons.js'
+            async   : true,
+            defer   : true,
+            src     : 'https://buttons.github.io/buttons.js',
+            windowId: me.windowId
         });
 
-        me.getReference('tab-container').on('moveTo', me.onTabMove, me);
+        me.getReference('tab-container').on('moveTo', me.onTabMove, me)
     }
 
     /**
@@ -343,7 +355,7 @@ class MainContainerController extends ComponentController {
      */
     onReloadDataButtonClick(data) {
         this.loadData();
-        this.loadSummaryData();
+        this.loadSummaryData()
     }
 
     /**
@@ -356,7 +368,7 @@ class MainContainerController extends ComponentController {
         me.component.remove(me.getReference('footer'), true);
 
         if (activeTab.ntype === 'covid-mapboxgl-container') {
-            me.getReference('mapboxglmap').autoResize();
+            me.getReference('mapboxglmap').autoResize()
         }
     }
 
@@ -368,23 +380,21 @@ class MainContainerController extends ComponentController {
             button     = data.component,
             component  = me.component,
             logo       = me.getReference('logo'),
-            logoPath   = 'https://raw.githubusercontent.com/neomjs/pages/master/resources/images/apps/covid/',
+            logoPath   = 'https://raw.githubusercontent.com/neomjs/pages/main/resources_pub/images/apps/covid/',
             mapView    = me.getReference('mapboxglmap'),
             themeLight = button.text === 'Theme Light',
-            buttonText, cls, href, iconCls, mapViewStyle, theme;
+            buttonText, cls, iconCls, mapViewStyle, theme;
 
         if (themeLight) {
             buttonText   = 'Theme Dark';
-            href         = '../dist/development/neo-theme-light-no-css-vars.css';
             iconCls      = 'fa fa-moon';
             mapViewStyle = mapView?.mapboxStyleLight;
-            theme        = 'neo-theme-light';
+            theme        = 'neo-theme-light'
         } else {
             buttonText   = 'Theme Light';
-            href         = '../dist/development/neo-theme-dark-no-css-vars.css';
             iconCls      = 'fa fa-sun';
             mapViewStyle = mapView?.mapboxStyleDark;
-            theme        = 'neo-theme-dark';
+            theme        = 'neo-theme-dark'
         }
 
         logo.vdom.src = logoPath + (theme === 'neo-theme-dark' ? 'covid_logo_dark.jpg' : 'covid_logo_light.jpg');
@@ -394,7 +404,7 @@ class MainContainerController extends ComponentController {
 
         component.cls.forEach(item => {
             if (item.includes('neo-theme')) {
-                NeoArray.remove(cls, item);
+                NeoArray.remove(cls, item)
             }
         });
 
@@ -404,9 +414,9 @@ class MainContainerController extends ComponentController {
         button.set({iconCls, text: buttonText});
 
         if (mapView) {
-            mapView.mapboxStyle = mapViewStyle;
+            mapView.mapboxStyle = mapViewStyle
         } else {
-            me.mapboxStyle = themeLight ? 'mapboxStyleLight' : 'mapboxStyleDark';
+            me.mapboxStyle = themeLight ? 'mapboxStyleLight' : 'mapboxStyleDark'
         }
     }
 
@@ -414,14 +424,14 @@ class MainContainerController extends ComponentController {
      * @param {Object} data
      */
     onTabMove(data) {
-        NeoArray.move(this.mainTabs, data.fromIndex, data.toIndex);
+        NeoArray.move(this.mainTabs, data.fromIndex, data.toIndex)
     }
 
     /**
      * @param view
      * @param record
      */
-    static selectMapboxGlCountry(view, record) {console.log(record.countryInfo.iso2);
+    static selectMapboxGlCountry(view, record) {
         // https://github.com/neomjs/neo/issues/490
         // there are missing iso2&3 values on natural earth vector
         const map = {
@@ -440,10 +450,8 @@ class MainContainerController extends ComponentController {
             lng: record.countryInfo.long
         });
 
-        view.zoom = 5; // todo: we could use a different value for big countries (Russia, USA,...)
+        view.zoom = 5 // todo: we could use a different value for big countries (Russia, USA,...)
     }
 }
 
-Neo.applyClassConfig(MainContainerController);
-
-export default MainContainerController;
+export default Neo.setupClass(MainContainerController);

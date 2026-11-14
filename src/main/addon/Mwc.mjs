@@ -1,11 +1,19 @@
-import Base from '../../core/Base.mjs';
+import Base from './Base.mjs';
 
 /**
  * Helper class to include Google's Material Web Components into your neo.mjs app
- * https://www.amcharts.com/docs/v4/
+ * https://github.com/material-components/material-components-web
+ *
+ * You need to add the following dependencies into your package.json:
+ * @material/mwc-button
+ * @material/mwc-textfield
+ *
+ * You also need to un-comment the related imports.
+ * Recommendation: Copy this file into your workspace (src/main/addon), adjust it there and add the custom addon
+ * into the neo-config.json of your app. E.g.: [..., "WS/Mwc"].
+ *
  * @class Neo.main.addon.Mwc
- * @extends Neo.core.Base
- * @singleton
+ * @extends Neo.main.addon.Base
  */
 class Mwc extends Base {
     static config = {
@@ -14,11 +22,6 @@ class Mwc extends Base {
          * @protected
          */
         className: 'Neo.main.addon.Mwc',
-        /**
-         * @member {Boolean} singleton=true
-         * @protected
-         */
-        singleton: true,
         /**
          * Remote method access for other workers
          * @member {Object} remote
@@ -35,52 +38,52 @@ class Mwc extends Base {
     }
 
     /**
-     * @param {String} id
+     * @param {Object} data
+     * @param {String} data.id
      * @returns {Boolean}
      */
-    checkValidity(id) {
-        return document.getElementById(id).checkValidity();
+    checkValidity({id}) {
+        return document.getElementById(id).checkValidity()
     }
 
     /**
-     *
+     * @param {Object} [data]
      */
-    loadButtonModule() {
+    loadButtonModule(data) {
         if (Neo.config.environment === 'development') {
             import(
                 /* webpackIgnore: true */
                 'https://unpkg.com/@material/mwc-button@0.26.1/mwc-button.js?module'
-            );
+            )
         } else {
             // dist/development & dist/production
-            import('@material/mwc-button');
+            // import('@material/mwc-button') // <= comment me in
         }
     }
 
     /**
-     *
+     * @param {Object} [data]
      */
-    loadTextFieldModule() {
+    loadTextFieldModule(data) {
         if (Neo.config.environment === 'development') {
             import(
                 /* webpackIgnore: true */
                 'https://unpkg.com/@material/mwc-textfield@0.26.1/mwc-textfield.js?module'
-            );
+            )
         } else {
             // dist/development & dist/production
-            import('@material/mwc-textfield');
+            // import('@material/mwc-textfield') // <= comment me in
         }
     }
 
     /**
-     * @param {String} id
+     * @param {Object} data
+     * @param {String} data.id
      * @returns {Boolean}
      */
-    reportValidity(id) {
-        return document.getElementById(id).reportValidity();
+    reportValidity({id}) {
+        return document.getElementById(id).reportValidity()
     }
 }
 
-let instance = Neo.applyClassConfig(Mwc);
-
-export default instance;
+export default Neo.setupClass(Mwc);

@@ -24,6 +24,7 @@ class Helix extends BaseHelix {
         /**
          * The radius of the Helix in px
          * @member {Number} radius=2500
+         * @reactive
          */
         radius: 2500,
         /**
@@ -61,7 +62,7 @@ class Helix extends BaseHelix {
         return {
             cls     : ['surface', 'neo-helix-item'],
             cn      : [vdomItem.vdom],
-            id      : me.getItemVnodeId(record[me.keyProperty]),
+            id      : me.getItemVnodeId(me.store.getKey(record)),
             tabIndex: '-1'
         };
     }
@@ -71,10 +72,14 @@ class Helix extends BaseHelix {
      * @returns {String}
      */
     getItemId(vnodeId) {
-        return vnodeId.split('__')[1];
+        let itemId = vnodeId.split('__')[1];
+
+        if (this.store.getKeyType()?.includes('int')) {
+            itemId = parseInt(itemId)
+        }
+
+        return itemId
     }
 }
 
-Neo.applyClassConfig(Helix);
-
-export default Helix;
+export default Neo.setupClass(Helix);

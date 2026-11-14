@@ -1,4 +1,4 @@
-import Model  from '../../../src/data/Model.mjs';
+import Model from '../../../src/data/Model.mjs';
 
 /**
  * @class Neo.examples.table.container.MainModel
@@ -9,6 +9,9 @@ class MainModel extends Model {
         className: 'Neo.examples.table.container.MainModel',
 
         fields: [{
+            name: 'colspan',
+            type: 'Object'
+        }, {
             name: 'country',
             type: 'String'
         }, {
@@ -24,6 +27,4 @@ class MainModel extends Model {
     }
 }
 
-Neo.applyClassConfig(MainModel);
-
-export default MainModel;
+export default Neo.setupClass(MainModel);

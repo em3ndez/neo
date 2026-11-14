@@ -17,6 +17,9 @@ class MainContainer extends ConfigurationViewport {
         layout              : {ntype: 'hbox', align: 'stretch'}
     }
 
+    /**
+     * @summary Creates controls for the text area's dimensions, labels and live counter.
+     */
     createConfigurationComponents() {
         let me = this;
 
@@ -42,6 +45,12 @@ class MainContainer extends ConfigurationViewport {
             value    : me.exampleComponent.cols
         }, {
             module   : CheckBox,
+            checked  : me.exampleComponent.showCharacterCount,
+            labelText: 'showCharacterCount',
+            listeners: {change: me.onConfigChange.bind(me, 'showCharacterCount')},
+            style    : {marginTop: '10px'}
+        }, {
+            module   : CheckBox,
             checked  : me.exampleComponent.hideLabel,
             labelText: 'hideLabel',
             listeners: {change: me.onConfigChange.bind(me, 'hideLabel')},
@@ -54,7 +63,7 @@ class MainContainer extends ConfigurationViewport {
             listeners     : {change: me.onRadioChange.bind(me, 'labelPosition', 'top')},
             name          : 'labelPosition',
             style         : {marginTop: '10px'},
-            valueLabelText: 'top'
+            valueLabel    : 'top'
         }, {
             module        : Radio,
             checked       : me.exampleComponent.labelPosition === 'right',
@@ -62,7 +71,7 @@ class MainContainer extends ConfigurationViewport {
             labelText     : '',
             listeners     : {change: me.onRadioChange.bind(me, 'labelPosition', 'right')},
             name          : 'labelPosition',
-            valueLabelText: 'right'
+            valueLabel    : 'right'
         }, {
             module        : Radio,
             checked       : me.exampleComponent.labelPosition === 'bottom',
@@ -70,7 +79,7 @@ class MainContainer extends ConfigurationViewport {
             labelText     : '',
             listeners     : {change: me.onRadioChange.bind(me, 'labelPosition', 'bottom')},
             name          : 'labelPosition',
-            valueLabelText: 'bottom'
+            valueLabel    : 'bottom'
         }, {
             module        : Radio,
             checked       : me.exampleComponent.labelPosition === 'left',
@@ -78,7 +87,7 @@ class MainContainer extends ConfigurationViewport {
             labelText     : '',
             listeners     : {change: me.onRadioChange.bind(me, 'labelPosition', 'left')},
             name          : 'labelPosition',
-            valueLabelText: 'left'
+            valueLabel    : 'left'
         }, {
             module        : Radio,
             checked       : me.exampleComponent.labelPosition === 'inline',
@@ -86,7 +95,7 @@ class MainContainer extends ConfigurationViewport {
             labelText     : '',
             listeners     : {change: me.onRadioChange.bind(me, 'labelPosition', 'inline')},
             name          : 'labelPosition',
-            valueLabelText: 'inline'
+            valueLabel    : 'inline'
         }, {
             module   : TextField,
             labelText: 'labelText',
@@ -112,6 +121,12 @@ class MainContainer extends ConfigurationViewport {
             checked  : me.exampleComponent.resizable,
             labelText: 'resizable',
             listeners: {change: me.onConfigChange.bind(me, 'resizable')},
+            style    : {marginTop: '10px'}
+        }, {
+            module   : CheckBox,
+            checked  : me.exampleComponent.autoGrow,
+            labelText: 'autoGrow',
+            listeners: {change: me.onConfigChange.bind(me, 'autoGrow')},
             style    : {marginTop: '10px'}
         }, {
             module   : CheckBox,
@@ -144,7 +159,7 @@ class MainContainer extends ConfigurationViewport {
             listeners     : {change: me.onRadioChange.bind(me, 'wrap', 'hard')},
             name          : 'wrap',
             style         : {marginTop: '10px'},
-            valueLabelText: 'hard'
+            valueLabel    : 'hard'
         }, {
             module        : Radio,
             checked       : me.exampleComponent.wrap === 'off',
@@ -152,7 +167,7 @@ class MainContainer extends ConfigurationViewport {
             labelText     : '',
             listeners     : {change: me.onRadioChange.bind(me, 'wrap', 'off')},
             name          : 'wrap',
-            valueLabelText: 'off'
+            valueLabel    : 'off'
         }, {
             module        : Radio,
             checked       : me.exampleComponent.wrap === 'soft',
@@ -160,7 +175,7 @@ class MainContainer extends ConfigurationViewport {
             labelText     : '',
             listeners     : {change: me.onRadioChange.bind(me, 'wrap', 'soft')},
             name          : 'wrap',
-            valueLabelText: 'soft'
+            valueLabel    : 'soft'
         }, {
             module        : Radio,
             checked       : me.exampleComponent.wrap === null,
@@ -168,22 +183,25 @@ class MainContainer extends ConfigurationViewport {
             labelText     : '',
             listeners     : {change: me.onRadioChange.bind(me, 'wrap', null)},
             name          : 'wrap',
-            valueLabelText: 'null'
-        }];
+            valueLabel    : 'null'
+        }]
     }
 
+    /**
+     * @summary Creates a text area with a visible character budget.
+     */
     createExampleComponent() {
         return Neo.create(TextAreaField, {
-            clearable : true,
-            height    : 600,
-            labelText : 'Label',
-            labelWidth: 70,
-            value     : 'Hello World',
-            width     : 400,
-        });
+            clearable         : true,
+            height            : 120,
+            labelText         : 'Label',
+            labelWidth        : 70,
+            maxLength         : 200,
+            showCharacterCount: true,
+            value             : 'Hello World',
+            width             : 400,
+        })
     }
 }
 
-Neo.applyClassConfig(MainContainer);
-
-export default MainContainer;
+export default Neo.setupClass(MainContainer);

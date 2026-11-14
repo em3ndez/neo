@@ -19,10 +19,10 @@ class ViewportController extends Component {
     async onValidateAllPagesButtonClick(data) {
         let me         = this,
             form       = me.getReference('main-form'),
-            isValid    = await form.validate(),
-            formValues = await form.getValues();
+            formState  = await form.getFormState(),
+            formValues = await form.getSubmitValues();
 
-        console.log('All pages', {isValid, formValues});
+        console.log('All pages', {formState, formValues});
 
         await me.updateRecordValidityState()
     }
@@ -32,11 +32,10 @@ class ViewportController extends Component {
      */
     async onValidatePageButtonClick(data) {
         let me          = this,
-            activeIndex = me.getModel().data.activeIndex,
+            activeIndex = me.getStateProvider().data.activeIndex,
             activeCard  = me.getReference('pages-container').items[activeIndex],
-            formValues  = await activeCard.getValues();
+            formValues  = await activeCard.getSubmitValues();
 
-        await activeCard.validate();
         await me.updateRecordValidityState(activeIndex)
 
         console.log(`Current page: ${activeIndex + 1}`, formValues);
@@ -49,29 +48,27 @@ class ViewportController extends Component {
      */
     async updateRecordValidityState(pageIndex=null) {
         let me             = this,
-            model          = me.getModel(),
+            stateProvider  = me.getStateProvider(),
             pagesContainer = me.getReference('pages-container'),
             sideNav        = me.getReference('side-nav'),
-            store          = model.getStore('sideNav'),
+            store          = stateProvider.getStore('sideNav'),
             i              = 0,
             len            = pagesContainer.items.length,
-            isValid, listIndex, page;
+            formState, listIndex, page;
 
         if (Neo.isNumber(pageIndex)) {
             i   = pageIndex;
-            len = pageIndex + 1;
+            len = pageIndex + 1
         }
 
         for (; i < len; i++) {
             page      = pagesContainer.items[i];
-            listIndex = sideNav.getActiveIndex(i);
-            isValid   = await page.isValid();
+            listIndex = sideNav.getSelectedIndex(i);
+            formState = await page.getFormState();
 
-            store.getAt(listIndex).isValid = isValid;
+            store.getAt(listIndex).formState = formState
         }
     }
 }
 
-Neo.applyClassConfig(ViewportController);
-
-export default ViewportController;
+export default Neo.setupClass(ViewportController);

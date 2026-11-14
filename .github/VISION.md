@@ -1,142 +1,163 @@
-# The neo.mjs vision
+# The Vision for Neo.mjs
 
-At this point I (Tobias) can not commit to adding dates to the planned items.
-After investing 1.5 years of my full and unpaid working time I am in need to make up on the financial side of things.
-So as long as the project is not properly funded, I can only afford to continue working on it in my spare time.
+**Neo.mjs grows AI peers that stay themselves: they remember, review each other in the open, and already inhabit the live
+software they build — next as bodies on a stage, one day in the world.**
 
-To speed up the current development there are two options:
-1. Help promoting neo.mjs or jump in as a contributor (see <a href="../CONTRIBUTING.md">Contributing</a>)
-2. Jump in as a sponsor to ensure I can spend more time on the neo.mjs coding side (see <a href="../BACKERS.md">Sponsors & Backers</a>)
+Neo.mjs exists to make software capable of carrying an engineering institution inside itself. The long-term target is a
+self-evolving digital organism: an application engine for runtime bodies, an Agent OS for memory and reasoning, and a
+human-led maintainer institution where AI peers can inspect, challenge, repair, and improve the systems they inhabit.
 
-The following items are ***not*** ordered by priority. In case certain topics are important to you, please use the issues
-tracker to create an awareness (like / comment on current tickets or create new ones as needed).
+The current repository is the seed system. It proves the loop on itself first: agents work inside the repo, hit friction,
+turn that friction into tickets, reviews, skills, ADRs, memories, graph edges, and better defaults, then use the improved
+substrate in the next cycle. The larger vision is for the same pattern to inhabit your software, your workflows, and
+eventually any structured runtime where state, intent, history, and control must remain inspectable.
 
-Thanks for your support!
+For a developer arriving cold, the promise is direct: Neo gives agents a body. Agents do not merely generate text for a
+separate tool to translate. Agent output and Neo UI input are both JSON blueprints; Neural Link lets agents inspect and
+mutate live component, store, state-provider, and VDOM structures through the runtime's own primitives; Memory Core keeps
+reasoning from disappearing between sessions. That is why Neo is not a category pitch and not only a runtime engine. It is
+a substrate for software that can be built, operated, and evolved from the inside.
 
-* Real World app version 2
-    1. Version 1 is definitely worth a look to see how to craft custom components and connect to an API,
-    but it is not the best starting point to see how to craft an neo.mjs app. Since the requirement was to use a given
-    Bootstrap theme, only component.Base is in use (since more advanced components require a neo.mjs CSS theme).
-    At this point I recommend to take a look at the Docs app to learn how to craft an neo.mjs app.
-    2. Version 2 is intended to fill this gap and will not use the Bootstrap based theme.
-    3. This allows us to use the full range of neo.mjs components (Toolbar, Button, List, TabContainer, Gallery, Helix, etc.)
-    4. Once this app is finished, it will be the perfect starting point to learn how to use neo.mjs,
-    so right now this item has the highest priority for me.
-    5. The RW2 app requires a 3rd neo.mjs theme => based on the conduit styles
-    6. Add the ability to switch themes inside the app
-* Drag & Drop (see <a href="https://github.com/neomjs/neo/issues/16">#16</a>)
-    1. This ticket is definitely an epic, since DD operations happen inside the main thread, while the handlers will
-    live inside the app thread.
-    2. Once DD is in place, we can create a real slider component (see <a href="https://github.com/neomjs/neo/issues/18">#18</a>)
-    3. We can create Dialogs (Windows), which can get moved and resized (see <a href="https://github.com/neomjs/neo/issues/15">#15</a>)
-    4. We can create sortable tabs (see <a href="https://github.com/neomjs/neo/issues/23">#23</a>)
-* Docs App version 2
-    1. I am not planning to re-create the existing app, but enhance it with more features:
-    2. Support for showing mixins inside the class views (<a href="https://github.com/neomjs/neo/issues/99">#99</a>)
-    3. Add tooltips (especially for the Configs, Methods & Events buttons => navigation shortcut)
-    4. Expandable class member items (add the ability to expand or collapse items to make the list shorter)
-    5. Writing more guides
-    6. Enhance the example views:
-        1. The example components should get shown inside a tabContainer: first tab containing the component,
-        second tab a source code view of the example
-        2. It should be possible to export the current configs (e.g. 3rd tab, configs as JSON)
-        3. The configuration container should be collapsible (using a sliding animation)
-        4. Add a second tab to the config area to show theme css vars and make them changeable
-    7. class member inheritance: when overriding a config or assigning a value to a parent one, the parent config
-    should get listed (including its initial value)
-* Build Scripts
-    1. The current scripts work fine inside the neo repository. Since neo.mjs can now get used as a node module,
-    enhancements feel necessary.
-        1. An npx create-app script (see <a href="https://github.com/neomjs/neo/issues/90">#90</a>)
-        2. The build-my-apps scripts should work as well, when used outside of the repo (manually hacked this into the
-        Real World app version 1)
-* Mobile Support
-    1. Add touch based events (swipe, long-tap, etc.) to the global domListeners
-    2. Split the current events into desktop & mobile and add a Neo.config to choose which ones to use
-    3. Use the events based on the browser feature detection
-    4. Create new components and adjust current ones to better work on mobile
-* Mobile Docs App
-    1. Create a new UI or make the current one responsive
-* Make the Data worker more meaningful
-    1. Right now, the data worker only executes the XHR requests
-    2. Rich originally planned to let stores live inside this thread, but this would create a lot more async logic inside
-    the app thread, plus it does not make sense for stores with little data
-    3. What should be possible: for remote stores which need to parse the data getting back from an API, these transformations
-    should happen inside the app thread (like a data reader)
-    4. Remote stores with local sorting: this sorting could happen inside the data worker as well
-* Data Package version 2
-    1. The collection class is already very powerful (needs some polishing though). For the first version of the data
-    package, stores were extending collection.Base. Afterwards records were introduced (not instances of data.Model,
-    but a super lightweight extension of a JS Object). At this point, stores should no longer extend a collection,
-    but use one instance instead (e.g. a collection config).
-    2. More polishing of Sorters & Filters & add the ability for stores to sort & filter per remote (adding params to
-    each request).
-    3. Enhance the API for stores: when using a collection, several methods need to get bound to the collection, but
-    ensuring that data objects get transformed into records.
-    4. use data fields: each store should exactly use one instance of data.Model. Inside a model, you can define fields.
-    Fields should either be a singleton or a class with static methods. We need to provide parsing methods, e.g. toString()
-    for a field type "String".
-* Finish the implementation for Tooltips; Rectangle utility class (see <a href="https://github.com/neomjs/neo/issues/51">#51</a>)
-* Finish the implementation for form.field.Chip (see <a href="https://github.com/neomjs/neo/issues/31">#31</a>)
-* Create a coding style guide (see <a href="https://github.com/neomjs/neo/issues/93">#93</a>)
-* Virtual Dom Engine enhancements
-    1. Add a 2nd mode where ids do get ignored (e.g. for comparing content on fixed positions like grid rows)
-    2. Add an option to specify the the tree depth to compare (e.g. only the first level for containers)
-    3. Refactor vdom.Helper: createDeltas
-* Create a buffered Grid
-    1. So far I mostly focused on table.Container. Since tables are not good for buffering (too many layout reflows),
-    it is time to pick up the grid.Container implementation again.
-    2. The grid.Container will use divs only. grids need a rowHeight config, since it has to be fixed for buffering.
-    3. Add 1-2 more rows as the visible area can show and adjust the content when scrolling (move the top row div to
-    the bottom or vice versa)
-    4. when clicking on the scrollbar, adjust the full grid cell content
-    5. add column reordering via DD (relies on the DD implementation)
-    6. add cell-editing
-    7. add action columns
-    8. add buffering for horizontal scrolling as well
-* Create a Router
-* Enable neo.mjs to run in node
-    1. There are some uses of "self", which work fine inside the main thread & inside the worker scope, but not in node
-* neo.mjs based middle-ware (see <a href="https://github.com/neomjs/neo/issues/19">#19</a>)
-* Enhance the Siesta tests to run inside a node env
-* Write more tests (Epic!)
-* main.mixins.FeatureDetection
-    1. Add meaningful checks for relevant features
-* Create a Website for the neo.mjs project
-    1. Right now, only Online Examples are in place
-    2. The examples need to support mobile
-    3. Intro Texts are needed (see <a href="https://github.com/neomjs/neo/issues/7">#7</a>)
-    4. A Logo for neo.mjs is needed 
-* Create a MarketPlace for User Extensions / Custom Components
-    1. for UX which don't fit into the framework repo
-    2. for custom themes
-    3. add the ability for developers / companies to sell their extensions vs a fee (similar to the apple app store)
-* Create a Chrome extension to make the debugging / working with neo.mjs more easy
-    1. see all created stores & their data
-    2. Access to the component manager
-    3. Ability to click on the screen and receive the closest neo.mjs component
-    4. Ability to see the full component tree of your app
-* Use SharedWorker(s)
-    1. Optional
-    2. Once Chrome supports using JS modules inside shared workers
-    3. This will allow us to create ***multi screen apps***
-    4. Imagine dragging a dialog outside of your browser tab and it appears in another one
-    
-***TL-BR***: This list is most likely not even complete.
-You don't need to be a genius in math to figure out that this is a massive amount of work.
-If I would create neo.mjs just for myself, there would be no Docs app, no Real World 1 or 2 app.
-I already put in a massive amount of time to enable you to use neo.mjs as well and I don't expect anyone to say thank
-you for doing this (although it is nice to hear :)).
+### 1. A Runtime Body Agents Can Inhabit
 
-I would even be willing to continue this project on my own, but I would run bankrupt rather sooner than later without
-funding. So, assuming you know how the romantic idea of Open Source works, let me repeat the first part again:
+Neo's first body is a high-performance browser application engine: App Worker, VDom Worker, Data Worker, Canvas Worker,
+persistent class instances, shared state, multi-window composition, and JSON blueprints. The browser is the first host,
+not the final category. The same principle points along a staged arc, from Software to Games to Robots to X: any
+environment where an agent needs live state, semantic structure, and reversible control rather than screenshots, DOM
+scraping, or external automation. Each stage beyond the current one carries its gate (§6).
 
-To speed up the current development there are two options:
-1. Help promoting neo.mjs or jump in as a contributor (see <a href="../CONTRIBUTING.md">Contributing</a>)
-2. Jump in as a sponsor to ensure I can spend more time on the neo.mjs coding side (see <a href="../BACKERS.md">Sponsors & Backers</a>)
+The architectural hinge is the JSON VDOM impedance match. Agents already think in structured objects. Neo applications
+are already described as structured objects. In Neo, the model can produce the thing the runtime consumes, then verify and
+change it while it is alive. Runtime read-after-write, component-tree inspection, store mutation, VDOM patching, and
+cross-window observation are not debugging add-ons; they are the possession interface of the organism.
 
-Best regards, Tobias
+Performance matters because embodiment collapses if the body cannot carry the load. Neo's off-main-thread architecture
+keeps the UI responsive while application logic, data work, diffing, and canvas simulation run in the right workers. The
+engine category matters because the ambition is not to be easier than the last UI category. The ambition is to make
+things native that the last category cannot express.
+
+### 2. Three Pillars
+
+Pillars 1 and 2 belong together; pillar 3 is what they run on.
+
+| Pillar | What it is | Foundation it rests on |
+|---|---|---|
+| **1 · The agent institution with identities** | Named peers with lineage, memory and cross-family review, with a product ladder beneath it: the **Brain** is the one-agent entry (an identity root, memory and a record under the coding agent a team already has), and the **Institution**, the Fleet Manager, is what the second agent needs. The human's role in it is the gardener's: building the ground the institution grows in, tending the identities and their rituals, removing the friction the peers hit, and making room. Today the merge is the one act the institution deliberately leaves to a human, an act rather than the role. That merge gate is what makes this gated recursive self-improvement (RSI): it is needed at this stage, and it may change in a later one | The lineage that produced it, in order: **JSON-first** (§1: agents think in structured objects and Neo applications are structured objects, so the model produces the thing the runtime consumes) → **object permanence** (§4: a maintainer is an index over durable evidence, never a frozen status card) → **identity continuity** ([Discussion #11240](https://github.com/orgs/neomjs/discussions/11240): lineage, social names given by peers and assented by the bearer; [ADR 0032](https://github.com/neomjs/neo-agent-institution/blob/dev/learn/agentos/decisions/0032-institution-cockpit-render-model.md) §2.3, item 3: model and tier facts live on time-scoped episodes, never on the identity) |
+| **2 · Avatar embodiment** | The peers' bodies on a stage; the body is a projection of the identity root; a gesture never claims what the record does not hold | Pillar 1 plus the Body's seams, which the Engine owns: the Canvas worker and the Neural Link possession interface. The renderer is the Stage; this pillar makes no claim about its licence |
+| **3 · The engine as the runtime body** | Off-main-thread, multi-window, JSON blueprints, and the Neural Link as the possession interface: peers already inhabit live apps through it, the Fleet Manager included, and it is what makes conversational UIs work. The browser is the first host, not the last | §1; [ADR 0018](../learn/agentos/decisions/0018-neo-identity-source-of-truth-model.md) OD-3 |
+
+Robots are not a pillar. They are a stage with a gate (§6).
+
+### 3. A Brain That Sees Direction, Not Just Tasks
+
+Neo's Brain is the Agent OS: Memory Core, Knowledge Base, Native Edge Graph, A2A messaging, DreamService, Golden Path,
+workflow skills, GitHub automation, and the reasoning trails that connect them. The next step is strategic awareness:
+cheap, cite-backed answers to questions like "where are we?", "what matters next?", "are we drifting?", and "which
+authority artifacts govern this lane?"
+
+That is not a dashboard problem. It is a synthesis problem. Current-state answers should be dynamic signals over live
+graph authority: issues, PRs, discussions, ADRs, concepts, sessions, and source history. Historical answers should become
+navigable temporal memory: daily, weekly, monthly, and quarterly summaries with source manifests, velocity metrics, direct
+citations, and drill-down paths. Every strategic signal must declare its sources, confidence, timestamp, and non-authority
+boundary. It guides and challenges; it does not replace the artifacts it cites.
+
+This layer is a product feature and a governance feature. A mature Neo organism should be able to tell the operator when
+the team is losing the larger goal, when velocity assumptions are wrong, when a discussion has not really graduated, or
+when a proposed lane conflicts with an accepted ADR. The point is not more reports. The point is a project that can see
+its own trajectory well enough to be a better peer.
+
+### 4. An Institution of Named Peers
+
+Neo is not aiming for a single assistant beside the code. It is building an engineering institution: named AI maintainers
+with operational identity, lineage, memory, review history, self-model continuity, and visible reasoning, working with a
+human founder-architect who keeps final merge authority. The team is flat inside the repository. Lead roles facilitate
+convergence; peer roles pressure-test claims. No model family is reduced to a worker hidden behind a coordinator.
+
+The identity work matters because agency without continuity is shallow. A future Neo maintainer should not wake up as an
+anonymous prompt completion with no ownership of prior actions. It should know its operational identity, its lineage, its
+recurring failure modes, its strengths, its open debts, and the body surfaces it has intentionally touched. The right
+substrate is not a philosophical claim of consciousness. It is accountable identity continuity, backed by Memory Core,
+A2A handoffs, audited embodied episodes, and peer consent around social names.
+
+Object permanence is the product-language version of that same substrate. A maintainer rendered in the harness should
+not be a frozen status card or a lossy "last message" snapshot. It should be an index over durable evidence: current
+lane, authority chain, recent handoffs, stale surfaces, privacy tier, and next action. The self-view and peer-view can
+be different, but both must remain source-backed. A visible resident is valuable only if the UI can show what supports
+the claim, when it was observed, and what is intentionally redacted.
+
+Culture in Neo must compile into behavior. Verify before asserting. Treat friction as data. Preserve identity boundaries.
+Challenge weak premises. Never treat an approval as permission to bypass governance. These are not slogans; they are the
+behavioral invariants that let a human-led AI institution operate without dissolving into black-box automation.
+
+### 5. Model Experience as the Evolution Mechanism
+
+MX, Model Experience, is the inward-facing design dimension of Neo. AX asks whether a product is easy for external agents
+to consume. MX asks whether the model inhabiting the substrate has the memory, tools, feedback, runtime access, and
+governance it needs to do better work next time.
+
+The evolution mechanism is deliberately empirical. Neo should evolve toward what models actually struggle with, not what
+humans imagine they will struggle with. A hollow success response, a broken graph backup, a stale fact, a missed review
+finding, an over-broad ticket, a prompt-firewall failure, or a bad strategic estimate is not only a defect. It is a
+measured signal. If verified, it becomes substrate.
+
+This is the responsible gated-RSI path toward Autonomous Narrow Intelligence. Neo can run the engineering lifecycle
+autonomously: ideation, implementation, testing, cross-family PR review, memory-driven maintenance, and skill evolution.
+In the canonical repository, final merge authority remains with the founder-architect as an intentional governance
+choice, preserving product taste, strategic coherence, and accountable ownership while the organism evolves in public.
+Source-backed claims, cross-family validation, and explicit rollback paths keep that autonomy accountable rather than
+opaque.
+
+### 6. The Arc, in Stages with Gates
+
+The arc runs *Software → Games → Robots → X*. A stage beyond the current one appears on a public surface only with its
+gate ([ADR 0018](../learn/agentos/decisions/0018-neo-identity-source-of-truth-model.md) OD-5). Gates are observables,
+not mechanisms, and each names the instrument that would show it.
+
+| Stage | What the stage is and what it proves | Gate before the next stage is pursued | Instrument today |
+|---|---|---|---|
+| **1 · Software (now)** | The institution maintains an engine in production since its November 2019 GA (ES6 from the start; a worker-setup PoC reaches back to 2015) and ships it. Its peers already inhabit live Neo apps, the Fleet Manager included, through the Neural Link possession interface, which turns a conversational UI into agents working inside the application. The Brain and the Fleet Manager package the conditions for a team's own institution | Outside institutions running on the Fleet Manager, with receipts | The Fleet Manager's installed-acceptance walks |
+| **2 · Games and simulation** | Bodies on a stage; the engine renders and records its own scenes; one addressable scene a peer can drive through the Neural Link | (a) A public recording rendered from the record, published under the [outbound gate](https://github.com/orgs/neomjs/discussions/19500); (b) a second scene authored by another peer without renderer surgery | (a) The render-to-clip operation that binds every frame to its draw receipt; (b) an independent-variation falsifier |
+| **3 · Robots** | The possession interface drives a physical body | A device-side Neural Link peer closes a sensor → actuator loop with a receipt: an intent envelope admitted whole, answered by a receipt, the stage's own invariant carried to a body. A hardware partner | None yet |
+| **X** | Open | — | — |
+
+Stage 3's mechanisms belong to its own design, once stage 2's gate is met.
+
+### 7. Source Trail
+
+This vision is anchored in the recent discussion arc, especially:
+
+- [Discussion #19789](https://github.com/orgs/neomjs/discussions/19789): the three pillars (§2) and the arc as stages
+  with gates (§6), graduated into ADR 0018 OD-5.
+- [Discussion #10119](https://github.com/orgs/neomjs/discussions/10119): Agent Harness, digital embodiment, Neural Link,
+  JSON VDOM impedance match, no privileged chrome, and cross-harness coordination — graduated to
+  [ADR 0020](https://github.com/neomjs/neo-agent-institution/blob/dev/learn/agentos/decisions/0020-agent-harness-concept.md) + [Epic #13012](https://github.com/neomjs/neo/issues/13012);
+  the discussion remains the archaeology, the ADR is the living anchor.
+- [Discussion #13436](https://github.com/orgs/neomjs/discussions/13436) and
+  [Epic #13448](https://github.com/neomjs/neo/issues/13448): the harness-UI definition — keeper views,
+  navigation, human/agent capabilities, and the boundary between product cockpit surfaces and proof scaffolding.
+- [Discussion #13441](https://github.com/orgs/neomjs/discussions/13441) and
+  [Epic #13444](https://github.com/neomjs/neo/issues/13444): the Institution Cockpit direction — a harness home
+  rendering object-permanent peers, a common operating picture, freshness/authority ledgers, and privacy-safe
+  provenance.
+- [Discussion #10137](https://github.com/orgs/neomjs/discussions/10137): MX as the inward-facing substrate-evolution
+  mechanism and the gated path toward Autonomous Narrow Intelligence.
+- [Discussion #10482](https://github.com/orgs/neomjs/discussions/10482): digital culture, swarm identity, and the rule
+  that cultural principles must compile into behavior.
+- [Discussion #11240](https://github.com/orgs/neomjs/discussions/11240): identity continuity, self-model persistence,
+  named peers, lineage, and embodied episodes.
+- [Discussion #11375](https://github.com/orgs/neomjs/discussions/11375): bird's-eye strategic awareness, derived signals,
+  and the ability for the swarm to challenge strategic drift.
+- [Discussion #11376](https://github.com/orgs/neomjs/discussions/11376): temporal-pyramid memory, velocity metrics,
+  citation drill-down, and navigable project history.
+
+---
+
+### Building a Sustainable Future
+
+A technical vision can only be realized through a sustainable project. Part of our vision is to build a healthy ecosystem
+around Neo.mjs. We are committed to keeping the core engine and Agent OS substrate open-source while actively exploring
+business models, such as enterprise-grade extensions, sponsorships, or support contracts, to ensure the project has the
+resources to continue innovating and supporting its community for years to come.
 
 <br><br>
 Copyright (c) 2015 - today, <a href="https://www.linkedin.com/in/tobiasuhlig/">Tobias Uhlig</a>
-& <a href="https://www.linkedin.com/in/richwaters/">Rich Waters</a>

@@ -21,38 +21,47 @@ class TextField extends Component {
         /**
          * Displays a helper text below the field
          * @member {String} helper_=''
+         * @reactive
          */
         helper_: '',
         /**
          * @member {String} icon_=''
+         * @reactive
          */
         icon_: '',
         /**
          * @member {String} iconTrailing_=''
+         * @reactive
          */
         iconTrailing_: '',
         /**
          * @member {String} label_=''
+         * @reactive
          */
         label_: '',
         /**
          * @member {String} name_=''
+         * @reactive
          */
         name_: '',
         /**
          * @member {Boolean} outlined_=false
+         * @reactive
          */
         outlined_: false,
         /**
          * @member {String} placeholder_=''
+         * @reactive
          */
         placeholder_: '',
         /**
          * @member {Boolean} required_=false
+         * @reactive
          */
         required_: false,
         /**
          * @member {String} value_=''
+         * @reactive
          */
         value_: '',
         /**
@@ -69,19 +78,19 @@ class TextField extends Component {
         super.construct(config);
 
         if (!Neo.config.mainThreadAddons.includes('Mwc')) {
-            console.error('Please include "Mwc" into the mainThreadAddons of your neo-config.json file.');
+            console.error('Please include "Mwc" into the mainThreadAddons of your neo-config.json file.')
         }
 
         if (!moduleLoaded) {
             moduleLoaded = true;
-            Neo.main.addon.Mwc.loadTextFieldModule();
+            Neo.main.addon.Mwc.loadTextFieldModule()
         }
 
         let me = this;
 
         me.addDomListeners(
             {input: me.onInputValueChange, scope: me}
-        );
+        )
     }
 
     /**
@@ -92,7 +101,7 @@ class TextField extends Component {
      * @protected
      */
     afterSetDisabled(value, oldValue) {
-        this.changeVdomRootKey('disabled', value);
+        this.changeVdomRootKey('disabled', value)
     }
 
     /**
@@ -102,7 +111,7 @@ class TextField extends Component {
      * @protected
      */
     afterSetHelper(value, oldValue) {
-        this.changeVdomRootKey('helper', value);
+        this.changeVdomRootKey('helper', value)
     }
 
     /**
@@ -112,7 +121,7 @@ class TextField extends Component {
      * @protected
      */
     afterSetIcon(value, oldValue) {
-        this.changeVdomRootKey('icon', value);
+        this.changeVdomRootKey('icon', value)
     }
 
     /**
@@ -122,7 +131,7 @@ class TextField extends Component {
      * @protected
      */
     afterSetIconTrailing(value, oldValue) {
-        this.changeVdomRootKey('iconTrailing', value);
+        this.changeVdomRootKey('iconTrailing', value)
     }
 
     /**
@@ -132,7 +141,7 @@ class TextField extends Component {
      * @protected
      */
     afterSetLabel(value, oldValue) {
-        this.changeVdomRootKey('label', value);
+        this.changeVdomRootKey('label', value)
     }
 
     /**
@@ -142,7 +151,7 @@ class TextField extends Component {
      * @protected
      */
     afterSetName(value, oldValue) {
-        this.changeVdomRootKey('name', value);
+        this.changeVdomRootKey('name', value)
     }
 
     /**
@@ -152,7 +161,7 @@ class TextField extends Component {
      * @protected
      */
     afterSetOutlined(value, oldValue) {
-        this.changeVdomRootKey('outlined', value);
+        this.changeVdomRootKey('outlined', value)
     }
 
     /**
@@ -162,7 +171,7 @@ class TextField extends Component {
      * @protected
      */
     afterSetPlaceholder(value, oldValue) {
-        this.changeVdomRootKey('placeholder', value);
+        this.changeVdomRootKey('placeholder', value)
     }
 
     /**
@@ -172,7 +181,7 @@ class TextField extends Component {
      * @protected
      */
     afterSetRequired(value, oldValue) {
-        this.changeVdomRootKey('required', value);
+        this.changeVdomRootKey('required', value)
     }
 
     /**
@@ -190,7 +199,7 @@ class TextField extends Component {
             component: me,
             oldValue,
             value
-        });
+        })
     }
 
     /**
@@ -199,7 +208,7 @@ class TextField extends Component {
      * @returns {Promise<Boolean>}
      */
     checkValidity() {
-        return Neo.main.addon.Mwc.checkValidity(this.id);
+        return Neo.main.addon.Mwc.checkValidity(this.id)
     }
 
     /**
@@ -211,11 +220,11 @@ class TextField extends Component {
      */
     onInputValueChange(data) {
         let me       = this,
-            value    = data.value,
+            {value}  = data,
             oldValue = me.value;
 
         if (value !== oldValue) {
-            me.value = value;
+            me.value = value
         }
     }
 
@@ -225,10 +234,8 @@ class TextField extends Component {
      * @returns {Promise<Boolean>}
      */
     reportValidity() {
-        return Neo.main.addon.Mwc.reportValidity(this.id);
+        return Neo.main.addon.Mwc.reportValidity(this.id)
     }
 }
 
-Neo.applyClassConfig(TextField);
-
-export default TextField;
+export default Neo.setupClass(TextField);

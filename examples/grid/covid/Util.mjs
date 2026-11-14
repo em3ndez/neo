@@ -40,7 +40,7 @@ class Util extends Base {
         let value = data.value;
 
         if (!Neo.isNumber(value)) {
-            return value || 'N/A';
+            return value || 'N/A'
         }
 
         value = Math.round(value / 100);
@@ -48,7 +48,7 @@ class Util extends Base {
 
         value = value.toFixed(2) + ' %';
 
-        return value.toLocaleString(Util.locales);
+        return value.toLocaleString(Util.locales)
     }
 
     /**
@@ -62,12 +62,12 @@ class Util extends Base {
         let value = data.value;
 
         if (!Neo.isNumber(value)) {
-            return value || 'N/A';
+            return value || 'N/A'
         }
 
         value = value.toLocaleString(Util.locales);
 
-        return typeof color !== 'string' ? value : `<span style="color:${color};">${value}</span>`;
+        return typeof color !== 'string' ? value : `<span style="color:${color};">${value}</span>`
     }
 
     /**
@@ -133,31 +133,29 @@ class Util extends Base {
         imageName = map[imageName] || imageName;
 
         if (Neo.config.isGitHubPages) {
-            let path = `../../../../resources/images/flaticon/country_flags/png/${imageName}.png`;
+            let path = `../../../../resources_pub/images/flaticon/country_flags/png/${imageName}.png`;
 
             if (Neo.config.environment !== 'development') {
-                path = `../../${path}`;
+                path = `../../${path}`
             }
 
-            return path;
+            return path
         }
 
-        return `https://raw.githubusercontent.com/neomjs/pages/master/resources/images/flaticon/country_flags/png/${imageName}.png`;
+        return `https://raw.githubusercontent.com/neomjs/pages/main/resources_pub/images/flaticon/country_flags/png/${imageName}.png`
     }
 
     /**
      * @param {Object} data
-     * @param {Number} data.index
+     * @param {Number} data.rowIndex
      * @returns {Object}
      */
     static indexRenderer(data) {
         return {
-            cls : ['neo-index-column', 'neo-grid-cell'],
-            html: data.index + 1
-        };
+            cls : ['neo-index-column', 'neo-table-cell'],
+            html: data.rowIndex + 1
+        }
     }
 }
 
-Neo.applyClassConfig(Util);
-
-export default Util;
+export default Neo.setupClass(Util);

@@ -1,10 +1,9 @@
-import Base from '../../core/Base.mjs';
+import Base from './Base.mjs';
 
 /**
  * Basic CRUD support for window.localStorage
  * @class Neo.main.addon.LocalStorage
- * @extends Neo.core.Base
- * @singleton
+ * @extends Neo.main.addon.Base
  */
 class LocalStorage extends Base {
     static config = {
@@ -17,6 +16,7 @@ class LocalStorage extends Base {
          * Remote method access for other workers
          * @member {Object} remote={app: [//...]}
          * @protected
+         * @reactive
          */
         remote: {
             app: [
@@ -25,12 +25,7 @@ class LocalStorage extends Base {
                 'readLocalStorageItem',
                 'updateLocalStorageItem'
             ]
-        },
-        /**
-         * @member {Boolean} singleton=true
-         * @protected
-         */
-        singleton: true
+        }
     }
 
     /**
@@ -41,7 +36,7 @@ class LocalStorage extends Base {
      * @param {String} opts.value
      */
     createLocalStorageItem(opts) {
-        this.updateLocalStorageItem(opts);
+        this.updateLocalStorageItem(opts)
     }
 
     /**
@@ -50,18 +45,30 @@ class LocalStorage extends Base {
      * @param {String} opts.key
      */
     destroyLocalStorageItem(opts) {
-        window.localStorage.removeItem(opts.key);
+        window.localStorage.removeItem(opts.key)
     }
 
     /**
      * Gets an item from window.localStorage
      * @param {Object} opts
-     * @param {String} opts.key
+     * @param {String|String[]} opts.key
      */
     readLocalStorageItem(opts) {
+        let {key} = opts;
+
+        if (Array.isArray(key)) {
+            let value = {};
+
+            key.forEach(item => {
+                value[item] = window.localStorage.getItem(item)
+            });
+
+            return {key, value}
+        }
+
         return {
-            key  : opts.key,
-            value: window.localStorage.getItem(opts.key)
+            key,
+            value: window.localStorage.getItem(key)
         }
     }
 
@@ -72,10 +79,8 @@ class LocalStorage extends Base {
      * @param {String} opts.value
      */
     updateLocalStorageItem(opts) {
-        window.localStorage.setItem(opts.key, opts.value);
+        window.localStorage.setItem(opts.key, opts.value)
     }
 }
 
-let instance = Neo.applyClassConfig(LocalStorage);
-
-export default instance;
+export default Neo.setupClass(LocalStorage);

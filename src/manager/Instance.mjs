@@ -1,12 +1,12 @@
-import Base     from './Base.mjs';
-import CoreBase from '../core/Base.mjs';
+import Base    from '../core/Base.mjs';
+import Manager from './Base.mjs';
 
 /**
  * @class Neo.manager.Instance
  * @extends Neo.manager.Base
  * @singleton
  */
-class Instance extends Base {
+class Instance extends Manager {
     static config = {
         /**
          * @member {String} className='Neo.manager.Instance'
@@ -28,7 +28,7 @@ class Instance extends Base {
 
         let me = this;
 
-        CoreBase.instanceManagerAvailable = true;
+        Base.instanceManagerAvailable = true;
 
         me.consumeNeoIdMap();
 
@@ -44,11 +44,9 @@ class Instance extends Base {
     consumeNeoIdMap() {
         if (Neo.idMap) {
             this.add(Object.values(Neo.idMap));
-            delete Neo.idMap;
+            delete Neo.idMap
         }
     }
 }
 
-let instance = Neo.applyClassConfig(Instance);
-
-export default instance;
+export default Neo.setupClass(Instance);

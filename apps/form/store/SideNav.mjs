@@ -14,11 +14,10 @@ class SideNav extends Store {
         className: 'Form.store.SideNav',
         /**
          * @member {Neo.data.Model} model=SideNavModel
+         * @reactive
          */
         model: SideNavModel
     }
 }
 
-Neo.applyClassConfig(SideNav);
-
-export default SideNav;
+export default Neo.setupClass(SideNav);

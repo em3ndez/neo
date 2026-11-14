@@ -17,6 +17,7 @@ class FooterComponent extends Component {
         baseCls: ['rw2-footer-component'],
         /**
          * @member {Number} height=40
+         * @reactive
          */
         height: 40,
         /**
@@ -30,7 +31,7 @@ class FooterComponent extends Component {
                     tag : 'a',
                     cls : ['logo-font'],
                     href: '#/',
-                    html: 'conduit'
+                    text: 'conduit'
                 }, {
                     tag : 'span',
                     cls : 'attribution',
@@ -41,6 +42,4 @@ class FooterComponent extends Component {
     }
 }
 
-Neo.applyClassConfig(FooterComponent);
-
-export default FooterComponent;
+export default Neo.setupClass(FooterComponent);

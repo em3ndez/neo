@@ -22,7 +22,7 @@ class HistoricalDataTable extends Container {
          * @member {Object} columnDefaults
          */
         columnDefaults: {
-            align               : 'right',
+            cellAlign           : 'right',
             defaultSortDirection: 'DESC',
             renderer            : Util.formatNumber
         },
@@ -30,7 +30,7 @@ class HistoricalDataTable extends Container {
          * @member {Object[]} columns
          */
         columns: [{
-            align    : 'left',
+            cellAlign: 'left',
             dataField: 'date',
             dock     : 'left',
             text     : 'Date',
@@ -38,7 +38,7 @@ class HistoricalDataTable extends Container {
             renderer : function(data) {
                 return {
                     cls : ['neo-date-column', 'neo-table-cell'],
-                    html: new Intl.DateTimeFormat('default', {
+                    text: new Intl.DateTimeFormat('default', {
                         day  : 'numeric',
                         month: 'numeric',
                         year : 'numeric'
@@ -80,11 +80,10 @@ class HistoricalDataTable extends Container {
         }],
         /**
          * @member {Neo.data.Store} store=HistoricalData
+         * @reactive
          */
         store: HistoricalData
     }
 }
 
-Neo.applyClassConfig(HistoricalDataTable);
-
-export default HistoricalDataTable;
+export default Neo.setupClass(HistoricalDataTable);

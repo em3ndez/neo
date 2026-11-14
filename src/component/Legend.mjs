@@ -24,14 +24,17 @@ class Legend extends Component {
         baseCls: ['neo-legend'],
         /**
          * @member {String} iconCls_='far fa-check'
+         * @reactive
          */
         iconCls_: 'far fa-check',
         /**
-         * @member {String} text_=''
+         * @member {String} text=''
+         * @reactive
          */
-        text_: '',
+        text: '',
         /**
          * @member {Boolean} useIcon_=true
+         * @reactive
          */
         useIcon_: true,
         /**
@@ -39,20 +42,20 @@ class Legend extends Component {
          */
         _vdom:
         {tag: 'legend', cn:[
-            {vtype: 'text'},
+            {tag: 'i'},
             {vtype: 'text'}
         ]}
     }
 
     /**
-     * Triggered after the iconCls config got changed
+     * @summary Updates the icon element's classes without placing HTML in a text vnode.
      * @param {String} value
      * @param {String} oldValue
      * @protected
      */
     afterSetIconCls(value, oldValue) {
-        this.vdom.cn[0].html = `<i class="neo-legend-icon ${value}"></i>`;
-        this.update();
+        this.vdom.cn[0].cls = ['neo-legend-icon', value];
+        this.update()
     }
 
     /**
@@ -62,8 +65,8 @@ class Legend extends Component {
      * @protected
      */
     afterSetText(value, oldValue) {
-        this.vdom.cn[1].html = value;
-        this.update();
+        this.vdom.cn[1].text = value;
+        this.update()
     }
 
     /**
@@ -74,10 +77,8 @@ class Legend extends Component {
      */
     afterSetUseIcon(value, oldValue) {
         this.vdom.cn[0].removeDom = !value;
-        this.update();
+        this.update()
     }
 }
 
-Neo.applyClassConfig(Legend);
-
-export default Legend;
+export default Neo.setupClass(Legend);

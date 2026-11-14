@@ -1,0 +1,176 @@
+import Base             from '../../core/Base.mjs';
+import ComponentManager from '../../manager/Component.mjs';
+
+/**
+ * A singleton utility class responsible for recursively building VDOM and VNode trees.
+ * It can expand component references within a tree structure into their full VDOM/VNode representations,
+ * supporting selective (asymmetric) tree expansion for optimized updates.
+ * @class Neo.util.vdom.TreeBuilder
+ * @extends Neo.core.Base
+ * @singleton
+ */
+class TreeBuilder extends Base {
+    static config = {
+        /**
+         * @member {String} className='Neo.util.vdom.TreeBuilder'
+         * @protected
+         */
+        className: 'Neo.util.vdom.TreeBuilder',
+        /**
+         * @member {Boolean} singleton=true
+         * @protected
+         */
+        singleton: true
+    }
+
+    /**
+     * Private helper to recursively build a tree, abstracting the child node key.
+     * @param {Object} node The vdom or vnode to process.
+     * @param {Number} depth The current recursion depth.
+     * @param {Set<String>|null} mergedChildIds A set of component IDs to selectively expand.
+     * @param {String} childKey The property name for child nodes ('cn' or 'childNodes').
+     * @param {Set<String>|null} boundaryIds Components that carry their own payload: never expanded.
+     * @returns {Object}
+     * @private
+     */
+    #buildTree(node, depth, mergedChildIds, childKey, boundaryIds) {
+        // We can not use Neo.isObject() here, since inside unit-test scenarios, we will import vdom.Helper into main threads.
+        // Inside this scenario, Neo.isObject() returns false for VNode instances
+        if (typeof node !== 'object' || node === null) {
+            return node
+        }
+
+        // JIT ID Generation (App Authority)
+        // If we are processing a VDOM tree (childKey === 'cn') and the node has no ID,
+        // we must generate one now to ensure deterministic identity before the VDOM leaves the App Worker.
+        if (childKey === 'cn' && !node.id) {
+            node.id = Neo.getId(node.vtype === 'text' ? 'vtext' : 'vnode')
+        }
+
+        let output = {...node}; // Shallow copy
+
+        if (node[childKey]) {
+            output[childKey] = [];
+
+            for (let i = 0, len = node[childKey].length; i < len; i++) {
+                let item        = node[childKey][i],
+                    currentItem = item,
+                    childDepth;
+
+                // A missing child (a hole in a sparse array, null or undefined) renders nothing, as in vdom.Helper#createVnode
+                if (item == null) {
+                    continue
+                }
+
+                if (currentItem.componentId) {
+                    const component = ComponentManager.get(currentItem.componentId);
+
+                    // Another root of the same batch diffs this subtree; expanding it here would diff it twice.
+                    if (boundaryIds?.has(currentItem.componentId)) {
+                        output[childKey].push({...currentItem, neoIgnore: true});
+                        continue
+                    }
+
+                    // Sparse Tree Generation & Scoped Updates
+                    // We prune the branch (send a placeholder) if:
+                    // 1. We are at the depth boundary (depth === 1) AND it's not a merged update.
+                    // 2. We are in a Merged Update (mergedChildIds exists) AND this component is not in the AllowList (not dirty/bridge).
+                    // Exception: We never prune if depth is -1 (Full Tree) or if the component is not mounted yet.
+                    if (depth !== -1 && component?.vnode) {
+                        const isExpandable = mergedChildIds?.has(currentItem.componentId);
+
+                        if ((depth === 1 && !isExpandable) || (mergedChildIds && !isExpandable)) {
+                            output[childKey].push({...currentItem, neoIgnore: true});
+                            continue // Stop processing this branch, move to next item
+                        }
+                    }
+
+                    // Expand the branch if it's part of a merged update, or if the depth requires it, OR if the vnode is missing
+                    if (depth > 1 || depth === -1 || mergedChildIds?.has(currentItem.componentId) || !component?.vnode) {
+                        // Use the correct tree type based on the childKey
+                        const componentTree = childKey === 'cn' ? component?.vdom : component?.vnode;
+                        if (componentTree) {
+                            currentItem = componentTree
+                        }
+                    }
+                }
+
+                if (item.componentId) {
+                    childDepth = (depth === -1) ? -1 : Math.max(0, depth - 1)
+                } else {
+                    childDepth = depth
+                }
+
+                output[childKey].push(this.#buildTree(currentItem, childDepth, mergedChildIds, childKey, boundaryIds))
+            }
+        }
+
+        return output
+    }
+
+
+    /**
+     * The length of the longest chain of nested components rooted at the given component, counting the
+     * component itself as 1. A component with no child components is 1; one whose vdom references a
+     * child which itself references another is 3.
+     *
+     * This is the inverse of the pruning `#buildTree` performs, and lives beside it so the two read the
+     * same structure: a caller that needs a tree fully expanded down to `component` can pass
+     * `distanceToComponent + getComponentDepth(component)` as its depth instead of a literal, which
+     * would silently become a snapshot of whatever nesting happened to ship.
+     *
+     * @param {Neo.component.Base} component
+     * @returns {Number}
+     */
+    getComponentDepth(component) {
+        let depth = 1;
+
+        const scan = node => {
+            if (typeof node !== 'object' || node === null) {
+                return
+            }
+
+            if (node.componentId) {
+                const child = ComponentManager.get(node.componentId);
+
+                if (child) {
+                    depth = Math.max(depth, 1 + this.getComponentDepth(child));
+                    return
+                }
+            }
+
+            node.cn?.forEach(scan)
+        };
+
+        component?.vdom && scan(component.vdom);
+
+        return depth
+    }
+
+    /**
+     * Copies a given vdom tree and replaces child component references with their vdom.
+     * @param {Object} vdom
+     * @param {Number} [depth=-1]
+     * @param {Set<String>|null} [mergedChildIds=null]
+     * @param {Set<String>|null} [boundaryIds=null] Components left as `neoIgnore` references at any depth.
+     * Pass the same set to {@link #getVnodeTree}: the diff needs both trees cut at the same nodes.
+     * @returns {Object}
+     */
+    getVdomTree(vdom, depth=-1, mergedChildIds=null, boundaryIds=null) {
+        return this.#buildTree(vdom, depth, mergedChildIds, 'cn', boundaryIds)
+    }
+
+    /**
+     * Copies a given vnode tree and replaces child component references with their vnode.
+     * @param {Object} vnode
+     * @param {Number} [depth=-1]
+     * @param {Set<String>|null} [mergedChildIds=null]
+     * @param {Set<String>|null} [boundaryIds=null] Components left as `neoIgnore` references at any depth.
+     * @returns {Object}
+     */
+    getVnodeTree(vnode, depth=-1, mergedChildIds=null, boundaryIds=null) {
+        return this.#buildTree(vnode, depth, mergedChildIds, 'childNodes', boundaryIds)
+    }
+}
+
+export default Neo.setupClass(TreeBuilder);

@@ -16,6 +16,7 @@ class ProfileComponent extends Component {
         className: 'RealWorld.view.user.ProfileComponent',
         /**
          * @member {Object[]|null} articlePreviews_=null
+         * @reactive
          */
         articlePreviews_: null,
         /**
@@ -24,22 +25,27 @@ class ProfileComponent extends Component {
         baseCls: ['profile-page'],
         /**
          * @member {String|null} bio_=null
+         * @reactive
          */
         bio_: null,
         /**
          * @member {Number} countArticles_=5
+         * @reactive
          */
         countArticles_: 5,
         /**
          * @member {Boolean|null} following_=null
+         * @reactive
          */
         following_: null,
         /**
          * @member {String|null} image_=null
+         * @reactive
          */
         image_: null,
         /**
          * @member {Boolean} myProfile_=false
+         * @reactive
          */
         myProfile_: false,
         /**
@@ -48,6 +54,7 @@ class ProfileComponent extends Component {
         previewComponents: [],
         /**
          * @member {String|null} username_=null
+         * @reactive
          */
         username_: null,
         /**
@@ -69,7 +76,7 @@ class ProfileComponent extends Component {
                             ]},
                             {tag: 'a', cls: ['btn', 'btn-sm', 'btn-outline-secondary', 'action-btn'], flag: 'edit-profile', href: '#/settings', removeDom: true, cn: [
                                 {tag: 'i', cls: ['ion-gear-a']},
-                                {vtype: 'text', html: ' Edit Profile Settings'}
+                                {vtype: 'text', text: ' Edit Profile Settings'}
                             ]}
                         ]}
                     ]}
@@ -81,10 +88,10 @@ class ProfileComponent extends Component {
                         {cls: ['articles-toggle'], cn: [
                             {tag: 'ul', cls: ['nav', 'nav-pills', 'outline-active'], flag: 'feed-header', cn: [
                                 {tag: 'li', cls: ['nav-item'], cn: [
-                                    {tag: 'a', cls: ['nav-link', 'prevent-click', 'active'], href: '', html: 'My Articles'}
+                                    {tag: 'a', cls: ['nav-link', 'prevent-click', 'active'], href: '', text: 'My Articles'}
                                 ]},
                                 {tag: 'li', cls: ['nav-item'], cn: [
-                                    {tag: 'a', cls: ['nav-link', 'prevent-click'], href: '', html: 'Favorited Articles'}
+                                    {tag: 'a', cls: ['nav-link', 'prevent-click'], href: '', text: 'Favorited Articles'}
                                 ]}
                             ]}
                         ]}
@@ -100,12 +107,13 @@ class ProfileComponent extends Component {
     construct(config) {
         super.construct(config);
 
-        Neo.main.DomEvents.registerPreventDefaultTargets({
-            name: 'click',
-            cls : 'prevent-click'
-        });
-
         let me = this;
+
+        Neo.main.DomEvents.registerPreventDefaultTargets({
+            name    : 'click',
+            cls     : 'prevent-click',
+            windowId: me.windowId
+        });
 
         me.addDomListeners([
             {click: {fn: me.onFollowButtonClick, delegate: '.follow-button', scope: me}},
@@ -148,7 +156,9 @@ class ProfileComponent extends Component {
                 if (!me.previewComponents[index]) {
                     me.previewComponents[index] = Neo.create({
                         module  : PreviewComponent,
+                        appName : me.appName,
                         parentId: me.id,
+                        windowId: me.windowId,
                         ...config
                     });
                 } else {
@@ -170,7 +180,7 @@ class ProfileComponent extends Component {
      */
     afterSetBio(value, oldValue) {
         if (value) {
-            VDomUtil.getByFlag(this.vdom, 'bio').html = value;
+            VDomUtil.getByFlag(this.vdom, 'bio').text = value;
             this.update();
         }
     }
@@ -190,7 +200,7 @@ class ProfileComponent extends Component {
             NeoArray.add(node.cls, value ? 'btn-secondary' : 'btn-outline-secondary');
 
             node.cn[0].cls  = [value ? 'ion-minus-round' : 'ion-plus-round'];
-            node.cn[1].html = value ? ' Unfollow ' : ' Follow ';
+            node.cn[1].text = value ? ' Unfollow ' : ' Follow ';
             this.update();
         }
     }
@@ -212,7 +222,7 @@ class ProfileComponent extends Component {
      * @param {Boolean} oldValue
      * @protected
      */
-    afterSetMyProfile(value, oldValue) {console.log('afterSetMyProfile', value);
+    afterSetMyProfile(value, oldValue) {
         if (Neo.isBoolean(oldValue)) {
             let vdom = this.vdom;
 
@@ -231,8 +241,8 @@ class ProfileComponent extends Component {
     afterSetUsername(value, oldValue) {
         let vdom = this.vdom;
 
-        VDomUtil.getByFlag(vdom, 'following').cn[2].html = value;
-        VDomUtil.getByFlag(vdom, 'username').html = value;
+        VDomUtil.getByFlag(vdom, 'following').cn[2].text = value;
+        VDomUtil.getByFlag(vdom, 'username').text = value;
         this.update();
     }
 
@@ -248,7 +258,7 @@ class ProfileComponent extends Component {
     /**
      * @param {Object} value
      */
-    onCurrentUserChange(value) {console.log('onCurrentUserChange', value);
+    onCurrentUserChange(value) {
         this.myProfile = this.username === value?.username;
     }
 
@@ -268,12 +278,12 @@ class ProfileComponent extends Component {
      */
     onNavLinkClick(data) {
         let me         = this,
-            el         = VDomUtil.findVdomChild(me.vdom, data.path[0].id),
+            el         = VDomUtil.find(me.vdom, data.path[0].id),
             feedHeader = VDomUtil.getByFlag(me.vdom, 'feed-header'),
             params     = {};
 
         if (!el.vdom.cls.includes('disabled')) {
-            switch(el.vdom.html) {
+            switch (el.vdom.text) {
                 case 'Favorited Articles':
                     params = {
                         favorited: me.username
@@ -323,6 +333,4 @@ class ProfileComponent extends Component {
     }
 }
 
-Neo.applyClassConfig(ProfileComponent);
-
-export default ProfileComponent;
+export default Neo.setupClass(ProfileComponent);

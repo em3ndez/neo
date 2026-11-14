@@ -1,8 +1,8 @@
+import ClassSystemUtil    from '../util/ClassSystem.mjs';
+import NeoArray           from '../util/Array.mjs';
 import TreeList           from '../tree/List.mjs';
-import TreeAccordionModel from "../selection/TreeAccordionModel.mjs";
-import NeoArray           from "../util/Array.mjs";
-import ClassSystemUtil    from "../util/ClassSystem.mjs";
-import VDomUtil           from "../util/VDom.mjs";
+import TreeAccordionModel from '../selection/TreeAccordionModel.mjs';
+import VDomUtil           from '../util/VDom.mjs';
 
 /**
  * @class Neo.tree.Accordion
@@ -39,11 +39,6 @@ class AccordionTree extends TreeList {
          */
         baseCls: ['neo-tree-list'],
         /**
-         * Set to false to hide the initial root item
-         * @member {Boolean} firstParentIsVisible=true
-         */
-        firstParentIsVisible_: true,
-        /**
          * Define the field names for the store to show header, text and icon
          * @member {Object} fields={header:'name',icon:'iconCls',text:'content'}
          */
@@ -52,6 +47,11 @@ class AccordionTree extends TreeList {
             icon  : 'iconCls',
             text  : 'content'
         },
+        /**
+         * Set to false to hide the initial root item
+         * @member {Boolean} firstParentIsVisible=true
+         */
+        firstParentIsVisible_: true,
         /**
          * Set to false will auto expand root parent items and disallow collapsing
          * @member {Boolean} rootParentIsCollapsible=false
@@ -63,7 +63,7 @@ class AccordionTree extends TreeList {
          *
          * @example
          *     module: AccordionTree,
-         *     bind  : {selection: {twoWay: true, value: data => data.selection}}
+         *     bind  : {selection: {key: 'selection', twoWay: true}}
          *
          *     ntype: 'component',
          *     bind : {html: data => data.selection[0].name}
@@ -83,7 +83,7 @@ class AccordionTree extends TreeList {
          */
         _vdom:
         {cn: [
-            {tag: 'ul', cls: ['neo-list-container', 'neo-list', 'neo-accordion-style'], tabIndex: -1, cn: []}
+            {tag: 'ul', cls: ['neo-list-container', 'neo-list', 'neo-accordion-style'], cn: []}
         ]}
     }
 
@@ -109,12 +109,12 @@ class AccordionTree extends TreeList {
      * @param {Boolean} oldValue
      */
     afterSetFirstParentIsVisible(value, oldValue) {
-        const toggleFn = !value ? 'addCls' : 'removeCls';
+        let firstRecord = this.store.first();
 
-        this[toggleFn]('first-parent-not-visible');
+        this.toggleCls('first-parent-not-visible', !value);
 
-        if (this.store.first()) {
-            this.store.first().visible = value;
+        if (firstRecord) {
+            firstRecord.visible = value
         }
     }
 
@@ -126,17 +126,16 @@ class AccordionTree extends TreeList {
      * @param {Boolean} oldValue
      */
     afterSetRootParentsAreCollapsible(value, oldValue) {
-        const me       = this,
-              toggleFn = !value ? 'addCls' : 'removeCls';
+        let me = this;
 
-        me[toggleFn]('root-not-collapsible');
+        me[!value ? 'addCls' : 'removeCls']('root-not-collapsible');
 
-        if (me.rendered && value === false) {
-            const store = me.store;
+        if (me.vnodeInitialized && value === false) {
+            let {store} = me;
 
-            store.items.forEach(record => {
+            store.forEach(record => {
                 if (record.parentId === null && !record.isLeaf) {
-                    me.expandItem(record);
+                    me.expandItem(record)
                 }
             })
         }
@@ -150,17 +149,17 @@ class AccordionTree extends TreeList {
      * @param {Boolean} oldValue
      */
     afterSetShowIcon(value, oldValue) {
-        const me    = this,
-              store = me.store,
-              hide  = !value;
+        const me      = this,
+              {store} = me,
+              hide    = !value;
 
-        store.items.forEach((record) => {
-            const itemId   = me.getItemId(record[me.getKeyProperty()]),
+        store.forEach(record => {
+            const itemId   = me.getItemId(me.store.getKey(record)),
                   vdom     = me.getVdomChild(itemId),
-                  itemVdom = VDomUtil.getByFlag(vdom, 'icon');
+                  itemVdom = VDomUtil.getByFlag(vdom, 'iconCls');
 
             if (record.isLeaf) {
-                itemVdom.removeDom = hide;
+                itemVdom.removeDom = hide
             }
         })
 
@@ -177,7 +176,7 @@ class AccordionTree extends TreeList {
     beforeSetSelectionModel(value, oldValue) {
         oldValue?.destroy();
 
-        return ClassSystemUtil.beforeSetInstance(value, TreeAccordionModel);
+        return ClassSystemUtil.beforeSetInstance(value, TreeAccordionModel)
     }
 
     /**
@@ -189,7 +188,7 @@ class AccordionTree extends TreeList {
     clear(withUpdate=true) {
         delete this.getVdomRoot().cn[0].cn
 
-        withUpdate && this.update();
+        withUpdate && this.update()
     }
 
     /**
@@ -207,15 +206,14 @@ class AccordionTree extends TreeList {
      * @protected
      */
     createItems(parentId, vdomRoot, level) {
-        let me        = this,
-            items     = me.store.find('parentId', parentId),
-            itemCls   = me.itemCls,
-            folderCls = me.folderCls,
+        let me                   = this,
+            {folderCls, itemCls} = me,
+            items                = me.store.find('parentId', parentId),
             cls, id, itemIconCls, tmpRoot;
 
         if (items.length > 0) {
             if (!vdomRoot.cn) {
-                vdomRoot.cn = [];
+                vdomRoot.cn = []
             }
 
             if (parentId !== null) {
@@ -226,44 +224,45 @@ class AccordionTree extends TreeList {
                     id : `${me.id}__${parentId}__ul`
                 });
 
-                tmpRoot = vdomRoot.cn[vdomRoot.cn.length - 1];
+                tmpRoot = vdomRoot.cn[vdomRoot.cn.length - 1]
             } else {
-                tmpRoot = vdomRoot;
+                tmpRoot = vdomRoot
             }
 
             items.forEach(item => {
-                cls = [itemCls];
-
+                cls         = [itemCls];
                 itemIconCls = ['neo-accordion-item-icon'];
+
                 if (item.iconCls) {
-                    NeoArray.add(itemIconCls, item.iconCls.split(' '));
+                    NeoArray.add(itemIconCls, item.iconCls.split(' '))
                 }
 
-
                 if (item.isLeaf) {
-                    cls.push(itemCls + (item.singleton ? '-leaf-singleton' : '-leaf'));
+                    cls.push(itemCls + (item.singleton ? '-leaf-singleton' : '-leaf'))
                 } else {
                     cls.push(folderCls);
 
                     if (!item.parentId && !me.rootParentsAreCollapsible) {
-
                         cls.push('neo-not-collapsible');
+
                         if (item.collapsed) {
-                            item.collapsed = false;
+                            item.collapsed = false
                         }
                     }
+
                     if (!item.collapsed) {
-                        cls.push('neo-folder-open');
+                        cls.push('neo-folder-open')
                     }
                 }
 
                 id = me.getItemId(item.id);
 
                 tmpRoot.cn.push({
-                    tag: 'li',
+                    tag     : 'li',
+                    tabIndex: -1,
                     cls,
                     id,
-                    cn : [{
+                    cn      : [{
                         flag     : 'iconCls',
                         tag      : 'span',
                         cls      : itemIconCls,
@@ -273,18 +272,18 @@ class AccordionTree extends TreeList {
                         cls  : [itemCls + '-content'],
                         id   : id + '__item-content',
                         style: {pointerEvents: 'none'},
-                        cn   : [{
-                            flag     : 'name',
-                            tag      : 'span',
-                            cls      : [itemCls + '-content-header'],
-                            id       : id + '__item-content-header',
-                            innerHTML: item[me.fields.header]
+                        cn: [{
+                            flag: 'name',
+                            tag : 'span',
+                            cls : [itemCls + '-content-header'],
+                            id  : id + '__item-content-header',
+                            text: item[me.fields.header]
                         }, {
-                            flag     : 'content',
-                            tag      : 'span',
-                            cls      : [itemCls + '-content-text'],
-                            id       : id + '__item-content-text',
-                            innerHTML: item[me.fields.text]
+                            flag: 'content',
+                            tag : 'span',
+                            cls : [itemCls + '-content-text'],
+                            id  : id + '__item-content-text',
+                            text: item[me.fields.text]
                         }]
                     }],
                     style: {
@@ -294,11 +293,11 @@ class AccordionTree extends TreeList {
                     }
                 });
 
-                tmpRoot = me.createItems(item.id, tmpRoot, level + 1);
-            });
+                tmpRoot = me.createItems(item.id, tmpRoot, level + 1)
+            })
         }
 
-        return vdomRoot;
+        return vdomRoot
     }
 
 
@@ -307,28 +306,31 @@ class AccordionTree extends TreeList {
      * @param {Object} record
      */
     expandItem(record) {
-        const me     = this,
-              itemId = me.getItemId(record[me.getKeyProperty()]),
-              item   = me.getVdomChild(itemId);
+        let me     = this,
+            itemId = me.getItemId(me.store.getKey(record)),
+            item   = me.getVdomChild(itemId);
 
         record.collapsed = false;
 
         NeoArray.add(item.cls, 'neo-folder-open');
-        me.update();
+        me.update()
     }
 
     /**
      * @param {Object} item
      * @param {Object} data
+     * @returns {Promise<Boolean|void>}
      */
-    onItemClick(item, data) {
-        super.onItemClick(item, data);
+    async onItemClick(item, data) {
+        if (await super.onItemClick(item, data) === false) {
+            return false
+        }
 
-        const me             = this,
-              selectionModel = me.selectionModel,
-              itemId         = item.id,
-              id             = Number(itemId.split('__')[1]),
-              record         = me.store.get(id);
+        let me               = this,
+            {selectionModel} = me,
+            itemId           = item.id,
+            id               = me.getItemRecordId(itemId),
+            record           = me.store.get(id);
 
         selectionModel.select(item.id);
 
@@ -340,8 +342,6 @@ class AccordionTree extends TreeList {
              * @returns {Object} record
              */
             me.fire('folderItemClick', {record});
-
-            record.collapsed = !record.collapsed
         }
     }
 
@@ -350,7 +350,7 @@ class AccordionTree extends TreeList {
      * @returns {Object}
      */
     getListItemsRoot() {
-        return this.vdom.cn[0];
+        return this.vdom.cn[0]
     }
 
     /**
@@ -358,11 +358,11 @@ class AccordionTree extends TreeList {
      * @param {Object} data
      */
     onFocus(data) {
-        const me        = this,
-              selModel  = me.selectionModel,
-              selection = selModel.getSelection()[0];
+        let me               = this,
+            {selectionModel} = me,
+            selection        = selectionModel.getSelection()[0];
 
-        if (!selection) selModel.selectRoot();
+        !selection && selectionModel.selectRoot()
     }
 
     /**
@@ -370,17 +370,17 @@ class AccordionTree extends TreeList {
      * @param {String[]} value
      */
     onSelect(value) {
-        const me = this;
-        let records = [];
+        let me      = this,
+            records = [];
 
         value.forEach((selectItemId) => {
             let id     = me.getItemRecordId(selectItemId),
                 record = me.store.get(id);
 
-            records.push(record);
+            records.push(record)
         });
 
-        me.selection = records;
+        me.selection = records
     }
 
     /**
@@ -388,17 +388,15 @@ class AccordionTree extends TreeList {
      * @param {Record[]} records
      */
     onStoreLoad(records) {
-        let me = this,
-            listenerId;
+        let me = this;
 
         me.clear(false);
 
-        if (!me.mounted && me.rendering) {
-            listenerId = me.on('mounted', () => {
-                me.un('mounted', listenerId);
+        if (!me.mounted && me.isVnodeInitializing) {
+            me.on('mounted', () => {
                 me.createItems(null, me.getListItemsRoot(), 0);
                 me.update()
-            });
+            }, me, {once: true})
         } else {
             me.createItems(null, me.getListItemsRoot(), 0);
             me.update()
@@ -414,11 +412,10 @@ class AccordionTree extends TreeList {
      * @param {Record}         data.record
      */
     onStoreRecordChange(data) {
-        let me     = this,
-            record = data.record,
-            fields = data.fields,
-            itemId = me.getItemId(record[me.getKeyProperty()]),
-            vdom   = me.getVdomChild(itemId),
+        let me               = this,
+            {fields, record} = data,
+            itemId           = me.getItemId(me.store.getKey(record)),
+            vdom             = me.getVdomChild(itemId),
             itemVdom;
 
         fields.forEach((field) => {
@@ -426,13 +423,13 @@ class AccordionTree extends TreeList {
 
             if (itemVdom) {
                 if (field.name === 'iconCls') {
-                    const clsItems = field.value.split(' '),
-                          cls      = ['neo-accordion-item-icon'];
+                    let clsItems = field.value.split(' '),
+                        cls      = ['neo-accordion-item-icon'];
 
                     NeoArray.add(cls, clsItems);
-                    itemVdom.cls = cls;
+                    itemVdom.cls = cls
                 } else {
-                    itemVdom.html = field.value;
+                    itemVdom.text = field.value
                 }
             }
         });
@@ -449,18 +446,19 @@ class AccordionTree extends TreeList {
     setSelection(value) {
         if (value === null) {
             this.clearSelection();
-            return;
+            return
         }
 
         // In case you pass in an array use only the first item
-        if (Neo.isArray(value)) value = value[0];
+        if (Neo.isArray(value)) {
+            value = value[0]
+        }
 
-        const me = this;
-        let recordKeyProperty, elId;
+        let me = this,
+            recordKeyProperty, elId;
 
-        if (Neo.isObject(value)) {
-            // Record
-            recordKeyProperty = value[me.getKeyProperty()];
+        if (Neo.isRecord(value)) {
+            recordKeyProperty = me.store.getKey(value);
         } else {
             // RecordId
             recordKeyProperty = value;
@@ -468,10 +466,8 @@ class AccordionTree extends TreeList {
 
         elId = me.getItemId(recordKeyProperty);
 
-        me.selectionModel.selectAndScrollIntoView(elId);
+        me.selectionModel.selectAndScrollIntoView(elId)
     }
 }
 
-Neo.applyClassConfig(AccordionTree);
-
-export default AccordionTree
+export default Neo.setupClass(AccordionTree)

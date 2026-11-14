@@ -1,0 +1,489 @@
+import Service     from './Service.mjs';
+import TreeBuilder from '../../util/vdom/TreeBuilder.mjs';
+import VdomUtil    from '../../util/VDom.mjs';
+
+/**
+ * @summary Registers the JSON-RPC method prefixes one ComponentService instance answers.
+ * @param {Object} serviceMap Mutable Client prefix map.
+ * @param {ComponentService} service Owning service instance.
+ * @returns {Object} The same map after registration.
+ */
+export function registerComponentServiceMethods(serviceMap, service) {
+    return Object.assign(serviceMap, {
+        get_component      : service,
+        get_computed_styles: service,
+        get_dom_rect       : service,
+        get_vdom           : service,
+        get_vdom_vnode     : service,
+        get_vnode          : service,
+        highlight_component: service,
+        observe_motion     : service,
+        query_component    : service,
+        query_vdom         : service,
+        verify_component   : service
+    })
+}
+
+/**
+ * Handles component-related Neural Link requests.
+ * @class Neo.ai.client.ComponentService
+ * @extends Neo.ai.client.Service
+ */
+class ComponentService extends Service {
+    static config = {
+        /**
+         * @member {String} className='Neo.ai.client.ComponentService'
+         * @protected
+         */
+        className: 'Neo.ai.client.ComponentService'
+    }
+
+    /**
+     * @param {Object}   params
+     * @param {String}   params.componentId
+     * @param {String[]} params.variables
+     * @returns {Object}
+     */
+    async getComputedStyles({componentId, variables}) {
+        const component = Neo.getComponent(componentId);
+
+        if (!component) {
+            throw new Error(`Component not found: ${componentId}`)
+        }
+
+        const styles = await Neo.main.DomAccess.getComputedStyle({
+            id   : component.id,
+            style: variables
+        });
+
+        return {styles}
+    }
+
+    /**
+     * @param {Object}   params
+     * @param {String[]} params.componentIds
+     * @returns {Object}
+     */
+    async getDomRect({componentIds}) {
+        if (!Array.isArray(componentIds) || componentIds.length === 0) {
+            throw new Error('componentIds must be a non-empty array')
+        }
+
+        // Use the first component to resolve the windowId context
+        const component = Neo.getComponent(componentIds[0]);
+
+        if (!component) {
+            throw new Error(`Component not found: ${componentIds[0]}`)
+        }
+
+        const rects = await component.getDomRect(componentIds);
+
+        return {
+            rects: Array.isArray(rects) ? rects : [rects]
+        }
+    }
+
+    /**
+     * Samples component and raw DOM-node client rects over a time window, returning a rendered
+     * geometry motion trace. The perception side of drag verification: an agent drives the
+     * interaction through any dispatch path while this recorder observes where elements actually
+     * render per tick. Duration is clamped below the bridge rpc timeout; chain calls for longer
+     * windows.
+     * @param {Object}         params
+     * @param {String[]}       [params.componentIds]
+     * @param {{rowId:String}} [params.cellsOf] Expands a row's current child node ids
+     * @param {Number}         [params.durationMs=2000] clamped to [100, 8000]
+     * @param {Number}         [params.intervalMs=100]  clamped to [16, 1000]
+     * @param {String[]}       [params.nodeIds] Raw DOM element ids to sample
+     * @param {String}         [params.windowId] Required for deterministic node-only multi-window sampling
+     * @returns {Object} {componentIds, nodeIds, targetIds, samples: [{t, rects}]}
+     */
+    async observeMotion({cellsOf, componentIds, durationMs = 2000, intervalMs = 100, nodeIds, windowId}) {
+        componentIds = ComponentService.normalizeIdArray(componentIds, 'componentIds');
+        nodeIds      = ComponentService.normalizeIdArray(nodeIds,      'nodeIds');
+
+        const components = componentIds.map(id => {
+            const component = Neo.getComponent(id);
+
+            if (!component) {
+                throw new Error(`Component not found: ${id}`)
+            }
+
+            return component
+        });
+
+        windowId ??= components[0]?.windowId;
+
+        if (cellsOf?.rowId) {
+            const rowNodeIds = await Neo.main.DomAccess.getChildNodeIds({id: cellsOf.rowId, windowId});
+
+            if (rowNodeIds === null) {
+                throw new Error(`Row node not found: ${cellsOf.rowId}`)
+            }
+
+            nodeIds.push(...rowNodeIds)
+        }
+
+        if (componentIds.length === 0 && nodeIds.length === 0) {
+            throw new Error('componentIds, nodeIds, or cellsOf must provide at least one target')
+        }
+
+        durationMs = Math.max(100, Math.min(durationMs, 8000));
+        intervalMs = Math.max(16,  Math.min(intervalMs, 1000));
+
+        const
+            samples   = [],
+            start     = Date.now(),
+            targetIds = componentIds.concat(nodeIds);
+
+        while (Date.now() - start < durationMs) {
+            const
+                t     = Date.now() - start,
+                rects = componentIds.length > 0 && nodeIds.length === 0 && !cellsOf ?
+                    await components[0].getDomRect(componentIds) :
+                    await Neo.main.DomAccess.getBoundingClientRect({id: targetIds, windowId});
+
+            samples.push({
+                t,
+                rects: (Array.isArray(rects) ? rects : [rects]).map(ComponentService.serializeMotionRect)
+            });
+
+            await this.timeout(intervalMs)
+        }
+
+        return {componentIds, nodeIds, targetIds, samples}
+    }
+
+    /**
+     * Compares a container's three child-order surfaces — logical items, vdom child nodes,
+     * and the rendered DOM — and reports mismatches (count, order, membership, duplicates).
+     * The duplication detector: a column/item existing twice is a surface disagreement.
+     * A vdom node stamped `removeDom` is withheld from the DOM by contract (a withdrawn
+     * focus-gated action, a `removeDom`-hidden child), so the DOM is expected to lack it.
+     * @param {Object} params
+     * @param {String} params.componentId
+     * @returns {Object}
+     */
+    async verifyComponentConsistency({componentId}) {
+        const component = Neo.getComponent(componentId);
+
+        if (!component) {
+            throw new Error(`Component not found: ${componentId}`)
+        }
+
+        const
+            itemIds    = (component.items || []).map(item => item?.id).filter(Boolean),
+            childNodes = component.getVdomItemsRoot?.()?.cn || component.vdom?.cn || [],
+            vdomIds    = childNodes.map(node => node?.componentId || node?.id).filter(Boolean),
+            // A child component sits in `cn` as a `{componentId}` placeholder; the marker is stamped on its own vdom root
+            withheldIds = childNodes
+                .filter(node => node?.removeDom === true || (node?.componentId && Neo.getComponent(node.componentId)?.vdom?.removeDom === true))
+                .map(node => node.componentId || node.id).filter(Boolean),
+            rootId      = component.getVdomItemsRoot?.()?.id || componentId;
+
+        const domIds = await Neo.main.DomAccess.getChildNodeIds({id: rootId, windowId: component.windowId});
+
+        return ComponentService.diffChildSurfaces({componentId, domIds, itemIds, vdomIds, withheldIds})
+    }
+
+    /**
+     * Pure differ for the three child-order surfaces. Static for direct unit coverage.
+     * @param {Object}        data
+     * @param {String}        data.componentId
+     * @param {String[]|null} data.domIds null when the root node was not found in the DOM
+     * @param {String[]}      data.itemIds
+     * @param {String[]}      data.vdomIds
+     * @param {String[]}      [data.withheldIds=[]] vdom ids whose DOM node is withheld by contract: expected absent
+     * @returns {Object}
+     */
+    static diffChildSurfaces({componentId, domIds, itemIds, vdomIds, withheldIds = []}) {
+        const
+            mismatches  = [],
+            dupes       = ids => ids.filter((id, index) => id && ids.indexOf(id) !== index),
+            withheld    = new Set(withheldIds),
+            rendered    = withheldIds.filter(id => domIds?.includes(id)),
+            expectedDom = vdomIds.filter(id => !withheld.has(id));
+
+        if (domIds === null) {
+            mismatches.push({type: 'dom-root-missing'})
+        }
+
+        [['items', itemIds], ['vdom', vdomIds], ['dom', domIds || []]].forEach(([surface, ids]) => {
+            const duplicates = dupes(ids);
+
+            if (duplicates.length > 0) {
+                mismatches.push({type: 'duplicates', surface, ids: duplicates})
+            }
+        });
+
+        if (itemIds.join() !== vdomIds.join()) {
+            mismatches.push({type: 'order-or-membership', surfaces: ['items', 'vdom'], a: itemIds, b: vdomIds})
+        }
+
+        if (rendered.length > 0) {
+            mismatches.push({type: 'withheld-node-rendered', ids: rendered})
+        }
+
+        // A rendered withheld node is reported above once; the order comparison runs on the DOM without it
+        if (domIds !== null && expectedDom.join() !== domIds.filter(id => !rendered.includes(id)).join()) {
+            mismatches.push({type: 'order-or-membership', surfaces: ['vdom', 'dom'], a: expectedDom, b: domIds})
+        }
+
+        return {
+            componentId,
+            consistent: mismatches.length === 0,
+            counts    : {dom: domIds === null ? null : domIds.length, items: itemIds.length, vdom: vdomIds.length},
+            domIds,
+            itemIds,
+            mismatches,
+            vdomIds,
+            withheldIds
+        }
+    }
+
+    /**
+     * @param {*} ids
+     * @param {String} name
+     * @returns {String[]}
+     * @protected
+     */
+    static normalizeIdArray(ids, name) {
+        if (ids === undefined || ids === null) {
+            return []
+        }
+
+        if (!Array.isArray(ids)) {
+            throw new Error(`${name} must be an array`)
+        }
+
+        ids.forEach(id => {
+            if (typeof id !== 'string' || id.length === 0) {
+                throw new Error(`${name} must contain non-empty strings`)
+            }
+        });
+
+        return [...ids]
+    }
+
+    /**
+     * @param {Object|null|undefined} rect
+     * @returns {Object|null}
+     * @protected
+     */
+    static serializeMotionRect(rect) {
+        return typeof rect?.left === 'number' ?
+            {left: rect.left, top: rect.top, width: rect.width, height: rect.height} :
+            null
+    }
+
+    /**
+     * Paints the highlight for `duration`, then restores exactly the keys it wrote — by value,
+     * `null` where the component had none. A style key leaves the vdom root only through `null`
+     * (`Neo.component.Base#style_`); assigning the pre-highlight object keeps it painted.
+     * @param {Object} params
+     * @param {String} params.componentId
+     * @param {Object} [params.options]
+     * @returns {Object}
+     */
+    highlightComponent({componentId, options}) {
+        let component = Neo.getComponent(componentId);
+
+        if (!component) {
+            throw new Error(`Component not found: ${componentId}`)
+        }
+
+        options = options || {};
+
+        const
+            color     = options.color    || 'red',
+            duration  = options.duration || 2000,
+            mode      = options.style    || 'outline', // 'outline' or 'box-shadow'
+            original  = component.style || {},
+            highlight = mode === 'outline' ?
+                {outline: `2px solid ${color}`, outlineOffset: '-2px'} :
+                {boxShadow: `0 0 10px ${color}, inset 0 0 10px ${color}`},
+            restore   = Object.fromEntries(Object.keys(highlight).map(key => [key, original[key] ?? null]));
+
+        component.style = {...original, ...highlight};
+
+        this.timeout(duration).then(() => {
+            !component.isDestroyed && (component.style = {...original, ...restore})
+        });
+
+        return {success: true}
+    }
+
+    /**
+     * @param {Object}  params
+     * @param {Number}  [params.depth]
+     * @param {Boolean} [params.lean=true]
+     * @param {String}  [params.rootId]
+     * @returns {Object}
+     */
+    getComponentTree({depth, lean=true, rootId}) {
+        return {
+            tree: this.serializeComponent({
+                component: this.getComponentRoot(rootId),
+                lean,
+                maxDepth : depth || -1
+            })
+        }
+    }
+
+    /**
+     * @param {Object} params
+     * @param {Number} [params.depth]
+     * @param {String} [params.rootId]
+     * @returns {Object}
+     */
+    getVdomTree({depth, rootId}) {
+        const component = this.getComponentRoot(rootId);
+        if (!component) throw new Error('Root component not found');
+        return {vdom: TreeBuilder.getVdomTree(component.vdom, depth)}
+    }
+
+    /**
+     * @param {Object} params
+     * @param {Number} [params.depth]
+     * @param {String} [params.rootId]
+     * @returns {Object}
+     */
+    getVnodeTree({depth, rootId}) {
+        const component = this.getComponentRoot(rootId);
+        if (!component) throw new Error('Root component not found');
+        return {vnode: TreeBuilder.getVnodeTree(component.vnode, depth)}
+    }
+
+    /**
+     * @param {Object} params
+     * @param {Number} [params.depth]
+     * @param {String} [params.rootId]
+     * @returns {Object}
+     */
+    getVdomVnode({depth, rootId}) {
+        const component = this.getComponentRoot(rootId);
+        if (!component) throw new Error('Root component not found');
+        return {
+            vdom : TreeBuilder.getVdomTree(component.vdom, depth),
+            vnode: TreeBuilder.getVnodeTree(component.vnode, depth)
+        }
+    }
+
+    /**
+     * @param {Object}   params
+     * @param {String}   [params.rootId]
+     * @param {Object}   params.selector
+     * @param {String[]} [params.returnProperties] Property paths, read like `get_instance_properties` reads them: a
+     * dotted path reaches a nested value (`store.count`), and one that resolves to nothing returns `null`, so the key
+     * stays visible
+     * @returns {Object}
+     */
+    queryComponent({rootId, selector, returnProperties}) {
+        let matches;
+
+        if (rootId) {
+            const component = Neo.getComponent(rootId);
+            if (!component) throw new Error(`Root component not found: ${rootId}`);
+            matches = component.down(selector, false)
+        } else {
+            matches = Neo.manager.Component.find(selector)
+        }
+
+        const components = matches.map(c => {
+            if (Array.isArray(returnProperties) && returnProperties.length > 0) {
+                const props = {};
+                returnProperties.forEach(prop => {
+                    props[prop] = this.safeSerialize(Neo.ns(prop, false, c)) ?? null
+                });
+
+                return {
+                    className : c.className,
+                    id        : c.id,
+                    properties: props
+                }
+            }
+
+            return c.toJSON()
+        });
+
+        return {components}
+    }
+
+    /**
+     * @param {Object} params
+     * @param {String} [params.rootId]
+     * @param {Object} params.selector
+     * @returns {Object}
+     */
+    queryVdom({rootId, selector}) {
+        const component = this.getComponentRoot(rootId);
+        if (!component) throw new Error('Root component not found');
+
+        const result = VdomUtil.find(component.vdom, selector);
+
+        return {
+            vdom    : result?.vdom || null,
+            index   : result?.index,
+            parentId: result?.parentNode?.id
+        }
+    }
+
+    /**
+     * @param {String} [rootId]
+     * @returns {Neo.component.Base|null}
+     */
+    getComponentRoot(rootId) {
+        if (rootId) {
+            return Neo.getComponent(rootId)
+        }
+
+        const apps = Object.values(Neo.apps || {});
+
+        if (apps.length > 0) {
+            return apps[0].mainView
+        }
+
+        return null
+    }
+
+    /**
+     * @summary Serializes a component hierarchy while preserving direct parent-child structure.
+     * @param {Object} data
+     * @param {Neo.component.Base} data.component
+     * @param {Number}             [data.currentDepth=1]
+     * @param {Boolean}            [data.lean=true]
+     * @param {Number}             [data.maxDepth=-1]
+     * @returns {Object}
+     */
+    serializeComponent({component, currentDepth=1, lean=true, maxDepth=-1}) {
+        if (!component) return null;
+
+        let result;
+
+        if (lean) {
+            result = {
+                className: component.className,
+                id       : component.id
+            };
+        } else {
+            result = component.toJSON();
+        }
+
+        if (maxDepth === -1 || currentDepth < maxDepth) {
+            const children = Neo.manager.Component.getDirectChildren(component.id);
+
+            if (children && children.length > 0) {
+                result.items = children.map(child => this.serializeComponent({
+                    component   : child,
+                    currentDepth: currentDepth + 1,
+                    lean,
+                    maxDepth
+                }))
+            }
+        }
+
+        return result
+    }
+}
+
+export default Neo.setupClass(ComponentService);

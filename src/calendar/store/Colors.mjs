@@ -29,11 +29,10 @@ class Colors extends Store {
         keyProperty: 'id',
         /**
          * @member {Neo.data.Model} model=Color
+         * @reactive
          */
         model: Color
     }
 }
 
-Neo.applyClassConfig(Colors);
-
-export default Colors;
+export default Neo.setupClass(Colors);

@@ -13,24 +13,6 @@ class Logger extends Base {
          */
         className: 'Neo.util.Logger',
         /**
-         * Set this config to false to disable the logging in production
-         * To change this on the fly use:
-         *
-         *     Neo.util.Logger.enableLogsInProduction = true;
-         *
-         * @member {Boolean} enableLogsInProduction=true
-         */
-        enableLogsInProduction: false,
-        /**
-         * Set this config to false to disable the component logging using Ctrl-Right Click
-         * To turn it on, add:
-         *
-         *      Neo.util.Logger.enableComponentLogger = true;
-         *
-         * @member {Boolean} enableComponentLogger=true
-         */
-        enableComponentLogger: true,
-        /**
          * Set the minimum level, which you want to output.
          * Change this at any time using a value of logLevels: ['info', 'log', 'warn', 'error']
          *
@@ -88,21 +70,10 @@ class Logger extends Base {
             warn    : 'warn'
         }, true);
 
-        setTimeout(() => {
-            if (!me.enableLogsInProduction && Neo.config.environment === 'dist/production') {
+        me.timeout(50).then(() => {
+            if (!Neo.config.enableLogsInProduction && Neo.config.environment === 'dist/production') {
                 me.write = Neo.emptyFn
             }
-        }, 50)
-    }
-
-    /**
-     * Ctrl-Right Click will show the current component
-     * @param {Neo.component.Base} view
-     */
-    addContextMenuListener(view) {
-        view.addDomListeners({
-            contextmenu: this.onContextMenu,
-            scope      : this
         })
     }
 
@@ -149,7 +120,7 @@ class Logger extends Base {
                     // get the part after the last /
                     caller_path = line.match(/([^\/]+)$/)[1].match(/([^ ]+)$/)[1];
 
-                    break;
+                    break
                 }
             }
         }
@@ -185,16 +156,14 @@ class Logger extends Base {
      * @param {Object} data
      */
     onContextMenu(data) {
-        if (
-            data.ctrlKey
-            && this.enableComponentLogger
-            && !(Neo.config.env === 'dist/production' && this.enableLogsInProduction)
-        ) {
+        let {config} = Neo;
+
+        if (config.enableComponentLogger && !(config.env === 'dist/production' && config.enableLogsInProduction)) {
             let isGroupSet = false,
                 component;
 
             data.path.forEach(item => {
-                component = Neo.getComponent(item.id);
+                component = Neo.getComponent(item.id, false);
 
                 if (component) {
                     if (!isGroupSet) {
@@ -217,8 +186,8 @@ class Logger extends Base {
      * @protected
      */
     resolveArgs(...args) {
-        const identifier = args[0];
-        let argsObject   = {};
+        let identifier = args[0],
+            argsObject = {};
 
         if (args.length === 1) {
             if (Neo.isString(identifier)) {
@@ -226,9 +195,9 @@ class Logger extends Base {
             } else if (Neo.isObject(identifier)) {
                 argsObject = identifier
             }
-        } else if (args.length === 2) {
+        } else if (args.length > 2) {
             argsObject.msg  = args[0];
-            argsObject.data = args[1]
+            argsObject.data = args.slice(1)
         }
 
         return argsObject
@@ -255,6 +224,8 @@ class Logger extends Base {
             return
         }
 
+        console.log('#', args.msg, level);
+
         let logColor = me.logColors[level],
             logChar  = me.logChars[level],
             bg       = `background-color:${logColor}; color: white; font-weight: 900;`,
@@ -271,6 +242,4 @@ class Logger extends Base {
     }
 }
 
-let instance = Neo.applyClassConfig(Logger);
-
-export default instance;
+export default Neo.setupClass(Logger);

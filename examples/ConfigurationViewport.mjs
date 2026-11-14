@@ -1,8 +1,15 @@
-import Button    from '../src/button/Base.mjs';
-import Container from '../src/container/Base.mjs';
-import NeoArray  from '../src/util/Array.mjs';
-import Panel     from '../src/container/Panel.mjs';
-import Viewport  from '../src/container/Viewport.mjs';
+import Button       from '../src/button/Base.mjs';
+import Container    from '../src/container/Base.mjs';
+import Panel        from '../src/container/Panel.mjs';
+import Viewport     from '../src/container/Viewport.mjs';
+import {bindAppend} from '../src/util/Function.mjs';
+
+// add custom themes here
+const themes = [
+    {name: 'neo-theme-light',     label: 'Theme Light'},
+    {name: 'neo-theme-dark',      label: 'Theme Dark'},
+    {name: 'neo-theme-neo-light', label: 'Theme Neo-Light'}
+]
 
 /**
  * Base class for example Apps which should be configurable
@@ -13,19 +20,19 @@ import Viewport  from '../src/container/Viewport.mjs';
 class ConfigurationViewport extends Viewport {
     static config = {
         /**
-         * @member {String} className='Neo.examples.ConfigurationContainer'
+         * @member {String} className='Neo.examples.ConfigurationViewport'
          * @protected
          */
-        className: 'Neo.examples.ConfigurationContainer',
+        className: 'Neo.examples.ConfigurationViewport',
         /**
          * @member {String} ntype='configuration-viewport'
          * @protected
          */
         ntype: 'configuration-viewport',
         /**
-         * @member {Object} layout={ntype:'hbox', align:'stretch'}
+         * @member {String[]} baseCls=['neo-examples-configuration-viewport','neo-viewport']
          */
-        layout: {ntype: 'hbox', align: 'stretch'},
+        baseCls: ['neo-examples-configuration-viewport', 'neo-viewport'],
         /**
          * @member {Number} configItemLabelWidth=150
          */
@@ -39,6 +46,10 @@ class ConfigurationViewport extends Viewport {
          */
         configPanelFlex: 1,
         /**
+         * @member {Number} configPanelMaxWidth=null
+         */
+        configPanelMaxWidth: null,
+        /**
          * @member {Number} configPanelMinWidth=350
          */
         configPanelMinWidth: 350,
@@ -49,28 +60,75 @@ class ConfigurationViewport extends Viewport {
         /**
          * @member {Number} exampleComponentFlex=1
          */
-        exampleComponentFlex: 2
+        exampleComponentFlex: 2,
+        /**
+         * @member {Object} layout={ntype:'hbox', align:'stretch'}
+         * @reactive
+         */
+        layout: {ntype: 'hbox', align: 'stretch'}
+    }
+
+    /**
+     * Override this method to create the components to show inside the configuration container.
+     * The method can optionally be async => Use this for functional components,
+     * where you want to subscribe controls to "classic" components inside functional components.
+     * @see:Neo.examples.functional.hostComponent.MainContainer
+     * @returns {Promise<Object[]>|Object[]|null}
+     */
+    async createConfigurationComponents() {
+        return null
+    }
+
+    /**
+     * Override this method to create the component to show inside the current example
+     * @returns {Object|Neo.component.Base|null}
+     */
+    createExampleComponent() {
+        return null
+    }
+
+    /**
+     * @param {Object} data
+     */
+    logInstance(data) {
+        console.log(this.exampleComponent)
+    }
+
+    /**
+     * @param {String} config
+     * @param {Object} opts
+     */
+    onConfigChange(config, opts) {
+        this.exampleComponent[config] = opts.value
     }
 
     /**
      *
      */
-    onConstructed() {
+    async onConstructed() {
         let me    = this,
             style = me.exampleContainerConfig?.style,
-            theme;
+            exampleComponentType, theme;
 
         if (style) {
-            delete me.exampleContainerConfig.style;
+            delete me.exampleContainerConfig.style
         }
 
-        me.exampleComponent        = me.createExampleComponent();
-        me.configurationComponents = me.createConfigurationComponents() || [];
+        me.exampleComponent = me.createExampleComponent();
 
-        theme = me.exampleComponent.getTheme();
+        exampleComponentType = Neo.typeOf(me.exampleComponent);
+
+        if (exampleComponentType === 'NeoClass' || exampleComponentType === 'Object') {
+            me.exampleComponent = Neo.create(me.exampleComponent)
+        }
+
+        me.configurationComponents = await me.createConfigurationComponents() || [];
+
+        theme = me.exampleComponent.getTheme?.() || 'neo-theme-light';
 
         me.items = [{
             module: Container,
+            cls   : ['neo-example-container'],
             items : [me.exampleComponent],
             flex  : me.exampleComponentFlex,
             layout: 'base',
@@ -80,11 +138,16 @@ class ConfigurationViewport extends Viewport {
             module: Panel,
             cls   : ['neo-panel', 'neo-container', 'neo-configuration-panel'],
             flex  : me.configPanelFlex,
-            style : {margin: '20px', minWidth: me.configPanelMinWidth},
+
+            style: {
+                maxWidth: me.configPanelMaxWidth + 'px',
+                margin  : '20px',
+                minWidth: me.configPanelMinWidth + 'px'
+            },
 
             headers: [{
+                cls  : ['neo-configuration-header-toolbar'],
                 dock : 'top',
-                style: {borderLeft:0, borderRight:0, borderTop:0},
                 items: [{
                     ntype: 'label',
                     text : 'Configuration'
@@ -101,8 +164,7 @@ class ConfigurationViewport extends Viewport {
 
             items: [{
                 module: Container,
-                layout: {ntype: 'vbox'},
-                style : {overflowY: 'auto', padding: '10px'},
+                layout: {ntype: 'vbox', align: null},
                 cls   : ['neo-configuration-panel-body'],
                 itemDefaults: {
                     clearToOriginalValue: true,
@@ -112,52 +174,20 @@ class ConfigurationViewport extends Viewport {
 
                 items: [...me.configurationComponents, {
                     module : Button,
-                    handler: me.onSwitchTheme.bind(me, 'cmp'),
-                    id     : me.id + '_cmp_' + 'switchThemeButton',
+                    handler: bindAppend(me.onSwitchTheme, me, 'cmp'),
                     style  : {marginTop: '20px'},
                     text   : theme === 'neo-theme-dark' ? 'Theme Light' : 'Theme Dark',
-                    width  : 100
+                    width  : 130
                 }, {
                     module : Button,
                     handler: me.logInstance.bind(me),
                     text   : 'Log Instance',
-                    width  : 100
+                    width  : 130
                 }]
             }]
         }];
 
-        super.onConstructed();
-    }
-
-    /**
-     * Override this method to create the components to show inside the configuration container
-     * @returns {Object[]|null}
-     */
-    createConfigurationComponents() {
-        return null;
-    }
-
-    /**
-     * Override this method to create the component to show inside the current example
-     * @returns {Neo.component.Base|null}
-     */
-    createExampleComponent() {
-        return null;
-    }
-
-    /**
-     * @param {Object} data
-     */
-    logInstance(data) {
-        console.log(this.exampleComponent);
-    }
-
-    /**
-     * @param {String} config
-     * @param {Object} opts
-     */
-    onConfigChange(config, opts) {
-        this.exampleComponent[config] = opts.value;
+        super.onConstructed()
     }
 
     /**
@@ -167,43 +197,37 @@ class ConfigurationViewport extends Viewport {
      */
     onRadioChange(config, value, opts) {
         if (opts.value === true) { // we only want to listen to check events, not uncheck
-            this.exampleComponent[config] = value;
+            this.exampleComponent[config] = value
         }
     }
 
     /**
+     * @param {Object} data
      * @param {String} target
      */
-    onSwitchTheme(target) {
-        let me     = this,
-            button = Neo.getComponent(me.id + (target !== 'cmp' ? '__' : '_cmp_') + 'switchThemeButton'),
-            newTheme, oldTheme;
+    onSwitchTheme(data, target) {
+        let me          = this,
+            button      = data.component,
+            countThemes = themes.length,
+            futureIndex, newTheme, themeIndex;
 
-        if (button.text === 'Theme Light') {
-            newTheme = 'neo-theme-light';
-            oldTheme = 'neo-theme-dark';
+        themes.forEach((theme, index) => {
+            if (button.text === theme.label) {
+                newTheme   = theme.name;
+                themeIndex = index;
+            }
+        });
 
-            button.text = 'Theme Dark';
-        } else {
-            newTheme = 'neo-theme-dark';
-            oldTheme = 'neo-theme-light';
+        futureIndex = (themeIndex + countThemes +1) % countThemes;
 
-            button.text = 'Theme Light';
-        }
+        button.text = themes[futureIndex].label;
 
         if (target === 'cmp') {
-            me.exampleComponent.theme = newTheme;
+            me.exampleComponent.theme = newTheme
         } else {
-            Neo.applyDeltas(me.appName, {
-                cls: {
-                    add   : [newTheme],
-                    remove: [oldTheme]
-                }
-            })
+            me.app.mainView.theme = newTheme
         }
     }
 }
 
-Neo.applyClassConfig(ConfigurationViewport);
-
-export default ConfigurationViewport;
+export default Neo.setupClass(ConfigurationViewport);

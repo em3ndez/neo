@@ -1,9 +1,9 @@
-import FooterContainer         from './FooterContainer.mjs';
-import HeaderContainer         from './HeaderContainer.mjs';
-import MainContainerController from './MainContainerController.mjs';
-import MainContainerModel      from './MainContainerModel.mjs';
-import TabContainer            from '../../../src/tab/Container.mjs';
-import Viewport                from '../../../src/container/Viewport.mjs';
+import FooterContainer            from './FooterContainer.mjs';
+import HeaderContainer            from './HeaderContainer.mjs';
+import MainContainerController    from './MainContainerController.mjs';
+import MainContainerStateProvider from './MainContainerStateProvider.mjs';
+import TabContainer               from '../../../src/tab/Container.mjs';
+import Viewport                   from '../../../src/container/Viewport.mjs';
 
 /**
  * @class Covid.view.MainContainer
@@ -22,76 +22,83 @@ class MainContainer extends Viewport {
         baseCls: ['covid-viewport', 'neo-viewport'],
         /**
          * @member {Neo.controller.Component} controller=MainContainerController
+         * @reactive
          */
         controller: MainContainerController,
         /**
          * @member {Array} items
          */
         items: [HeaderContainer, {
-            module     : TabContainer,
-            activeIndex: null, // render no items initially
-            flex       : 1,
-            reference  : 'tab-container',
-            sortable   : true,
-            style      : {margin: '10px', marginTop: 0},
+            module        : TabContainer,
+            activeIndex   : null, // mount no items initially
+            dragResortable: true,
+            flex          : 1,
+            reference     : 'tab-container',
+            style         : {margin: '10px', marginTop: 0},
 
             items: [{
-                module         : () => import('./TableContainer.mjs'),
-                reference      : 'table-container',
-                tabButtonConfig: {
-                    iconCls: 'fa fa-table',
-                    route  : 'mainview=table',
-                    text   : 'Table'
+                module   : () => import('./TableContainer.mjs'),
+                reference: 'table-container',
+                header   : {
+                    editRoute: true,
+                    iconCls  : 'fa fa-table',
+                    route    : 'mainview=table',
+                    text     : 'Table'
                 }
             }, {
-                module         : () => import('./mapboxGl/Container.mjs'),
-                tabButtonConfig: {
-                    iconCls: 'fa fa-globe-americas',
-                    route  : 'mainview=mapboxglmap',
-                    text   : 'Mapbox GL Map'
+                module: () => import('./mapboxGl/Container.mjs'),
+                header: {
+                    editRoute: true,
+                    iconCls  : 'fa fa-globe-americas',
+                    route    : 'mainview=mapboxglmap',
+                    text     : 'Mapbox GL Map'
                 }
             }, {
-                module         : () => import('./WorldMapContainer.mjs'),
-                tabButtonConfig: {
-                    iconCls: 'fa fa-globe-americas',
-                    route  : 'mainview=worldmap',
-                    text   : 'World Map'
+                module: () => import('./WorldMapContainer.mjs'),
+                header: {
+                    editRoute: true,
+                    iconCls  : 'fa fa-globe-americas',
+                    route    : 'mainview=worldmap',
+                    text     : 'World Map'
                 }
             }, {
-                module         : () => import('./GalleryContainer.mjs'),
-                tabButtonConfig: {
-                    iconCls: 'fa fa-images',
-                    route  : 'mainview=gallery',
-                    text   : 'Gallery'
+                module: () => import('./GalleryContainer.mjs'),
+                header: {
+                    editRoute: true,
+                    iconCls  : 'fa fa-images',
+                    route    : 'mainview=gallery',
+                    text     : 'Gallery'
                 }
             }, {
-                module         : () => import('./HelixContainer.mjs'),
-                tabButtonConfig: {
-                    iconCls: 'fa fa-dna',
-                    route  : 'mainview=helix',
-                    text   : 'Helix'
+                module: () => import('./HelixContainer.mjs'),
+                header: {
+                    editRoute: true,
+                    iconCls  : 'fa fa-dna',
+                    route    : 'mainview=helix',
+                    text     : 'Helix'
                 }
             }, {
-                module         : () => import('./AttributionComponent.mjs'),
-                reference      : 'attribution',
-                tabButtonConfig: {
-                    iconCls: 'fa fa-copyright',
-                    route  : 'mainview=attribution',
-                    text   : 'Attribution'
+                module   : () => import('./AttributionComponent.mjs'),
+                reference: 'attribution',
+                header   : {
+                    editRoute: true,
+                    iconCls  : 'fa fa-copyright',
+                    route    : 'mainview=attribution',
+                    text     : 'Attribution'
                 }
             }]
         }, FooterContainer],
         /**
          * @member {Object} layout={ntype: 'vbox', align: 'stretch'}
+         * @reactive
          */
         layout: {ntype: 'vbox', align: 'stretch'},
         /**
-         * @member {Neo.model.Component} model=MainContainerModel
+         * @member {Neo.state.Provider} stateProvider=MainContainerStateProvider
+         * @reactive
          */
-        model: MainContainerModel
+        stateProvider: MainContainerStateProvider
     }
 }
 
-Neo.applyClassConfig(MainContainer);
-
-export default MainContainer;
+export default Neo.setupClass(MainContainer);

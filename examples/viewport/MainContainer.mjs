@@ -68,25 +68,25 @@ class MainContainer extends Viewport {
                         text : 'Left'
                     }],
 
-                    tabButtonConfig: {
+                    header: {
                         iconCls: 'fa fa-home',
                         text   : 'Tab 1'
                     }
                 }, {
-                    tabButtonConfig: {
+                    header: {
                         iconCls: 'fa fa-play-circle',
                         text   : 'Tab 2'
                     },
                     vdom: {
-                        innerHTML: 'Test 2'
+                        html: 'Test 2'
                     }
                 }, {
-                    tabButtonConfig: {
+                    header: {
                         iconCls: 'fa fa-user',
                         text   : 'Tab 3'
                     },
                     vdom: {
-                        innerHTML: 'Test 3'
+                        html: 'Test 3'
                     }
                 }]
             },
@@ -109,6 +109,4 @@ class MainContainer extends Viewport {
     }
 }
 
-Neo.applyClassConfig(MainContainer);
-
-export default MainContainer;
+export default Neo.setupClass(MainContainer);

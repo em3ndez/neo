@@ -36,6 +36,4 @@ class Page8 extends FormPageContainer {
     }
 }
 
-Neo.applyClassConfig(Page8);
-
-export default Page8;
+export default Neo.setupClass(Page8);

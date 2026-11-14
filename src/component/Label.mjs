@@ -22,28 +22,12 @@ class Label extends Component {
          */
         baseCls: ['neo-label'],
         /**
-         * @member {String} text_=''
+         * @member {String} tag='label'
+         * @protected
+         * @reactive
          */
-        text_: '',
-        /**
-         * @member {Object} _vdom={tag: 'label'}
-         */
-        _vdom:
-        {tag: 'label', draggable: false}
-    }
-
-    /**
-     * Triggered after the text config got changed
-     * @param {String} value
-     * @param {String} oldValue
-     * @protected
-     */
-    afterSetText(value, oldValue) {
-        this.vdom.html = value;
-        this.update();
+        tag: 'label'
     }
 }
 
-Neo.applyClassConfig(Label);
-
-export default Label;
+export default Neo.setupClass(Label);

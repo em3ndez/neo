@@ -16,28 +16,30 @@ class Component extends Base {
     static itemHideModes = ['removeDom', 'visibility']
 
     static config = {
-        /*
+        /**
          * @member {String} className='Neo.sitemap.Component'
          * @protected
          */
         className: 'Neo.sitemap.Component',
-        /*
+        /**
          * @member {String} ntype='sitemap'
          * @protected
          */
         ntype: 'sitemap',
-        /*
-         * @member {String[} baseCls=['neo-sitemap']
+        /**
+         * @member {String[]} baseCls=['neo-sitemap']
          */
         baseCls: ['neo-sitemap'],
         /**
          * Valid values: removeDom, visibility
          * Defines if the component items should use css visibility:'hidden' or vdom:removeDom
-         * @member {String} hideMode_='removeDom'
+         * @member {String} itemHideMode_='removeDom'
+         * @reactive
          */
         itemHideMode_: 'removeDom',
-        /*
+        /**
          * @member {Neo.sitemap.Store|null} store_=null
+         * @reactive
          */
         store_: null
     }
@@ -53,7 +55,7 @@ class Component extends Base {
         me.addDomListeners([
             {click: me.onItemHandlerClick, delegate: '.neo-action-handler', scope: me},
             {click: me.onItemClick,        delegate: '.neo-action',         scope: me}
-        ]);
+        ])
     }
 
     /**
@@ -73,7 +75,7 @@ class Component extends Base {
         oldValue?.un(listeners);
         value   ?.on(listeners);
 
-        value?.getCount() > 0 && this.createItems();
+        value?.getCount() > 0 && this.createItems()
     }
 
     /**
@@ -83,7 +85,7 @@ class Component extends Base {
      * @protected
      */
     beforeSetItemHideMode(value, oldValue) {
-        return this.beforeSetEnumValue(value, oldValue, 'itemHideMode');
+        return this.beforeSetEnumValue(value, oldValue, 'itemHideMode')
     }
 
     /**
@@ -95,7 +97,7 @@ class Component extends Base {
      */
     beforeSetStore(value, oldValue) {
         oldValue?.destroy();
-        return ClassSystemUtil.beforeSetInstance(value, Store);
+        return ClassSystemUtil.beforeSetInstance(value, Store)
     }
 
     /**
@@ -105,7 +107,7 @@ class Component extends Base {
         let me          = this,
             records     = me.store.items,
             columnIndex = -1,
-            vdom        = me.vdom,
+            {vdom}      = me,
             action, column, item, record;
 
         vdom.cn = [];
@@ -121,7 +123,7 @@ class Component extends Base {
                     id : `${me.id}__column-${columnIndex}`
                 };
 
-                vdom.cn.push(column);
+                vdom.cn.push(column)
             }
 
             action = record.action;
@@ -130,18 +132,18 @@ class Component extends Base {
                 tag : 'a',
                 cls : ['neo-action', `neo-level-${record.level}`],
                 id  : me.getItemId(record.id),
-                html: record.name
+                text: record.name
             };
 
             if (action && action !== '') {
                 switch (record.actionType) {
                     case 'handler': {
                         item.cls.push('neo-action-handler');
-                        break;
+                        break
                     }
                     case 'route': {
                         item.href = `#${record.action}`;
-                        break;
+                        break
                     }
                     case 'url': {
                         item.href   = record.action;
@@ -154,16 +156,16 @@ class Component extends Base {
 
             if (record.hidden) {
                 if (me.itemHideMode === 'removeDom') {
-                    item.removeDom = true;
+                    item.removeDom = true
                 } else {
-                    item.cls.push('neo-hidden');
+                    item.cls.push('neo-hidden')
                 }
             }
 
-            column.cn.push(item);
+            column.cn.push(item)
         }
 
-        me.update();
+        me.update()
     }
 
     /**
@@ -171,7 +173,7 @@ class Component extends Base {
      * @returns {String}
      */
     getItemId(recordId) {
-        return `${this.id}__${recordId}`;
+        return `${this.id}__${recordId}`
     }
 
     /**
@@ -180,15 +182,15 @@ class Component extends Base {
      */
     getRecordId(vnodeId) {
         let itemId   = vnodeId.split('__')[1],
-            model    = this.store.model,
+            {model}  = this.store,
             keyField = model?.getField(model.keyProperty),
             keyType  = keyField?.type.toLowerCase();
 
         if (keyType === 'integer' || keyType === 'number') {
-            itemId = parseInt(itemId);
+            itemId = parseInt(itemId)
         }
 
-        return itemId;
+        return itemId
     }
 
     /**
@@ -204,31 +206,29 @@ class Component extends Base {
         let me     = this,
             record = me.store.get(me.getRecordId(data.path[0].id));
 
-        me[record.action](record);
+        me[record.action](record)
     }
 
     /**
      *
      */
     onStoreFilter() {
-        this.createItems();
+        this.createItems()
     }
 
     /**
      *
      */
     onStoreLoad() {
-        this.createItems();
+        this.createItems()
     }
 
     /**
      *
      */
     onStoreRecordChange() {
-        this.createItems();
+        this.createItems()
     }
 }
 
-Neo.applyClassConfig(Component);
-
-export default Component;
+export default Neo.setupClass(Component);
